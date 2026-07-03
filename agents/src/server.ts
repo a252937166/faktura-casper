@@ -220,7 +220,7 @@ async function main() {
       actor: "system",
       kind: "boot",
       message: config.showcase
-        ? `Faktura showcase on :${config.port} — live AI underwriting (DeepSeek), on-chain reads from real testnet snapshot`
+        ? `Faktura showcase on :${config.port} — live autonomous AI underwriter, on-chain reads from real testnet snapshot`
         : `Faktura agent service on :${config.port} — contract ${config.contract || "(unset)"}`,
     });
     // The autonomous collector only runs against the real chain, never the showcase snapshot.
