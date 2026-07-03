@@ -16,7 +16,7 @@ const ACTOR_ICON: Record<string, string> = {
   system: "⚙️",
 };
 
-const riskColor = (r: number) => (r <= 30 ? "#2ee6a8" : r <= 55 ? "#ffcc4d" : "#ff5d73");
+const riskColor = (r: number) => (r <= 30 ? "#0f8a5f" : r <= 55 ? "#c98a1b" : "#d92d2d");
 
 function fmtCspr(n: number) {
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -111,6 +111,75 @@ export default function App() {
           ⭐ GitHub
         </a>
       </header>
+
+      <section className="hero">
+        <div>
+          <span className="hero-badge">
+            <i /> Autonomous underwriting desk — Casper testnet
+          </span>
+          <h1>
+            Invoices in.
+            <br />
+            Capital out. <span className="accent">No humans.</span>
+          </h1>
+          <p className="hero-sub">
+            Faktura is an autonomous invoice-financing desk on Casper: an AI agent underwrites each
+            receivable, a native-CSPR pool funds it, and every decision is hash-anchored on-chain —
+            fully auditable.
+          </p>
+          <p className="hero-note">LLM proposes → policy disposes → registered, funded &amp; attested on-chain.</p>
+          <div className="hero-cta">
+            <button
+              className="btn-primary"
+              onClick={() => document.getElementById("sell")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            >
+              SELL AN INVOICE ↓
+            </button>
+            <a
+              className="btn-outline"
+              target="_blank"
+              rel="noreferrer"
+              href={
+                pool?.contract
+                  ? `${pool.explorer}/contract/${pool.contract.replace("hash-", "")}`
+                  : "https://testnet.cspr.live"
+              }
+            >
+              VERIFY ON-CHAIN ↗
+            </a>
+          </div>
+          <div className="hero-metrics">
+            <div className="hm-red">
+              <b>{fmtCspr(tvl)} CSPR</b>
+              <span>pool TVL</span>
+            </div>
+            <div>
+              <b>{sharePrice.toFixed(4)}</b>
+              <span>LP share price</span>
+            </div>
+            <div>
+              <b>{stats?.attestationCount ?? 0}</b>
+              <span>AI decisions on-chain</span>
+            </div>
+          </div>
+        </div>
+        <div className="doc-wrap" aria-hidden>
+          <div className="doc">
+            <header>
+              INVOICE <span>№ 2026-0347</span>
+            </header>
+            <div className="doc-row"><span>Supplier</span><b>Nordwind Logistics</b></div>
+            <div className="doc-row"><span>Debtor</span><b>Aurora Retail AG</b></div>
+            <div className="doc-row"><span>Tenor</span><b>30 days</b></div>
+            <div className="doc-row"><span>Risk score</span><b className="r-red">28 / 100</b></div>
+            <div className="doc-row"><span>Discount</span><b>2.00%</b></div>
+            <div className="doc-row"><span>Decision hash</span><b>sha256:9d93…a8e1</b></div>
+            <div className="doc-total"><span>ADVANCE</span><b>58.8 CSPR</b></div>
+          </div>
+          <div className="stamp s1">APPROVED</div>
+          <div className="stamp s2">FUNDED</div>
+        </div>
+      </section>
 
       <section className="stats">
         <div className="stat">
@@ -244,6 +313,7 @@ export default function App() {
             </div>
           </div>
 
+          <div id="sell">
           <SubmitPanel
             onSubmitted={(r) => {
               notify(
@@ -254,6 +324,7 @@ export default function App() {
               refresh();
             }}
           />
+          </div>
         </div>
 
         <div className="panel">
@@ -446,7 +517,7 @@ function Drawer({
             <div className="gauge">
               <div className="ring">
                 <svg width="74" height="74" viewBox="0 0 74 74">
-                  <circle cx="37" cy="37" r="31" fill="none" stroke="#232b40" strokeWidth="7" />
+                  <circle cx="37" cy="37" r="31" fill="none" stroke="#e7dfcd" strokeWidth="7" />
                   <circle
                     cx="37"
                     cy="37"
