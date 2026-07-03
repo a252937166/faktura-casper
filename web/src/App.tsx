@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
+  API_BASE,
   motesToCspr,
   stateName,
   type FeedEvent,
@@ -51,7 +52,7 @@ export default function App() {
   useEffect(() => {
     refresh();
     const iv = setInterval(refresh, 12_000);
-    const es = new EventSource("/api/activity");
+    const es = new EventSource(`${API_BASE}/activity`);
     es.onmessage = (m) => {
       const data = JSON.parse(m.data);
       if (data.history) setEvents(data.history.reverse());
@@ -106,7 +107,7 @@ export default function App() {
             ⛓ {contractShort}
           </a>
         )}
-        <a className="chip" href="https://github.com/a252937166/faktura" target="_blank" rel="noreferrer">
+        <a className="chip" href="https://github.com/a252937166/faktura-casper" target="_blank" rel="noreferrer">
           ⭐ GitHub
         </a>
       </header>
