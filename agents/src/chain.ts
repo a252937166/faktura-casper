@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { config, type Persona } from "./config.js";
+import { showcaseChain } from "./chain-showcase.js";
 
 /** Result of a livenet CLI invocation. */
 export interface ChainResult<T = unknown> {
@@ -106,7 +107,7 @@ export interface ChainStats {
   attestationCount: number;
 }
 
-export const chain = {
+const realChain = {
   stats: () =>
     livenet<ChainStats>("agent", ["stats", config.contract]).then((r) => r.result),
 
@@ -188,3 +189,10 @@ export const chain = {
   caller: (persona: Persona) =>
     livenet<{ caller: string }>(persona, ["caller"]).then((r) => r.result.caller),
 };
+
+/**
+ * In showcase mode the app runs on a public host with no Rust livenet binary
+ * and no secret keys: reads are served from a real captured seed and writes are
+ * simulated in-memory. Otherwise every call drives the audited Odra livenet host.
+ */
+export const chain = config.showcase ? (showcaseChain as unknown as typeof realChain) : realChain;

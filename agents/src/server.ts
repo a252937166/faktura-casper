@@ -8,6 +8,9 @@ import { chain } from "./chain.js";
 import { processIntake, type IntakeInput } from "./underwriter.js";
 import { startCollector } from "./collector.js";
 import { x402Gate } from "./x402.js";
+import { getSeed } from "./chain-showcase.js";
+import type { FeedEvent } from "./feed.js";
+import type { InvoiceRecord } from "./store.js";
 
 const app = express();
 app.use(cors());
@@ -178,24 +181,50 @@ app.get(/^\/(?!api).*/, (_req, res) => {
 
 // ---- Boot -------------------------------------------------------------------
 
-async function main() {
-  if (!config.contract) {
-    console.warn("FAKTURA_CONTRACT not set — chain features disabled until deploy.");
+/** Preload the public showcase with a real captured snapshot (invoices + feed). */
+function seedShowcase() {
+  try {
+    const seed = getSeed();
+    if (Array.isArray(seed.records)) {
+      db.invoices.length = 0;
+      db.invoices.push(...(seed.records as InvoiceRecord[]));
+    }
+    if (Array.isArray(seed.feed)) {
+      feed.history = seed.feed as FeedEvent[];
+    }
+    console.log(
+      `showcase seed loaded: ${db.invoices.length} invoices, ${feed.history.length} activity events`,
+    );
+  } catch (e) {
+    console.warn("showcase seed load failed:", (e as Error).message);
   }
-  if (!config.x402.payTo) {
-    try {
-      config.x402.payTo = await chain.caller("agent");
-    } catch {
-      /* key not funded yet */
+}
+
+async function main() {
+  if (config.showcase) {
+    seedShowcase();
+  } else {
+    if (!config.contract) {
+      console.warn("FAKTURA_CONTRACT not set — chain features disabled until deploy.");
+    }
+    if (!config.x402.payTo) {
+      try {
+        config.x402.payTo = await chain.caller("agent");
+      } catch {
+        /* key not funded yet */
+      }
     }
   }
-  app.listen(config.port, () => {
+  app.listen(config.port, process.env.HOST ?? "0.0.0.0", () => {
     feed.publish({
       actor: "system",
       kind: "boot",
-      message: `Faktura agent service on :${config.port} — contract ${config.contract || "(unset)"}`,
+      message: config.showcase
+        ? `Faktura showcase on :${config.port} — live AI underwriting (DeepSeek), on-chain reads from real testnet snapshot`
+        : `Faktura agent service on :${config.port} — contract ${config.contract || "(unset)"}`,
     });
-    if (config.contract) startCollector();
+    // The autonomous collector only runs against the real chain, never the showcase snapshot.
+    if (config.contract && !config.showcase) startCollector();
   });
 }
 

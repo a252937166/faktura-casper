@@ -77,24 +77,27 @@ const j = <T>(r: Response): Promise<T> => {
   return r.json() as Promise<T>;
 };
 
+/** API base — matches Vite's base so the app works under /faktura/ or /. */
+export const API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/\/api$/, "/api");
+
 export const api = {
-  pool: () => fetch("/api/pool").then((r) => j<PoolResponse>(r)),
-  invoices: () => fetch("/api/invoices").then((r) => j<InvoiceRecord[]>(r)),
-  meta: () => fetch("/api/meta").then((r) => j<{ contract: string; explorer: string; chain: string }>(r)),
+  pool: () => fetch(`${API_BASE}/pool`).then((r) => j<PoolResponse>(r)),
+  invoices: () => fetch(`${API_BASE}/invoices`).then((r) => j<InvoiceRecord[]>(r)),
+  meta: () => fetch(`${API_BASE}/meta`).then((r) => j<{ contract: string; explorer: string; chain: string }>(r)),
   submit: (body: unknown) =>
-    fetch("/api/invoices", {
+    fetch(`${API_BASE}/invoices`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then((r) => j<InvoiceRecord>(r)),
   deposit: (amountCspr: number) =>
-    fetch("/api/demo/deposit", {
+    fetch(`${API_BASE}/demo/deposit`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ amountCspr }),
     }).then((r) => j<{ ok: boolean }>(r)),
   settle: (id: number) =>
-    fetch(`/api/demo/settle/${id}`, { method: "POST" }).then((r) => j<{ ok: boolean }>(r)),
+    fetch(`${API_BASE}/demo/settle/${id}`, { method: "POST" }).then((r) => j<{ ok: boolean }>(r)),
 };
 
 export const motesToCspr = (m: string | undefined) =>

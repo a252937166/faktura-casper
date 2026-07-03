@@ -9,6 +9,15 @@ export const ROOT = path.resolve(here, "..", "..");
 export const config = {
   port: Number(process.env.PORT ?? 4020),
 
+  /**
+   * Showcase mode: serve a public, read-only demo without the Rust livenet
+   * binary or any secret keys. On-chain reads come from a captured seed
+   * snapshot (real testnet state, verifiable on cspr.live); writes are
+   * simulated in-memory. The AI underwriter still runs for real.
+   */
+  showcase: process.env.FAKTURA_SHOWCASE === "1",
+  seedPath: process.env.FAKTURA_SEED ?? path.join(ROOT, "agents/data/seed.json"),
+
   /** Deployed FakturaHub contract address ("hash-..."). */
   contract: process.env.FAKTURA_CONTRACT ?? "",
 
@@ -50,9 +59,16 @@ export const config = {
     intervalMs: Number(process.env.COLLECTOR_INTERVAL_MS ?? 30_000),
   },
 
-  /** LLM provider: "anthropic" | "claude-cli" | "mock" | "auto". */
+  /** LLM provider: "anthropic" | "claude-cli" | "deepseek" | "mock" | "auto". */
   llmProvider: process.env.LLM_PROVIDER ?? "auto",
   llmModel: process.env.LLM_MODEL ?? "claude-sonnet-4-5",
+
+  /** DeepSeek (OpenAI-compatible) — used when the host has no Claude Code CLI. */
+  deepseek: {
+    apiKey: process.env.DEEPSEEK_API_KEY ?? process.env.ANTHROPIC_AUTH_TOKEN ?? "",
+    baseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
+    model: process.env.DEEPSEEK_MODEL ?? "deepseek-v4-pro",
+  },
 
   /** x402 paid oracle pricing (motes). */
   x402: {
