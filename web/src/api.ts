@@ -72,9 +72,41 @@ export interface Meta {
   chain: string;
   explorer: string;
   x402Price: string;
+  x402Mode?: string;
   llmProvider: string;
+  mcp?: boolean;
   policy: ChainPolicy | null;
+  prefilter?: {
+    maxRiskScore: number;
+    minDiscountBps: number;
+    maxDiscountBps: number;
+    maxPoolShareBps: number;
+  };
   supplier: string | null;
+}
+
+export interface X402Challenge {
+  status: number;
+  body: {
+    accepts?: {
+      maxAmountRequired: string;
+      payTo: string;
+      extra: { transferIdNonce: string };
+    }[];
+    error?: string;
+    [k: string]: unknown;
+  };
+}
+
+export interface RiskReport {
+  invoiceId: number;
+  issuer: string;
+  riskScore: number;
+  discountBps: number;
+  redFlags: string[];
+  rationale: string;
+  decisionHash: string;
+  onchain: { state: number; contract: string };
 }
 
 export interface PoolResponse {
@@ -117,7 +149,25 @@ export const api = {
       body: JSON.stringify({ amountCspr }),
     }).then((r) => j<{ ok: boolean }>(r)),
   settle: (id: number) =>
-    fetch(`${API_BASE}/demo/settle/${id}`, { method: "POST" }).then((r) => j<{ ok: boolean }>(r)),
+    fetch(`${API_BASE}/demo/settle/${id}`, { method: "POST" }).then((r) =>
+      j<{ ok: boolean; deployHash?: string }>(r),
+    ),
+  riskChallenge: async (id: number): Promise<X402Challenge> => {
+    const r = await fetch(`${API_BASE}/risk/${id}`);
+    return { status: r.status, body: await r.json().catch(() => ({})) };
+  },
+  x402Pay: (nonce: string, amount: string) =>
+    fetch(`${API_BASE}/demo/x402-pay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nonce, amount }),
+    }).then((r) => j<{ simulated: boolean; proof: string }>(r)),
+  riskWithProof: async (id: number, proof: string, nonce: string) => {
+    const r = await fetch(`${API_BASE}/risk/${id}`, {
+      headers: { "PAYMENT-SIGNATURE": proof, "PAYMENT-NONCE": nonce },
+    });
+    return { status: r.status, body: (await r.json().catch(() => ({}))) as RiskReport };
+  },
 };
 
 export const motesToCspr = (m: string | undefined) =>

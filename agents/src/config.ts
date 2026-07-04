@@ -22,12 +22,9 @@ export const config = {
   contract: process.env.FAKTURA_CONTRACT ?? "",
 
   /** Casper network config (Odra livenet env). */
-  nodeAddress:
-    process.env.CASPER_NODE_ADDRESS ?? "https://node.testnet.casper.network",
+  nodeAddress: process.env.CASPER_NODE_ADDRESS ?? "https://node.testnet.casper.network",
   chainName: process.env.CASPER_CHAIN_NAME ?? "casper-test",
-  eventsUrl:
-    process.env.CASPER_EVENTS_URL ??
-    "https://node.testnet.casper.network/events",
+  eventsUrl: process.env.CASPER_EVENTS_URL ?? "https://node.testnet.casper.network/events",
 
   /**
    * Persona secret keys (Ed25519 PEM files). Separation of duties:
@@ -39,19 +36,14 @@ export const config = {
    */
   keys: {
     agent: process.env.AGENT_KEY_PATH ?? path.join(ROOT, "keys/agent/secret_key.pem"),
-    collector:
-      process.env.COLLECTOR_KEY_PATH ?? path.join(ROOT, "keys/collector/secret_key.pem"),
-    supplier:
-      process.env.SUPPLIER_KEY_PATH ?? path.join(ROOT, "keys/supplier/secret_key.pem"),
-    investor:
-      process.env.INVESTOR_KEY_PATH ?? path.join(ROOT, "keys/investor/secret_key.pem"),
+    collector: process.env.COLLECTOR_KEY_PATH ?? path.join(ROOT, "keys/collector/secret_key.pem"),
+    supplier: process.env.SUPPLIER_KEY_PATH ?? path.join(ROOT, "keys/supplier/secret_key.pem"),
+    investor: process.env.INVESTOR_KEY_PATH ?? path.join(ROOT, "keys/investor/secret_key.pem"),
     debtor: process.env.DEBTOR_KEY_PATH ?? path.join(ROOT, "keys/debtor/secret_key.pem"),
   },
 
   /** Path to the compiled livenet ops binary (see contracts/bin/livenet.rs). */
-  livenetBin:
-    process.env.FAKTURA_LIVENET_BIN ??
-    path.join(ROOT, "contracts/target/debug/livenet"),
+  livenetBin: process.env.FAKTURA_LIVENET_BIN ?? path.join(ROOT, "contracts/target/debug/livenet"),
 
   /** Underwriting policy guardrails (deterministic, enforced in code). */
   policy: {

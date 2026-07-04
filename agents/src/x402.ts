@@ -67,7 +67,10 @@ async function rpc(method: string, params: unknown) {
 }
 
 /** Verifies a native transfer deploy: executed, paid to us, right amount + nonce. */
-async function verifyPayment(deployHash: string, nonce: string): Promise<{ ok: boolean; reason?: string }> {
+async function verifyPayment(
+  deployHash: string,
+  nonce: string,
+): Promise<{ ok: boolean; reason?: string }> {
   if (settledDeploys.has(deployHash)) return { ok: false, reason: "deploy already used" };
   try {
     const info = await rpc("info_get_deploy", { deploy_hash: deployHash });
@@ -154,7 +157,8 @@ export function x402Gate() {
       const nonce = String(crypto.randomInt(1, 2 ** 48));
       pending.set(nonce, { nonce, createdTs: Date.now() });
       // GC old charges
-      for (const [k, v] of pending) if (Date.now() - v.createdTs > config.x402.ttlMs) pending.delete(k);
+      for (const [k, v] of pending)
+        if (Date.now() - v.createdTs > config.x402.ttlMs) pending.delete(k);
       feed.publish({
         actor: "oracle",
         kind: "x402",
@@ -169,6 +173,18 @@ export function x402Gate() {
       res.status(402).json({ x402Version: 1, error: "unknown or expired nonce" });
       return;
     }
+    // Showcase mode only: accept the clearly-labeled simulated proof issued by
+    // /api/demo/x402-pay so public visitors can walk the flow without keys.
+    if (config.showcase && proof.trim() === `showcase-simulated:${nonceHeader}`) {
+      pending.delete(nonceHeader);
+      feed.publish({
+        actor: "oracle",
+        kind: "x402",
+        message: `SIMULATED payment accepted (showcase) — releasing risk report for nonce ${nonceHeader}`,
+      });
+      next();
+      return;
+    }
     const verdict =
       config.x402.mode === "official-facilitator"
         ? await verifyViaFacilitator(proof.trim(), nonceHeader, req.originalUrl)
@@ -179,7 +195,9 @@ export function x402Gate() {
         kind: "x402",
         message: `Payment rejected for nonce ${nonceHeader}: ${verdict.reason}`,
       });
-      res.status(402).json({ x402Version: 1, error: `payment verification failed: ${verdict.reason}` });
+      res
+        .status(402)
+        .json({ x402Version: 1, error: `payment verification failed: ${verdict.reason}` });
       return;
     }
     pending.delete(nonceHeader);

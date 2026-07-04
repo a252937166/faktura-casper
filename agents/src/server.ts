@@ -21,7 +21,13 @@ app.use(express.json({ limit: "2mb" }));
 app.post("/api/invoices", async (req, res) => {
   try {
     const b = req.body as Partial<IntakeInput>;
-    for (const k of ["supplierName", "debtorName", "amountCspr", "dueTs", "invoiceNumber"] as const) {
+    for (const k of [
+      "supplierName",
+      "debtorName",
+      "amountCspr",
+      "dueTs",
+      "invoiceNumber",
+    ] as const) {
       if (b[k] === undefined) {
         res.status(400).json({ error: `missing field ${k}` });
         return;
@@ -51,12 +57,28 @@ app.get("/api/invoices", (_req, res) => {
 
 // ---- Pool / chain state -----------------------------------------------------
 
+/** In showcase mode the contract address travels with the seed snapshot. */
+function contractAddr(): string {
+  if (config.contract) return config.contract;
+  if (config.showcase) {
+    try {
+      return getSeed().contract;
+    } catch {
+      /* seed missing */
+    }
+  }
+  return "";
+}
+
 let statsCache: { ts: number; data: unknown } = { ts: 0, data: null };
 app.get("/api/pool", async (_req, res) => {
   try {
     if (Date.now() - statsCache.ts > 10_000) {
       const [stats, onchain] = await Promise.all([chain.stats(), chain.invoices(1, 200)]);
-      statsCache = { ts: Date.now(), data: { stats, onchain, contract: config.contract, explorer: config.explorerBase } };
+      statsCache = {
+        ts: Date.now(),
+        data: { stats, onchain, contract: contractAddr(), explorer: config.explorerBase },
+      };
     }
     res.json(statsCache.data);
   } catch (e) {
@@ -73,7 +95,11 @@ app.post("/api/demo/deposit", async (req, res) => {
       res.status(400).json({ error: "amountCspr > 0 required" });
       return;
     }
-    feed.publish({ actor: "system", kind: "demo", message: `LP depositing ${cspr} CSPR into the pool...` });
+    feed.publish({
+      actor: "system",
+      kind: "demo",
+      message: `LP depositing ${cspr} CSPR into the pool...`,
+    });
     const r = await chain.deposit(BigInt(Math.round(cspr * 1e9)).toString());
     statsCache.ts = 0;
     feed.publish({
@@ -118,31 +144,92 @@ app.post("/api/demo/settle/:id", async (req, res) => {
 
 // ---- x402 machine-payable risk oracle --------------------------------------
 
-app.get("/api/risk/:id", x402Gate(), async (req, res) => {
+/**
+ * Resource-existence check MUST run before the payment gate: a buyer must
+ * never be charged for a report that turns out to be a 404.
+ */
+async function requireRiskReport(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
   const id = Number(req.params.id);
   const record = db.invoices.find((x) => x.id === id);
   const inv = await chain.invoice(id).catch(() => null);
   if (!record?.decision || !inv) {
-    res.status(404).json({ error: "no risk report for this invoice" });
+    res.status(404).json({ error: "no risk report available for this invoice" });
     return;
   }
+  res.locals.riskRecord = record;
+  res.locals.chainInvoice = inv;
+  next();
+}
+
+app.get("/api/risk/:id", requireRiskReport, x402Gate(), async (req, res) => {
+  const id = Number(req.params.id);
+  const record = res.locals.riskRecord as InvoiceRecord;
+  const inv = res.locals.chainInvoice as NonNullable<Awaited<ReturnType<typeof chain.invoice>>>;
+  const decision = record.decision!; // guaranteed by requireRiskReport
   res.json({
     invoiceId: id,
     issuedAt: new Date().toISOString(),
     issuer: "faktura-risk-oracle-v1",
-    riskScore: record.decision.riskScore,
-    discountBps: record.decision.discountBps,
-    redFlags: record.decision.redFlags,
-    rationale: record.decision.rationale,
-    decisionHash: record.decision.decisionHash,
+    riskScore: decision.riskScore,
+    discountBps: decision.discountBps,
+    redFlags: decision.redFlags,
+    rationale: decision.rationale,
+    decisionHash: decision.decisionHash,
     onchain: {
       state: inv.state,
       faceValue: inv.faceValue,
       dueTs: inv.dueTs,
-      contract: config.contract,
-      verify: `${config.explorerBase}/contract/${config.contract.replace("hash-", "")}`,
+      contract: contractAddr(),
+      verify: `${config.explorerBase}/contract/${contractAddr().replace("hash-", "")}`,
     },
   });
+});
+
+/**
+ * Demo helper for the x402 flow in the web UI.
+ * - SHOWCASE: returns a clearly-labeled simulated proof the gate accepts only
+ *   in showcase mode (no keys, no gas on the public host).
+ * - LIVE: signs a REAL native transfer with the demo buyer (debtor) key and
+ *   returns the deploy hash — the same path `npm run x402-demo` exercises.
+ */
+app.post("/api/demo/x402-pay", async (req, res) => {
+  const nonce = String(req.body?.nonce ?? "");
+  const amount = String(req.body?.amount ?? config.x402.priceMotes);
+  if (!nonce) {
+    res.status(400).json({ error: "nonce required" });
+    return;
+  }
+  if (config.showcase) {
+    feed.publish({
+      actor: "oracle",
+      kind: "x402",
+      message: `SIMULATED buyer payment for nonce ${nonce} (showcase mode — run x402-demo locally for a real transfer)`,
+    });
+    res.json({ simulated: true, proof: `showcase-simulated:${nonce}` });
+    return;
+  }
+  try {
+    const { nativeTransfer } = await import("./native-transfer.js");
+    const deployHash = await nativeTransfer({
+      fromKeyPath: config.keys.debtor,
+      to: config.x402.payTo,
+      motes: amount,
+      id: nonce,
+    });
+    feed.publish({
+      actor: "oracle",
+      kind: "x402",
+      message: `Buyer agent settled ${Number(amount) / 1e9} CSPR on-chain for nonce ${nonce}`,
+      deployHash,
+    });
+    res.json({ simulated: false, proof: deployHash });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message.slice(0, 300) });
+  }
 });
 
 // ---- Activity feed (SSE) ----------------------------------------------------
@@ -175,13 +262,23 @@ app.get("/api/meta", async (_req, res) => {
     }
     metaCache = {
       mode: config.showcase ? "showcase" : "live-testnet",
-      contract: config.contract,
+      contract: contractAddr(),
       chain: config.chainName,
       node: config.nodeAddress,
       explorer: config.explorerBase,
       x402Price: config.x402.priceMotes,
+      x402Mode: config.x402.mode,
       llmProvider: config.llmProvider,
+      mcp: true,
+      // The contract policy is the source of truth; the TypeScript policy is a
+      // stricter UX prefilter applied before anything is sent on-chain.
       policy,
+      prefilter: {
+        maxRiskScore: config.policy.maxRiskScore,
+        minDiscountBps: config.policy.minDiscountBps,
+        maxDiscountBps: config.policy.maxDiscountBps,
+        maxPoolShareBps: config.policy.maxPoolShareBps,
+      },
       supplier,
     };
   }

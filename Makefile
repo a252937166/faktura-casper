@@ -5,11 +5,15 @@
 #   make deploy          deploy FakturaHub to Casper Testnet (needs funded agent key)
 #   make configure       set-agents + set-policy on the deployed contract
 #   make fund-collector  send 150 CSPR gas from the agent key to the collector key
-#   make e2e             full live-testnet lifecycle (deposit/underwrite/fund/settle/default)
+#   make e2e             full live-testnet lifecycle (~4-6 min: waits out testnet
+#                        finality per deploy + the default window)
+#   make e2e-fast        happy path + AI rejection only (~2-3 min)
 #   make seed            capture live state into agents/data/seed.json (showcase snapshot)
 #   make serve           run the agent service + web UI locally
 #   make mcp             run the MCP server (stdio) against a running service
 #   make x402-demo       buyer agent pays the x402 oracle and fetches a risk report
+#   make x402-facilitator-demo  same purchase, but verification is delegated to a
+#                        reference x402 facilitator (X402_MODE=official-facilitator)
 #
 # Chain-touching targets read the standard env:
 #   FAKTURA_CONTRACT=hash-...   (after make deploy prints it)
@@ -28,7 +32,7 @@ ODRA_CASPER_LIVENET_CHAIN_NAME=$${CASPER_CHAIN_NAME:-casper-test} \
 ODRA_CASPER_LIVENET_EVENTS_URL=$${CASPER_EVENTS_URL:-https://node.testnet.casper.network/events}
 endef
 
-.PHONY: test build deploy configure fund-collector e2e seed serve mcp x402-demo keys
+.PHONY: test build deploy configure fund-collector e2e e2e-fast seed serve mcp x402-demo x402-facilitator-demo keys
 
 test:
 	$(CONTRACTS) && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
@@ -69,6 +73,10 @@ e2e:
 	@test -n "$(FAKTURA_CONTRACT)" || (echo "set FAKTURA_CONTRACT=hash-..." && exit 2)
 	$(AGENTS) && npm run e2e
 
+e2e-fast:
+	@test -n "$(FAKTURA_CONTRACT)" || (echo "set FAKTURA_CONTRACT=hash-..." && exit 2)
+	$(AGENTS) && FAKTURA_E2E_FAST=1 npm run e2e
+
 seed:
 	@test -n "$(FAKTURA_CONTRACT)" || (echo "set FAKTURA_CONTRACT=hash-..." && exit 2)
 	$(AGENTS) && npx tsx scripts/make-seed.ts
@@ -81,3 +89,7 @@ mcp:
 
 x402-demo:
 	$(AGENTS) && npm run x402-demo
+
+x402-facilitator-demo:
+	@test -n "$(FAKTURA_CONTRACT)" || (echo "set FAKTURA_CONTRACT=hash-..." && exit 2)
+	$(AGENTS) && npx tsx scripts/facilitator-demo.ts

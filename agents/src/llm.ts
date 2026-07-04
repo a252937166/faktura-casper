@@ -185,10 +185,12 @@ function viaMock(intake: {
   const days = Math.max(0, (intake.dueTs - Date.now()) / 86_400_000);
   let risk = 20;
   const flags: string[] = [];
-  if (days > 60) (risk += 15), flags.push("long tenor");
-  if (intake.amountCspr > 1000) (risk += 15), flags.push("large ticket");
-  if (/unknown|shell|ltd\.?$/i.test(intake.debtorName)) (risk += 20), flags.push("thin debtor profile");
-  if (/late|overdue|dispute/i.test(intake.history ?? "")) (risk += 25), flags.push("adverse payment history");
+  if (days > 60) ((risk += 15), flags.push("long tenor"));
+  if (intake.amountCspr > 1000) ((risk += 15), flags.push("large ticket"));
+  if (/unknown|shell|ltd\.?$/i.test(intake.debtorName))
+    ((risk += 20), flags.push("thin debtor profile"));
+  if (/late|overdue|dispute/i.test(intake.history ?? ""))
+    ((risk += 25), flags.push("adverse payment history"));
   const approve = risk <= 65;
   const discount = Math.min(2000, 100 + risk * 12 + days * 3);
   return {

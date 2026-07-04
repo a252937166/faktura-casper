@@ -116,8 +116,7 @@ export interface ChainPolicy {
 }
 
 const realChain = {
-  stats: () =>
-    livenet<ChainStats>("agent", ["stats", config.contract]).then((r) => r.result),
+  stats: () => livenet<ChainStats>("agent", ["stats", config.contract]).then((r) => r.result),
 
   invoices: (from = 1, count = 200) =>
     livenet<ChainInvoice[]>("agent", [
@@ -164,12 +163,7 @@ const realChain = {
 
   settle: (id: number, amountMotes: string) =>
     enqueue("debtor", () =>
-      livenet<{ settled: number }>("debtor", [
-        "settle",
-        config.contract,
-        String(id),
-        amountMotes,
-      ]),
+      livenet<{ settled: number }>("debtor", ["settle", config.contract, String(id), amountMotes]),
     ),
 
   // Defaults are written off by the COLLECTOR key — the underwriter key has no
@@ -184,7 +178,13 @@ const realChain = {
       livenet<{ deposited: string }>("investor", ["deposit", config.contract, amountMotes]),
     ),
 
-  attest: (kind: string, subjectId: number, payloadHash: string, model: string, persona: Persona = "agent") =>
+  attest: (
+    kind: string,
+    subjectId: number,
+    payloadHash: string,
+    model: string,
+    persona: Persona = "agent",
+  ) =>
     enqueue(persona, () =>
       livenet<{ attestationId: number }>(persona, [
         "attest",
@@ -196,8 +196,7 @@ const realChain = {
       ]),
     ),
 
-  policy: () =>
-    livenet<ChainPolicy>("agent", ["policy", config.contract]).then((r) => r.result),
+  policy: () => livenet<ChainPolicy>("agent", ["policy", config.contract]).then((r) => r.result),
 
   caller: (persona: Persona) =>
     livenet<{ caller: string }>(persona, ["caller"]).then((r) => r.result.caller),
