@@ -7,6 +7,9 @@ import { db, upsertInvoice, type InvoiceRecord } from "./store.js";
 
 const CSPR = 1_000_000_000n;
 
+// Feed copy must never claim a signed transaction in showcase mode.
+const SIM = () => config.showcase;
+
 /**
  * The on-chain Policy is the source of truth; config.policy is a stricter UX
  * prefilter. At runtime we take the tighter of the two so the numbers shown
@@ -212,7 +215,7 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
   feed.publish({
     actor: "underwriter",
     kind: "decision",
-    message: `APPROVED ${input.invoiceNumber}: risk ${risk_score}/100, discount ${(discount_bps / 100).toFixed(2)}% — registering on-chain`,
+    message: `APPROVED ${input.invoiceNumber}: risk ${risk_score}/100, discount ${(discount_bps / 100).toFixed(2)}% — ${SIM() ? "registering (SHOWCASE simulation)" : "registering on-chain"}`,
     data: { decisionHash, redFlags: opinion.red_flags },
   });
 
@@ -239,7 +242,9 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
   feed.publish({
     actor: "underwriter",
     kind: "onchain",
-    message: `Invoice #${record.id} registered on Casper Testnet`,
+    message: SIM()
+      ? `SHOWCASE: invoice #${record.id} registered in memory — not a signed Casper transaction`
+      : `Invoice #${record.id} registered on Casper Testnet`,
     invoiceId: record.id,
     deployHash: record.chain.registerHash,
   });
@@ -254,7 +259,9 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
     feed.publish({
       actor: "underwriter",
       kind: "onchain",
-      message: `Invoice #${record.id} FUNDED — advance paid from the pool to supplier ${supplier.replace("entity-account-", "account-hash-").slice(0, 26)}…`,
+      message: SIM()
+        ? `SHOWCASE: invoice #${record.id} funded in memory — supplier advance simulated`
+        : `Invoice #${record.id} FUNDED — advance paid from the pool to supplier ${supplier.replace("entity-account-", "account-hash-").slice(0, 26)}…`,
       invoiceId: record.id,
       deployHash: record.chain.fundHash,
     });
@@ -265,7 +272,9 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
     feed.publish({
       actor: "underwriter",
       kind: "policy_block",
-      message: `Casper policy blocked funding for invoice #${record.id}: ${record.chain.fundError}`,
+      message: SIM()
+        ? `SHOWCASE policy simulation blocked funding for invoice #${record.id}: ${record.chain.fundError}`
+        : `Casper policy blocked funding for invoice #${record.id}: ${record.chain.fundError}`,
       invoiceId: record.id,
     });
     return record;
@@ -285,7 +294,9 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
     feed.publish({
       actor: "underwriter",
       kind: "attest",
-      message: `Decision memo hash anchored on-chain (attestation #${att.result.attestationId})`,
+      message: SIM()
+        ? `SHOWCASE: decision memo hash recorded in simulated state (attestation #${att.result.attestationId})`
+        : `Decision memo hash anchored on-chain (attestation #${att.result.attestationId})`,
       invoiceId: record.id,
       deployHash: record.chain.attestHashes.at(-1),
     });
@@ -359,7 +370,9 @@ async function finalizeReject(
     feed.publish({
       actor: "underwriter",
       kind: "attest",
-      message: `Rejection memo anchored on-chain (attestation #${att.result.attestationId})`,
+      message: SIM()
+        ? `SHOWCASE: rejection memo recorded in simulated state (attestation #${att.result.attestationId})`
+        : `Rejection memo anchored on-chain (attestation #${att.result.attestationId})`,
       deployHash: record.chain.attestHashes.at(-1),
     });
   } catch (e) {

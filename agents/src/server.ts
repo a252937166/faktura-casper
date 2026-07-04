@@ -105,7 +105,9 @@ app.post("/api/demo/deposit", async (req, res) => {
     feed.publish({
       actor: "system",
       kind: "onchain",
-      message: `LP deposit confirmed on-chain`,
+      message: config.showcase
+        ? `SHOWCASE: LP deposit simulated in memory — not a signed Casper transaction`
+        : `LP deposit confirmed on-chain`,
       deployHash: r.deployHashes.at(-1),
     });
     res.json({ ok: true, deployHash: r.deployHashes.at(-1) });
@@ -132,7 +134,9 @@ app.post("/api/demo/settle/:id", async (req, res) => {
     feed.publish({
       actor: "system",
       kind: "onchain",
-      message: `Invoice #${id} settlement transaction confirmed`,
+      message: config.showcase
+        ? `SHOWCASE: invoice #${id} settlement simulated in memory`
+        : `Invoice #${id} settlement transaction confirmed`,
       invoiceId: id,
       deployHash: r.deployHashes.at(-1),
     });
