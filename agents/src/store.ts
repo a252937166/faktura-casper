@@ -14,6 +14,7 @@ export interface InvoiceRecord {
     | "underwriting"
     | "approved"
     | "rejected"
+    | "policy_blocked"
     | "funded"
     | "settled"
     | "defaulted"
@@ -49,6 +50,10 @@ export interface InvoiceRecord {
     defaultHash?: string;
     attestHashes: string[];
     advanceMotes?: string;
+    /** Typed contract error when the chain refused to fund (e.g. User error: 15). */
+    fundError?: string;
+    /** Funding succeeded but the attestation deploy needs a retry. */
+    attestPending?: boolean;
   };
 }
 

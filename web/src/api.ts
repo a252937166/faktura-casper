@@ -44,6 +44,8 @@ export interface InvoiceRecord {
     settleHash?: string;
     defaultHash?: string;
     attestHashes: string[];
+    fundError?: string;
+    attestPending?: boolean;
   };
 }
 
@@ -172,6 +174,9 @@ export const api = {
 
 export const motesToCspr = (m: string | undefined) =>
   m ? Number(BigInt(m) / 1_000_000n) / 1000 : 0;
+
+/** Simulated showcase writes carry a `showcase:` tag — never explorer-linkable. */
+export const isSimulatedHash = (h?: string) => !!h && h.startsWith("showcase");
 
 export const stateName = (s: number) =>
   ["LISTED", "FUNDED", "SETTLED", "DEFAULTED"][s] ?? `#${s}`;
