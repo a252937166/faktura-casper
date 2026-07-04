@@ -976,13 +976,30 @@ function Drawer({
 
         <div className="section">
           <h3>On-chain trail</h3>
-          {txs.length === 0 && <div className="muted">No transactions yet.</div>}
+          <div className="fw-sub">
+            {txs.every(([, h]) => isSimulatedHash(String(h)))
+              ? txs.length > 0
+                ? "All rows below are simulated showcase writes — nothing was signed."
+                : ""
+              : "Real deploys link to the explorer; simulated showcase writes are labeled."}
+          </div>
+          {txs.length === 0 && !record.chain.fundError && (
+            <div className="muted">No transactions yet.</div>
+          )}
           {txs.map(([label, hash]) => (
             <div className="txlink" key={String(hash)}>
               <span>{label}</span>
               <TxLink hash={String(hash)} explorer={explorer} />
             </div>
           ))}
+          {record.chain.fundError && (
+            <div className="txlink">
+              <span>Fund (advance transfer)</span>
+              <span className="fw-verdict fail" style={{ padding: "3px 8px" }}>
+                blocked — {record.chain.fundError}
+              </span>
+            </div>
+          )}
           {record.chain.attestPending && (
             <div className="note" style={{ marginTop: 8 }}>
               Funded on-chain; attestation retry required.
@@ -1224,7 +1241,13 @@ function X402Panel({
 }
 
 /** Judge Demo: a guided, self-driving walkthrough of the whole lifecycle. */
-const JUDGE_STEPS = [
+const JUDGE_STEPS: {
+  actor: string;
+  title: string;
+  detail: string;
+  /** Honest variant shown when the host runs in showcase mode. */
+  showcaseDetail?: string;
+}[] = [
   {
     actor: "investor",
     title: "LP deposits CSPR",
@@ -1251,18 +1274,24 @@ const JUDGE_STEPS = [
     actor: "underwriter",
     title: "Contract registers the invoice",
     detail: "register_invoice writes the receivable on-chain with the decision hash.",
+    showcaseDetail:
+      "register_invoice semantics replayed in memory here — the seeded records link to the real testnet registrations.",
   },
   {
     actor: "underwriter",
     title: "Pool funds the supplier",
     detail:
       "fund_invoice streams the advance from the pool to the supplier account (never the debtor).",
+    showcaseDetail:
+      "In this showcase the advance moves in memory only; the seeded FUNDED invoices carry the real fund_invoice deploys.",
   },
   {
     actor: "underwriter",
     title: "AI decision is attested on-chain",
     detail:
       "The SHA-256 of the full decision memo is anchored — autonomous underwriting you can audit.",
+    showcaseDetail:
+      "Anchoring is simulated for new showcase writes; the seeded attestations are real, explorer-linkable deploys.",
   },
   {
     actor: "oracle",
@@ -1274,6 +1303,8 @@ const JUDGE_STEPS = [
     title: "Debtor settles / collector writes off",
     detail:
       "On payment the pool realizes yield; past due + grace, the collector key defaults it and the loss hits the share price.",
+    showcaseDetail:
+      "Settlement and write-off are simulated here; the seeded SETTLED and DEFAULTED invoices link to the real transactions.",
   },
 ];
 
@@ -1281,6 +1312,7 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
   const [i, setI] = useState(0);
   const step = JUDGE_STEPS[i];
   const last = i === JUDGE_STEPS.length - 1;
+  const live = meta?.mode === "live-testnet";
   return (
     <>
       <div className="drawer-backdrop" onClick={onClose} />
@@ -1288,7 +1320,12 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
         <div className="judge-head">
           <div>
             <div className="judge-kicker">JUDGE DEMO · the 30-second story</div>
-            <h2>How Faktura moves capital, safely</h2>
+            <h2>
+              How Faktura moves capital, safely{" "}
+              <span className={`badge ${live ? "FUNDED" : "LISTED"}`}>
+                {live ? "LIVE TESTNET" : "SHOWCASE"}
+              </span>
+            </h2>
           </div>
           <button className="judge-x" onClick={onClose}>
             ✕
@@ -1313,7 +1350,7 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
               {ACTOR_ICON[step.actor] ?? "•"} {step.actor}
             </div>
             <h3>{step.title}</h3>
-            <p>{step.detail}</p>
+            <p>{!live && step.showcaseDetail ? step.showcaseDetail : step.detail}</p>
             {i === 3 && meta?.policy && (
               <div className="jd-policy">
                 On-chain hard caps — risk ≤ {meta.policy.maxRiskScore} · discount{" "}
@@ -1336,7 +1373,7 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
               </button>
               {last ? (
                 <button className="btn sm" onClick={onClose}>
-                  Explore the live desk →
+                  {live ? "Explore the live desk →" : "Explore the showcase desk →"}
                 </button>
               ) : (
                 <button className="btn sm" onClick={() => setI(i + 1)}>
@@ -1345,8 +1382,9 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
               )}
             </div>
             <div className="jd-hint">
-              Every step below is a real Casper Testnet transaction in live mode — follow the tx
-              links in the pipeline and activity feed.
+              {live
+                ? "Every step below is a real Casper Testnet transaction — follow the tx links in the pipeline and activity feed."
+                : "In this showcase the steps replay in memory (nothing is signed). The seeded records link to the real Casper Testnet transactions; run the stack locally in live mode to sign every step for real."}
             </div>
           </div>
         </div>

@@ -142,7 +142,7 @@ off-chain memo matches the on-chain anchor).
 Two ways to see Faktura, honestly labeled (the UI shows the active mode in a
 banner):
 
-- **Hosted showcase** — <https://faktura.axiqo.xyz> runs in **showcase mode**:
+- **Hosted showcase** — [faktura.axiqo.xyz](https://faktura.axiqo.xyz) runs in **showcase mode**:
   on-chain *reads* come from a captured snapshot of the real testnet contract
   (verifiable on cspr.live) and the AI underwriter runs *live*, but *writes*
   are simulated in server memory so visitors don't burn testnet gas or wait
