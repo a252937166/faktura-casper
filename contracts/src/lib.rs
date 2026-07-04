@@ -83,6 +83,26 @@ pub struct Attestation {
     pub ts: u64,
 }
 
+/// On-chain underwriting policy. The LLM proposes; this struct — enforced by
+/// the contract itself in [`FakturaHub::register_invoice`] and
+/// [`FakturaHub::fund_invoice`] — decides whether capital can move. Even a
+/// buggy or compromised underwriter key cannot register assets above the risk
+/// ceiling, price outside the discount band, or concentrate the pool past the
+/// exposure caps.
+#[odra::odra_type]
+pub struct Policy {
+    /// Maximum accepted AI risk score (0-100); register reverts above this.
+    pub max_risk_score: u8,
+    /// Minimum discount (bps) — the pool must be paid for taking risk.
+    pub min_discount_bps: u32,
+    /// Maximum discount (bps) — protects suppliers from predatory pricing.
+    pub max_discount_bps: u32,
+    /// Single-invoice advance cap as bps of pool value at funding time.
+    pub max_single_invoice_bps: u32,
+    /// Max outstanding funded exposure per debtor tag, bps of pool value.
+    pub max_debtor_exposure_bps: u32,
+}
+
 /// Aggregated pool statistics for dashboards.
 #[odra::odra_type]
 pub struct PoolStats {
@@ -131,6 +151,14 @@ pub enum Error {
     InvalidDiscount = 11,
     /// Due date must be in the future at registration time.
     InvalidDueDate = 12,
+    /// AI risk score exceeds the on-chain policy ceiling.
+    RiskAbovePolicy = 13,
+    /// Discount is outside the on-chain policy band.
+    DiscountOutOfPolicy = 14,
+    /// Advance would exceed the single-invoice share of the pool.
+    SingleInvoiceCapExceeded = 15,
+    /// Advance would exceed the per-debtor exposure cap.
+    DebtorExposureCapExceeded = 16,
 }
 
 /// Emitted when an LP deposits CSPR into the pool.
@@ -201,6 +229,21 @@ pub struct InvoiceDefaulted {
     pub loss: U512,
 }
 
+/// Emitted when the admin updates the on-chain underwriting policy.
+#[odra::event]
+pub struct PolicyUpdated {
+    /// Maximum accepted AI risk score.
+    pub max_risk_score: u8,
+    /// Minimum discount (bps).
+    pub min_discount_bps: u32,
+    /// Maximum discount (bps).
+    pub max_discount_bps: u32,
+    /// Single-invoice advance cap (bps of pool value).
+    pub max_single_invoice_bps: u32,
+    /// Per-debtor exposure cap (bps of pool value).
+    pub max_debtor_exposure_bps: u32,
+}
+
 /// Emitted for every agent attestation.
 #[odra::event]
 pub struct AgentAttested {
@@ -226,7 +269,8 @@ pub struct AgentAttested {
         InvoiceFunded,
         InvoiceSettled,
         InvoiceDefaulted,
-        AgentAttested
+        AgentAttested,
+        PolicyUpdated
     ]
 )]
 pub struct FakturaHub {
@@ -234,8 +278,11 @@ pub struct FakturaHub {
     agent: Var<Address>,
     collector: Var<Address>,
     grace_ms: Var<u64>,
+    policy: Var<Policy>,
     invoice_count: Var<u64>,
     invoices: Mapping<u64, Invoice>,
+    /// Outstanding funded advance per debtor tag (for the exposure cap).
+    debtor_exposure: Mapping<String, U512>,
     total_shares: Var<U512>,
     shares: Mapping<Address, U512>,
     liquid: Var<U512>,
@@ -257,6 +304,14 @@ impl FakturaHub {
         self.agent.set(agent);
         self.collector.set(agent);
         self.grace_ms.set(grace_ms);
+        // Conservative defaults — the admin can retune via `set_policy`.
+        self.policy.set(Policy {
+            max_risk_score: 70,
+            min_discount_bps: 50,
+            max_discount_bps: 3_000,
+            max_single_invoice_bps: 5_000,
+            max_debtor_exposure_bps: 6_000,
+        });
         self.invoice_count.set(0);
         self.attestation_count.set(0);
         self.total_shares.set(U512::zero());
@@ -276,6 +331,35 @@ impl FakturaHub {
         self.require_admin();
         self.agent.set(agent);
         self.collector.set(collector);
+    }
+
+    /// Updates the on-chain underwriting policy. Admin only.
+    pub fn set_policy(
+        &mut self,
+        max_risk_score: u8,
+        min_discount_bps: u32,
+        max_discount_bps: u32,
+        max_single_invoice_bps: u32,
+        max_debtor_exposure_bps: u32,
+    ) {
+        self.require_admin();
+        if min_discount_bps > max_discount_bps || max_discount_bps as u64 >= BPS_DENOMINATOR {
+            self.env().revert(Error::InvalidDiscount);
+        }
+        self.policy.set(Policy {
+            max_risk_score,
+            min_discount_bps,
+            max_discount_bps,
+            max_single_invoice_bps,
+            max_debtor_exposure_bps,
+        });
+        self.env().emit_event(PolicyUpdated {
+            max_risk_score,
+            min_discount_bps,
+            max_discount_bps,
+            max_single_invoice_bps,
+            max_debtor_exposure_bps,
+        });
     }
 
     // ------------------------------------------------------------------
@@ -371,10 +455,20 @@ impl FakturaHub {
         if due_ts <= now {
             self.env().revert(Error::InvalidDueDate);
         }
+        // On-chain policy: the underwriter key cannot register assets above
+        // the risk ceiling or priced outside the discount band, no matter
+        // what the off-chain agent (or a compromised key) proposes.
+        let policy = self.load_policy();
+        if risk_score > policy.max_risk_score {
+            self.env().revert(Error::RiskAbovePolicy);
+        }
+        if discount_bps < policy.min_discount_bps || discount_bps > policy.max_discount_bps {
+            self.env().revert(Error::DiscountOutOfPolicy);
+        }
 
         let id = self.invoice_count.get_or_default() + 1;
-        let advance =
-            face_value * U512::from(BPS_DENOMINATOR - discount_bps as u64) / U512::from(BPS_DENOMINATOR);
+        let advance = face_value * U512::from(BPS_DENOMINATOR - discount_bps as u64)
+            / U512::from(BPS_DENOMINATOR);
 
         let invoice = Invoice {
             id,
@@ -407,6 +501,10 @@ impl FakturaHub {
     }
 
     /// Pays the advance out of the pool to the supplier. Underwriter agent only.
+    ///
+    /// Enforces the on-chain concentration policy: a single advance may not
+    /// exceed `max_single_invoice_bps` of pool value, and cumulative funded
+    /// exposure to one debtor tag may not exceed `max_debtor_exposure_bps`.
     pub fn fund_invoice(&mut self, id: u64) {
         self.require_agent();
         let mut invoice = self.load_invoice(id);
@@ -417,6 +515,21 @@ impl FakturaHub {
         if invoice.advance > liquid {
             self.env().revert(Error::InsufficientLiquidity);
         }
+        let policy = self.load_policy();
+        let pool_value = self.pool_value();
+        let single_cap =
+            pool_value * U512::from(policy.max_single_invoice_bps) / U512::from(BPS_DENOMINATOR);
+        if invoice.advance > single_cap {
+            self.env().revert(Error::SingleInvoiceCapExceeded);
+        }
+        let exposure = self.debtor_exposure.get_or_default(&invoice.debtor_tag);
+        let exposure_cap =
+            pool_value * U512::from(policy.max_debtor_exposure_bps) / U512::from(BPS_DENOMINATOR);
+        if exposure + invoice.advance > exposure_cap {
+            self.env().revert(Error::DebtorExposureCapExceeded);
+        }
+        self.debtor_exposure
+            .set(&invoice.debtor_tag, exposure + invoice.advance);
 
         self.liquid.set(liquid - invoice.advance);
         self.deployed
@@ -452,6 +565,7 @@ impl FakturaHub {
         self.liquid.set(self.liquid.get_or_default() + paid);
         self.total_settled
             .set(self.total_settled.get_or_default() + paid);
+        self.release_exposure(&invoice.debtor_tag, invoice.advance);
 
         invoice.state = state::SETTLED;
         invoice.closed_ts = self.env().get_block_time();
@@ -481,6 +595,7 @@ impl FakturaHub {
             .set(self.deployed.get_or_default() - invoice.advance);
         self.total_defaulted
             .set(self.total_defaulted.get_or_default() + invoice.advance);
+        self.release_exposure(&invoice.debtor_tag, invoice.advance);
 
         invoice.state = state::DEFAULTED;
         invoice.closed_ts = now;
@@ -585,6 +700,16 @@ impl FakturaHub {
         (self.admin.get(), self.agent.get(), self.collector.get())
     }
 
+    /// Returns the on-chain underwriting policy.
+    pub fn get_policy(&self) -> Policy {
+        self.load_policy()
+    }
+
+    /// Returns the outstanding funded exposure for a debtor tag (motes).
+    pub fn debtor_exposure_of(&self, debtor_tag: String) -> U512 {
+        self.debtor_exposure.get_or_default(&debtor_tag)
+    }
+
     // ------------------------------------------------------------------
     // Internal helpers
     // ------------------------------------------------------------------
@@ -594,6 +719,26 @@ impl FakturaHub {
             Some(invoice) => invoice,
             None => self.env().revert(Error::InvoiceNotFound),
         }
+    }
+
+    fn load_policy(&self) -> Policy {
+        self.policy.get().unwrap_or(Policy {
+            max_risk_score: 70,
+            min_discount_bps: 50,
+            max_discount_bps: 3_000,
+            max_single_invoice_bps: 5_000,
+            max_debtor_exposure_bps: 6_000,
+        })
+    }
+
+    fn release_exposure(&mut self, debtor_tag: &String, advance: U512) {
+        let exposure = self.debtor_exposure.get_or_default(debtor_tag);
+        let next = if exposure > advance {
+            exposure - advance
+        } else {
+            U512::zero()
+        };
+        self.debtor_exposure.set(debtor_tag, next);
     }
 
     fn require_agent(&self) {
@@ -699,9 +844,7 @@ mod tests {
 
         // Debtor settles at face value; pool realizes 3 CSPR yield.
         f.env.set_caller(f.debtor);
-        f.hub
-            .with_tokens(U512::from(100 * CSPR))
-            .settle_invoice(id);
+        f.hub.with_tokens(U512::from(100 * CSPR)).settle_invoice(id);
         let stats = f.hub.stats();
         assert_eq!(stats.liquid, U512::from(203 * CSPR));
         assert_eq!(stats.deployed, U512::zero());
@@ -749,9 +892,9 @@ mod tests {
     #[test]
     fn share_price_appreciates_for_late_lps() {
         let mut f = setup();
-        // Investor 1 deposits 100 CSPR.
+        // Investor 1 deposits 200 CSPR (advance stays under the 50% pool cap).
         f.env.set_caller(f.investor);
-        f.hub.with_tokens(U512::from(100 * CSPR)).deposit();
+        f.hub.with_tokens(U512::from(200 * CSPR)).deposit();
 
         // 100 CSPR invoice at 5% discount funded and settled -> +5 CSPR yield.
         f.env.set_caller(f.agent);
@@ -767,13 +910,11 @@ mod tests {
         );
         f.hub.fund_invoice(id);
         f.env.set_caller(f.debtor);
-        f.hub
-            .with_tokens(U512::from(100 * CSPR))
-            .settle_invoice(id);
+        f.hub.with_tokens(U512::from(100 * CSPR)).settle_invoice(id);
 
-        // Pool is now 105 CSPR backed by 100 shares. A new 105 CSPR deposit
-        // must mint exactly 100 shares.
-        let admin_deposit = U512::from(105 * CSPR);
+        // Pool is now 205 CSPR backed by 200 shares (1.025/share). A 102.5
+        // CSPR deposit must mint exactly 100 shares.
+        let admin_deposit = U512::from(1025 * CSPR / 10);
         f.env.set_caller(f.admin);
         f.hub.with_tokens(admin_deposit).deposit();
         assert_eq!(f.hub.shares_of(f.admin), U512::from(100 * CSPR));
@@ -838,7 +979,7 @@ mod tests {
 
         // Fund properly, then double-fund must fail.
         f.env.set_caller(f.investor);
-        f.hub.with_tokens(U512::from(100 * CSPR)).deposit();
+        f.hub.with_tokens(U512::from(200 * CSPR)).deposit();
         f.env.set_caller(f.agent);
         f.hub.fund_invoice(id);
         assert_eq!(
@@ -875,21 +1016,179 @@ mod tests {
     }
 
     #[test]
-    fn withdraw_limited_to_liquid_capital() {
+    fn policy_blocks_risk_above_ceiling() {
+        let mut f = setup();
+        f.env.set_caller(f.agent);
+        // Default policy caps risk at 70 — a compromised agent key still
+        // cannot register a risk-90 asset.
+        assert_eq!(
+            f.hub
+                .try_register_invoice(
+                    f.supplier,
+                    String::from("debtor:shady"),
+                    String::from("doc:z"),
+                    U512::from(10 * CSPR),
+                    f.env.block_time() + DAY_MS,
+                    90,
+                    300,
+                    String::from("memo:risky"),
+                )
+                .unwrap_err(),
+            Error::RiskAbovePolicy.into()
+        );
+    }
+
+    #[test]
+    fn policy_enforces_discount_band() {
+        let mut f = setup();
+        f.env.set_caller(f.agent);
+        // Below the 50 bps floor: the pool must be paid for risk.
+        assert_eq!(
+            f.hub
+                .try_register_invoice(
+                    f.supplier,
+                    String::from("d"),
+                    String::from("h"),
+                    U512::from(10 * CSPR),
+                    f.env.block_time() + DAY_MS,
+                    10,
+                    10,
+                    String::from("m"),
+                )
+                .unwrap_err(),
+            Error::DiscountOutOfPolicy.into()
+        );
+        // Above the 3000 bps cap: predatory pricing is rejected.
+        assert_eq!(
+            f.hub
+                .try_register_invoice(
+                    f.supplier,
+                    String::from("d"),
+                    String::from("h"),
+                    U512::from(10 * CSPR),
+                    f.env.block_time() + DAY_MS,
+                    10,
+                    4_000,
+                    String::from("m"),
+                )
+                .unwrap_err(),
+            Error::DiscountOutOfPolicy.into()
+        );
+    }
+
+    #[test]
+    fn policy_caps_single_invoice_share_of_pool() {
         let mut f = setup();
         f.env.set_caller(f.investor);
         f.hub.with_tokens(U512::from(100 * CSPR)).deposit();
+
+        // 80 CSPR advance on a 100 CSPR pool = 80% > the 50% single cap.
+        f.env.set_caller(f.agent);
+        let id = f.hub.register_invoice(
+            f.supplier,
+            String::from("debtor:big"),
+            String::from("doc:big"),
+            U512::from(84 * CSPR),
+            f.env.block_time() + DAY_MS,
+            30,
+            500, // advance = 79.8 CSPR
+            String::from("memo:big"),
+        );
+        assert_eq!(
+            f.hub.try_fund_invoice(id).unwrap_err(),
+            Error::SingleInvoiceCapExceeded.into()
+        );
+    }
+
+    #[test]
+    fn policy_caps_debtor_exposure_and_releases_on_settle() {
+        let mut f = setup();
+        f.env.set_caller(f.investor);
+        f.hub.with_tokens(U512::from(100 * CSPR)).deposit();
+
+        let register = |f: &mut Fixture, face: u64| {
+            f.env.set_caller(f.agent);
+            f.hub.register_invoice(
+                f.supplier,
+                String::from("debtor:concentrated"),
+                String::from("doc:c"),
+                U512::from(face * CSPR),
+                f.env.block_time() + DAY_MS,
+                30,
+                500,
+                String::from("memo:c"),
+            )
+        };
+
+        // First 40 CSPR invoice funds fine (38 advance < 60% of 100 pool).
+        let a = register(&mut f, 40);
+        f.hub.fund_invoice(a);
+        // Second 40 CSPR to the SAME debtor would push exposure to ~76 > 60 cap.
+        let b = register(&mut f, 40);
+        assert_eq!(
+            f.hub.try_fund_invoice(b).unwrap_err(),
+            Error::DebtorExposureCapExceeded.into()
+        );
+        assert_eq!(
+            f.hub
+                .debtor_exposure_of(String::from("debtor:concentrated")),
+            U512::from(38 * CSPR)
+        );
+
+        // Settling the first frees the exposure; the second can now fund.
+        f.env.set_caller(f.debtor);
+        f.hub.with_tokens(U512::from(40 * CSPR)).settle_invoice(a);
+        assert_eq!(
+            f.hub
+                .debtor_exposure_of(String::from("debtor:concentrated")),
+            U512::zero()
+        );
+        f.env.set_caller(f.agent);
+        f.hub.fund_invoice(b);
+    }
+
+    #[test]
+    fn set_policy_is_admin_only_and_applies() {
+        let mut f = setup();
+        f.env.set_caller(f.agent);
+        assert_eq!(
+            f.hub
+                .try_set_policy(90, 50, 3_000, 5_000, 6_000)
+                .unwrap_err(),
+            Error::NotAdmin.into()
+        );
+        f.env.set_caller(f.admin);
+        f.hub.set_policy(90, 50, 3_000, 5_000, 6_000);
+        assert_eq!(f.hub.get_policy().max_risk_score, 90);
+
+        // Risk 85 now passes registration under the loosened ceiling.
+        f.env.set_caller(f.agent);
+        f.hub.register_invoice(
+            f.supplier,
+            String::from("d"),
+            String::from("h"),
+            U512::from(10 * CSPR),
+            f.env.block_time() + DAY_MS,
+            85,
+            300,
+            String::from("m"),
+        );
+    }
+
+    #[test]
+    fn withdraw_limited_to_liquid_capital() {
+        let mut f = setup();
+        f.env.set_caller(f.investor);
+        f.hub.with_tokens(U512::from(200 * CSPR)).deposit();
 
         let id = register_default_invoice(&mut f);
         f.env.set_caller(f.agent);
         f.hub.fund_invoice(id);
 
-        // 97 CSPR deployed, 3 liquid: full withdrawal must fail.
+        // 97 CSPR deployed, 103 liquid: full withdrawal must fail.
         f.env.set_caller(f.investor);
         assert_eq!(
-            f.hub
-                .try_withdraw(f.hub.shares_of(f.investor))
-                .unwrap_err(),
+            f.hub.try_withdraw(f.hub.shares_of(f.investor)).unwrap_err(),
             Error::InsufficientLiquidity.into()
         );
 

@@ -7,7 +7,7 @@ sequenceDiagram
     autonumber
     participant S as Supplier
     participant U as Underwriter agent
-    participant L as LLM (Claude)
+    participant L as LLM
     participant H as FakturaHub (Casper Testnet)
     participant D as Debtor
     participant C as Collector agent
@@ -16,9 +16,10 @@ sequenceDiagram
     U->>U: deterministic pre-checks (amount, tenor, duplicate)
     U->>L: score risk + price discount
     L-->>U: {approve, riskScore, discountBps, rationale}
-    U->>U: policy guardrails (risk ceiling, clamp, exposure cap)
     U->>H: register_invoice(supplier, face, due, risk, discount, memoHash)
+    Note over H: on-chain Policy: risk ceiling + discount band checked here
     U->>H: fund_invoice(id)
+    Note over H: on-chain Policy: single-invoice + per-debtor caps checked here
     H->>S: transfer CSPR advance from the pool
     U->>H: attest(UNDERWRITE_APPROVE, memoHash, model)
     Note over H: decision hash anchored on-chain (audit trail)
@@ -36,7 +37,14 @@ sequenceDiagram
 
 ## On-chain data model (`FakturaHub`, Odra/Rust)
 
-- **Roles**: `admin`, `agent` (underwriter), `collector`. Rotatable by admin.
+- **Roles**: `admin`, `agent` (underwriter), `collector`. Rotatable by admin
+  (`set_agents`); `mark_default` accepts only the collector key, register/fund
+  only the agent key — separation of duties is contract state, not convention.
+- **Policy** (admin-set via `set_policy`, enforced in `register_invoice` /
+  `fund_invoice`): `{max_risk_score, min/max_discount_bps,
+  max_single_invoice_bps, max_debtor_exposure_bps}` — the caps are basis points
+  of **pool value**, per-debtor exposure is tracked in a mapping and released
+  on settle/default. Violations revert with typed errors 13–16.
 - **Invoice**: `{id, supplier, debtor_tag, doc_hash, face_value (motes), due_ts,
   risk_score, discount_bps, decision_hash, state, advance, timestamps}`.
   State machine: `Listed → Funded → (Settled | Defaulted)`.
@@ -59,10 +67,14 @@ process. This is Faktura's core contribution on top of a standard invoice-pool.
 
 ## Trust & safety model
 
-- The **LLM proposes; deterministic Rust + policy code disposes.** Risk ceiling,
-  discount clamp, and pool-exposure cap are enforced off-chain in policy and
-  on-chain in `register_invoice` / `fund_invoice`.
+- The **LLM proposes; the on-chain policy disposes.** Risk ceiling, discount
+  band, single-invoice cap and per-debtor exposure cap live in contract storage
+  and are enforced inside `register_invoice` / `fund_invoice` — a compromised
+  agent key or hallucinating model cannot exceed them (the TypeScript layer
+  keeps softer pre-checks only as a UX courtesy).
 - Access control on every mutating entrypoint; a typed custom error per revert.
+- The underwriter and collector run under **different keys** with disjoint
+  on-chain permissions; the supplier (advance recipient) is a third account.
 - `withdraw()` cannot touch deployed capital, so LP redemptions can't strand
   funded invoices.
 - Every autonomous decision is attested — the system is auditable, not opaque.
@@ -77,7 +89,8 @@ process. This is Faktura's core contribution on top of a standard invoice-pool.
 | `agents/src/collector.ts` | settlement reconciliation + autonomous default |
 | `agents/src/x402.ts` | HTTP-402 machine-payable risk oracle (native CSPR) |
 | `agents/src/chain.ts` | driver over the livenet CLI, per-persona tx queues |
-| `agents/src/llm.ts` | pluggable underwriting model (Anthropic / CLI / fallback) |
+| `agents/src/llm.ts` | pluggable underwriting model (API providers / deterministic fallback) |
+| `agents/src/mcp.ts` | MCP server — 5 tools exposing the desk to other agents |
 | `web/` | React operations dashboard (live SSE feed) |
 
 ## Casper specifics

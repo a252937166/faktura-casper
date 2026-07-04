@@ -107,6 +107,14 @@ export interface ChainStats {
   attestationCount: number;
 }
 
+export interface ChainPolicy {
+  maxRiskScore: number;
+  minDiscountBps: number;
+  maxDiscountBps: number;
+  maxSingleInvoiceBps: number;
+  maxDebtorExposureBps: number;
+}
+
 const realChain = {
   stats: () =>
     livenet<ChainStats>("agent", ["stats", config.contract]).then((r) => r.result),
@@ -164,9 +172,11 @@ const realChain = {
       ]),
     ),
 
+  // Defaults are written off by the COLLECTOR key — the underwriter key has no
+  // mark_default permission on-chain (separation of duties, see set_agents).
   markDefault: (id: number) =>
-    enqueue("agent", () =>
-      livenet<{ defaulted: number }>("agent", ["default", config.contract, String(id)]),
+    enqueue("collector", () =>
+      livenet<{ defaulted: number }>("collector", ["default", config.contract, String(id)]),
     ),
 
   deposit: (amountMotes: string) =>
@@ -174,9 +184,9 @@ const realChain = {
       livenet<{ deposited: string }>("investor", ["deposit", config.contract, amountMotes]),
     ),
 
-  attest: (kind: string, subjectId: number, payloadHash: string, model: string) =>
-    enqueue("agent", () =>
-      livenet<{ attestationId: number }>("agent", [
+  attest: (kind: string, subjectId: number, payloadHash: string, model: string, persona: Persona = "agent") =>
+    enqueue(persona, () =>
+      livenet<{ attestationId: number }>(persona, [
         "attest",
         config.contract,
         kind,
@@ -185,6 +195,9 @@ const realChain = {
         model,
       ]),
     ),
+
+  policy: () =>
+    livenet<ChainPolicy>("agent", ["policy", config.contract]).then((r) => r.result),
 
   caller: (persona: Persona) =>
     livenet<{ caller: string }>(persona, ["caller"]).then((r) => r.result.caller),

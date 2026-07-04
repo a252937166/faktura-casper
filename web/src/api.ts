@@ -26,6 +26,7 @@ export interface InvoiceRecord {
   status: string;
   intake: {
     supplierName: string;
+    supplierAddress?: string;
     debtorName: string;
     debtorTag: string;
     amountCspr: number;
@@ -57,6 +58,25 @@ export interface ChainStats {
   attestationCount: number;
 }
 
+export interface ChainPolicy {
+  maxRiskScore: number;
+  minDiscountBps: number;
+  maxDiscountBps: number;
+  maxSingleInvoiceBps: number;
+  maxDebtorExposureBps: number;
+}
+
+export interface Meta {
+  mode: "live-testnet" | "showcase";
+  contract: string;
+  chain: string;
+  explorer: string;
+  x402Price: string;
+  llmProvider: string;
+  policy: ChainPolicy | null;
+  supplier: string | null;
+}
+
 export interface PoolResponse {
   stats: ChainStats;
   onchain: {
@@ -83,7 +103,7 @@ export const API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/\/api$/, "/a
 export const api = {
   pool: () => fetch(`${API_BASE}/pool`).then((r) => j<PoolResponse>(r)),
   invoices: () => fetch(`${API_BASE}/invoices`).then((r) => j<InvoiceRecord[]>(r)),
-  meta: () => fetch(`${API_BASE}/meta`).then((r) => j<{ contract: string; explorer: string; chain: string }>(r)),
+  meta: () => fetch(`${API_BASE}/meta`).then((r) => j<Meta>(r)),
   submit: (body: unknown) =>
     fetch(`${API_BASE}/invoices`, {
       method: "POST",
