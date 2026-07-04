@@ -220,11 +220,15 @@ export default function App() {
           </h1>
           <p className="hero-sub">
             Faktura is an autonomous invoice-financing desk on Casper: an AI agent underwrites each
-            receivable, a native-CSPR pool funds it, and every decision is hash-anchored on-chain —
-            fully auditable.
+            receivable, a native-CSPR pool funds it, and every decision is hash-anchored on-chain
+            {meta?.mode === "live-testnet"
+              ? " — fully auditable."
+              : " in live mode — this showcase seeds real proof and simulates new writes."}
           </p>
           <p className="hero-note">
-            LLM proposes → policy disposes → registered, funded &amp; attested on-chain.
+            {meta?.mode === "live-testnet"
+              ? "LLM proposes → policy disposes → registered, funded & attested on-chain."
+              : "LLM proposes → policy disposes → seeded on-chain proof, new writes simulated."}
           </p>
           <div className="hero-cta">
             <button className="btn-primary" onClick={() => setJudgeOpen(true)}>
@@ -264,7 +268,11 @@ export default function App() {
             </div>
             <div>
               <b>{stats?.attestationCount ?? 0}</b>
-              <span>AI decisions on-chain</span>
+              <span>
+                {meta?.mode === "live-testnet"
+                  ? "AI decisions on-chain"
+                  : "AI decisions / seeded anchors"}
+              </span>
             </div>
           </div>
         </div>
@@ -341,7 +349,11 @@ export default function App() {
         <div className="stat">
           <div className="label">AI Attestations</div>
           <div className="value">{stats?.attestationCount ?? 0}</div>
-          <div className="sub">decision hashes anchored on-chain</div>
+          <div className="sub">
+            {meta?.mode === "live-testnet"
+              ? "decision hashes anchored on-chain"
+              : "seeded anchors + simulated new decisions"}
+          </div>
         </div>
       </section>
 
@@ -441,7 +453,11 @@ export default function App() {
                   setBusy(true);
                   try {
                     await api.deposit(Number(depositAmt));
-                    notify(`Deposited ${depositAmt} CSPR into the pool`);
+                    notify(
+                      meta?.mode === "live-testnet"
+                        ? `Deposited ${depositAmt} CSPR into the pool`
+                        : `SHOWCASE: simulated ${depositAmt} CSPR deposit in memory`,
+                    );
                     refresh();
                   } catch (e) {
                     notify(`Deposit failed: ${(e as Error).message}`);
@@ -453,7 +469,9 @@ export default function App() {
                 Deposit CSPR
               </button>
               <span className="muted" style={{ fontSize: 11.5, fontFamily: "var(--mono)" }}>
-                share price {sharePrice.toFixed(4)} · funded from real testnet balance
+                {meta?.mode === "live-testnet"
+                  ? `share price ${sharePrice.toFixed(4)} · funded from real testnet balance`
+                  : `share price ${sharePrice.toFixed(4)} · showcase deposit simulated in memory`}
               </span>
             </div>
           </div>
@@ -461,6 +479,7 @@ export default function App() {
           <div id="sell">
             <SubmitPanel
               supplierDefault={meta?.supplier ?? null}
+              liveMode={meta?.mode === "live-testnet"}
               onSubmitted={(r) => {
                 notify(
                   r.status === "rejected"
@@ -621,9 +640,11 @@ function ProofStrip({
 
 function SubmitPanel({
   supplierDefault,
+  liveMode,
   onSubmitted,
 }: {
   supplierDefault: string | null;
+  liveMode: boolean;
   onSubmitted: (r: InvoiceRecord) => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -782,7 +803,9 @@ function SubmitPanel({
             {busy ? "Underwriting…" : "Submit to underwriter"}
           </button>
           <span className="muted" style={{ fontSize: 12 }}>
-            LLM proposes → on-chain policy disposes → registered, funded & attested on Casper
+            {liveMode
+              ? "LLM proposes → on-chain policy disposes → registered, funded & attested on Casper"
+              : "LLM proposes → on-chain policy disposes → writes simulated in showcase"}
           </span>
         </div>
       </div>
@@ -908,7 +931,13 @@ function Drawer({
         )}
 
         {d && meta?.policy && (
-          <PolicyFirewall record={record} d={d} policy={meta.policy} pool={pool} />
+          <PolicyFirewall
+            record={record}
+            d={d}
+            policy={meta.policy}
+            pool={pool}
+            showcase={showcase}
+          />
         )}
 
         <div className="section">
@@ -994,11 +1023,13 @@ function PolicyFirewall({
   d,
   policy,
   pool,
+  showcase,
 }: {
   record: InvoiceRecord;
   d: NonNullable<InvoiceRecord["decision"]>;
   policy: NonNullable<Meta["policy"]>;
   pool: PoolResponse | null;
+  showcase: boolean;
 }) {
   const tvl = pool ? motesToCspr(pool.stats.liquid) + motesToCspr(pool.stats.deployed) : 0;
   const advance = (record.intake.amountCspr * (10_000 - d.discountBps)) / 10_000;
@@ -1026,7 +1057,11 @@ function PolicyFirewall({
   return (
     <div className="section firewall">
       <h3>Casper Policy Firewall</h3>
-      <div className="fw-sub">Enforced in the contract at register / fund — not by the agent.</div>
+      <div className="fw-sub">
+        {showcase
+          ? "SHOWCASE: the same contract policy is replayed in memory — nothing is signed."
+          : "LIVE: enforced by the contract at register / fund — not by the agent."}
+      </div>
       {checks.map((c) => (
         <div className="fw-row" key={c.label}>
           <span className="fw-label">{c.label}</span>
@@ -1038,10 +1073,14 @@ function PolicyFirewall({
       ))}
       <div className={`fw-result ${allow ? "allow" : "block"}`}>
         {allow ? (
-          <>✓ Result: capital movement allowed on-chain</>
+          showcase ? (
+            <>✓ Result: policy allowed funding — simulated in showcase</>
+          ) : (
+            <>✓ Result: capital movement allowed on-chain</>
+          )
         ) : (
           <>
-            ✕ Result: transaction reverted by Casper policy
+            ✕ Result: funding blocked by Casper policy
             {record.chain.fundError && <> — {record.chain.fundError}</>}
           </>
         )}
