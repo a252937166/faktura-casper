@@ -3,7 +3,7 @@
 | # | What | Link |
 |---|---|---|
 | 1 | **Live showcase** (honest mode banner; simulated writes are labeled, never explorer-linked) | [faktura.axiqo.xyz](https://faktura.axiqo.xyz) |
-| 2 | **Demo video** (3 min) | [youtu.be/9dmCu1luaoE](https://youtu.be/9dmCu1luaoE) |
+| 2 | **Demo video** (3 min) | [youtu.be/47ZNPZlRXVA](https://youtu.be/47ZNPZlRXVA) |
 | 3 | **Contract package** on Casper Testnet | [testnet.cspr.live/contract-package/fb209bb1d3a1d5e675841f…](https://testnet.cspr.live/contract-package/fb209bb1d3a1d5e675841f7d184ab7fa96d65adc099f6fd0105f29115fb49d7e) |
 | 4 | **Evidence pack** — every judging claim as a testnet tx | [DORAHACKS.md](DORAHACKS.md) |
 | 5 | **Policy-reverted funding** — the AI approved, the contract said no (`User error: 15`, SingleInvoiceCapExceeded) | [testnet.cspr.live/transaction/830ebd775835ffdeba1122b9969…](https://testnet.cspr.live/transaction/830ebd775835ffdeba1122b99695a0bf589de442f80d1c31c1d43c4e7039aaea) |
