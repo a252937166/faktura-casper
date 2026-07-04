@@ -154,16 +154,19 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
     );
   }
 
-  // Exposure cap vs. current pool liquidity.
+  // Liquidity sanity check only: don't send an intake on-chain if the pool
+  // plainly can't pay the advance. Concentration limits (single-invoice and
+  // per-debtor caps) are deliberately LEFT to the contract, so the on-chain
+  // policy revert is observable — that's the point of the system.
   if (approve) {
     const stats = await chain.stats();
     const liquid = BigInt(stats.liquid);
     const advance =
       (BigInt(Math.round(input.amountCspr * 1e9)) * BigInt(10_000 - discount_bps)) / 10_000n;
-    if (liquid === 0n || advance * 10_000n > liquid * BigInt(p.maxPoolShareBps)) {
+    if (advance > liquid) {
       approve = false;
       policyNotes.push(
-        `exposure cap: advance ${advance / CSPR} CSPR vs liquid ${liquid / CSPR} CSPR (max ${p.maxPoolShareBps} bps of pool)`,
+        `liquidity check: advance ${advance / CSPR} CSPR exceeds liquid ${liquid / CSPR} CSPR`,
       );
     }
   }
@@ -241,35 +244,77 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
     deployHash: record.chain.registerHash,
   });
 
-  const funded = await chain.fund(record.id);
-  record.chain.fundHash = funded.deployHashes.at(-1);
-  record.status = "funded";
-  upsertInvoice(record);
-  feed.publish({
-    actor: "underwriter",
-    kind: "onchain",
-    message: `Invoice #${record.id} FUNDED — advance paid from the pool to supplier ${supplier.replace("entity-account-", "account-hash-").slice(0, 26)}…`,
-    invoiceId: record.id,
-    deployHash: record.chain.fundHash,
-  });
+  // Funding is where the contract's concentration caps bite. A revert here is
+  // a first-class outcome (the chain overruling the model), not an API error.
+  try {
+    const funded = await chain.fund(record.id);
+    record.chain.fundHash = funded.deployHashes.at(-1);
+    record.status = "funded";
+    upsertInvoice(record);
+    feed.publish({
+      actor: "underwriter",
+      kind: "onchain",
+      message: `Invoice #${record.id} FUNDED — advance paid from the pool to supplier ${supplier.replace("entity-account-", "account-hash-").slice(0, 26)}…`,
+      invoiceId: record.id,
+      deployHash: record.chain.fundHash,
+    });
+  } catch (e) {
+    record.status = "policy_blocked";
+    record.chain.fundError = normalizeRevert((e as Error).message);
+    upsertInvoice(record);
+    feed.publish({
+      actor: "underwriter",
+      kind: "policy_block",
+      message: `Casper policy blocked funding for invoice #${record.id}: ${record.chain.fundError}`,
+      invoiceId: record.id,
+    });
+    return record;
+  }
 
-  const att = await chain.attest(
-    "UNDERWRITE_APPROVE",
-    record.id,
-    decisionHash,
-    "autonomous-ai-underwriter",
-  );
-  record.chain.attestHashes.push(att.deployHashes.at(-1) ?? "");
-  upsertInvoice(record);
-  feed.publish({
-    actor: "underwriter",
-    kind: "attest",
-    message: `Decision memo hash anchored on-chain (attestation #${att.result.attestationId})`,
-    invoiceId: record.id,
-    deployHash: record.chain.attestHashes.at(-1),
-  });
+  // The advance is an irreversible on-chain fact by now — a failed attestation
+  // must not fail the request; it is retried, not rolled back.
+  try {
+    const att = await chain.attest(
+      "UNDERWRITE_APPROVE",
+      record.id,
+      decisionHash,
+      "autonomous-ai-underwriter",
+    );
+    record.chain.attestHashes.push(att.deployHashes.at(-1) ?? "");
+    upsertInvoice(record);
+    feed.publish({
+      actor: "underwriter",
+      kind: "attest",
+      message: `Decision memo hash anchored on-chain (attestation #${att.result.attestationId})`,
+      invoiceId: record.id,
+      deployHash: record.chain.attestHashes.at(-1),
+    });
+  } catch (e) {
+    record.chain.attestPending = true;
+    upsertInvoice(record);
+    feed.publish({
+      actor: "system",
+      kind: "warn",
+      message: `Invoice #${record.id} funded on-chain; attestation retry required (${(e as Error).message.slice(0, 120)})`,
+      invoiceId: record.id,
+    });
+  }
 
   return record;
+}
+
+/** Extracts the typed contract error from a livenet revert message. */
+function normalizeRevert(msg: string): string {
+  const m = msg.match(/User error:\s*(\d+)/);
+  const names: Record<string, string> = {
+    "6": "InsufficientLiquidity",
+    "13": "RiskAbovePolicy",
+    "14": "DiscountOutOfPolicy",
+    "15": "SingleInvoiceCapExceeded",
+    "16": "DebtorExposureCapExceeded",
+  };
+  if (m) return `User error: ${m[1]} (${names[m[1]] ?? "see contracts/src/lib.rs"})`;
+  return msg.slice(0, 160);
 }
 
 async function finalizeReject(

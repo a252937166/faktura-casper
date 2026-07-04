@@ -28,7 +28,12 @@ export function getSeed(): Seed {
   return _seed;
 }
 
-const pseudoHash = () => crypto.randomBytes(32).toString("hex");
+/**
+ * Simulated writes are tagged `showcase:` so no layer can mistake them for an
+ * explorer-linkable deploy — the UI renders them as "simulated write", never
+ * as a CSPR.live link. Real hashes only ever come from the captured seed.
+ */
+const pseudoHash = () => `showcase:${crypto.randomBytes(8).toString("hex")}`;
 const ok = <T>(result: T): ChainResult<T> => ({
   result,
   deployHashes: [pseudoHash()],
@@ -85,9 +90,26 @@ export const showcaseChain = {
     const s = getSeed();
     const inv = s.onchain.find((i) => i.id === id);
     if (inv && inv.state === 0) {
+      const adv = big(inv.advance);
+      // Faithfully replay the contract's fund_invoice policy checks so the
+      // showcase blocks exactly where the real chain would (typed error 15).
+      const policy = await showcaseChain.policy();
+      const poolValue = big(s.stats.liquid) + big(s.stats.deployed);
+      const singleCap = (poolValue * BigInt(policy.maxSingleInvoiceBps)) / 10_000n;
+      if (adv > singleCap) {
+        throw new Error(
+          `showcase policy simulation — fund_invoice reverted with "User error: 15" ` +
+            `(SingleInvoiceCapExceeded: advance ${Number(adv / 1_000_000n) / 1000} CSPR > ` +
+            `${Number(singleCap / 1_000_000n) / 1000} CSPR, ${policy.maxSingleInvoiceBps / 100}% of pool value)`,
+        );
+      }
+      if (adv > big(s.stats.liquid)) {
+        throw new Error(
+          'showcase policy simulation — fund_invoice reverted with "User error: 6" (InsufficientLiquidity)',
+        );
+      }
       inv.state = 1;
       inv.fundedTs = Date.now();
-      const adv = big(inv.advance);
       s.stats.liquid = (big(s.stats.liquid) - adv).toString();
       s.stats.deployed = (big(s.stats.deployed) + adv).toString();
       s.stats.totalFunded = (big(s.stats.totalFunded) + adv).toString();

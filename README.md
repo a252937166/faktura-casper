@@ -54,11 +54,14 @@ Two load-bearing ideas:
    or even a **compromised agent key** cannot exceed those bounds; the deploy
    reverts with a typed error. Exposure is tracked per debtor and released on
    settle/default.
-   *Two layers, one source of truth:* the TypeScript agent also applies a
-   **stricter UX prefilter** (e.g. risk ≤ 65 vs. the contract's hard cap of
-   70) so bad intakes fail fast without burning gas — at boot it reads
-   `get_policy()` and always takes the tighter of the two. The contract is
-   the final authority; the UI banner shows both numbers.
+   *Two layers, one source of truth:* the TypeScript agent applies a stricter
+   prefilter for **risk score and discount** (at boot it reads `get_policy()`
+   and takes the tighter of the two), plus a gas-saving **liquidity sanity
+   check**. Concentration limits are deliberately left to the Casper contract
+   at `fund_invoice` — that on-chain revert is intentionally demonstrable
+   (the "Policy-cap rejection" preset in the UI, and the reverted deploy in
+   the evidence pack). The contract is the final authority; the UI banner
+   shows both layers.
 2. **The on-chain attestation log.** `attest(...)` records
    `{actor, kind, subjectId, payloadHash, model, ts}` for **every** autonomous
    decision — approvals *and* rejections. The SHA-256 of the full decision memo

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   API_BASE,
+  isSimulatedHash,
   motesToCspr,
   stateName,
   type FeedEvent,
@@ -10,6 +11,21 @@ import {
   type PoolResponse,
   type RiskReport,
 } from "./api";
+
+/**
+ * The only way a hash is ever rendered: real deploys link to the explorer,
+ * simulated showcase writes are labeled as such and never linked.
+ */
+function TxLink({ hash, explorer, prefix }: { hash?: string; explorer: string; prefix?: string }) {
+  if (!hash) return <span className="muted">—</span>;
+  if (isSimulatedHash(hash)) return <span className="sim-tag">simulated write — no explorer tx</span>;
+  return (
+    <a target="_blank" rel="noreferrer" href={`${explorer}/deploy/${hash}`}>
+      {prefix}
+      {hash.slice(0, 10)}… ↗
+    </a>
+  );
+}
 
 const ACTOR_ICON: Record<string, string> = {
   underwriter: "AI",
@@ -164,7 +180,7 @@ export default function App() {
         </div>
       )}
 
-      {pool && <ProofStrip pool={pool} invoices={invoices} />}
+      {pool && <ProofStrip pool={pool} invoices={invoices} meta={meta} />}
 
       <section className="hero">
         <div>
@@ -301,7 +317,14 @@ export default function App() {
                 <tbody>
                   {invoices.map((r) => {
                     const chainState = pool?.onchain.find((o) => o.id === r.id);
-                    const status = chainState && r.id ? stateName(chainState.state) : r.status;
+                    // policy_blocked outranks the raw chain state (Listed): the
+                    // register succeeded but the contract refused the funding.
+                    const status =
+                      r.status === "policy_blocked"
+                        ? "policy_blocked"
+                        : chainState && r.id
+                          ? stateName(chainState.state)
+                          : r.status;
                     return (
                       <tr key={r.intakeId} className="row" onClick={() => setSelected(r)}>
                         <td className="mono">{r.intake.invoiceNumber}</td>
@@ -377,7 +400,9 @@ export default function App() {
               notify(
                 r.status === "rejected"
                   ? `Underwriter REJECTED ${r.intake.invoiceNumber}`
-                  : `Underwriter approved & funded ${r.intake.invoiceNumber}`,
+                  : r.status === "policy_blocked"
+                    ? `Casper policy BLOCKED funding of ${r.intake.invoiceNumber} — open it to see the firewall`
+                    : `Underwriter approved & funded ${r.intake.invoiceNumber}`,
               );
               refresh();
             }}
@@ -406,13 +431,11 @@ export default function App() {
                       <span>{e.actor}</span>
                       <span>{timeAgo(e.ts)}</span>
                       {e.deployHash && (
-                        <a
-                          target="_blank"
-                          rel="noreferrer"
-                          href={`https://testnet.cspr.live/deploy/${e.deployHash}`}
-                        >
-                          tx {e.deployHash.slice(0, 8)}…
-                        </a>
+                        <TxLink
+                          hash={e.deployHash}
+                          explorer={pool?.explorer ?? "https://testnet.cspr.live"}
+                          prefix="tx "
+                        />
                       )}
                     </div>
                   </div>
@@ -459,12 +482,25 @@ export default function App() {
   );
 }
 
-/** One-glance on-chain evidence: contract + the latest lifecycle transactions. */
-function ProofStrip({ pool, invoices }: { pool: PoolResponse; invoices: InvoiceRecord[] }) {
+/**
+ * One-glance on-chain evidence: contract + the latest lifecycle transactions.
+ * Only REAL deploys qualify — simulated showcase writes are filtered out, and
+ * the strip is titled SEEDED (not LIVE) when the host runs in showcase mode.
+ */
+function ProofStrip({
+  pool,
+  invoices,
+  meta,
+}: {
+  pool: PoolResponse;
+  invoices: InvoiceRecord[];
+  meta: Meta | null;
+}) {
+  const showcase = meta?.mode !== "live-testnet";
   const latest = (pick: (r: InvoiceRecord) => string | undefined) => {
     for (const r of invoices) {
       const h = pick(r);
-      if (h) return h;
+      if (h && !isSimulatedHash(h)) return h;
     }
     return undefined;
   };
@@ -480,7 +516,9 @@ function ProofStrip({ pool, invoices }: { pool: PoolResponse; invoices: InvoiceR
   ];
   return (
     <div className="proof-strip">
-      <span className="ps-title">LIVE CASPER PROOF</span>
+      <span className="ps-title" title={showcase ? "Real transactions captured from the testnet contract into the showcase seed — new writes here are simulated and never shown as proof." : undefined}>
+        {showcase ? "SEEDED CASPER PROOF" : "LIVE CASPER PROOF"}
+      </span>
       {items.map((it) => (
         <span className="ps-item" key={it.label}>
           <span className="ps-label">{it.label}</span>
@@ -545,10 +583,13 @@ function SubmitPanel({
       history: "new counterparty, one prior invoice disputed and overdue",
     },
     "Policy-cap rejection": {
-      hint: "approved but too large → reverted on-chain",
+      // 80 CSPR ≈ the DORAHACKS evidence case: the AI approves it, the
+      // liquidity sanity check passes, and fund_invoice reverts on the
+      // contract's 50%-of-pool single-invoice cap (User error: 15).
+      hint: "AI approves — the contract cap blocks funding",
       supplierName: "Titan Freight OÜ",
-      debtorName: "Aurora Retail AG",
-      amountCspr: "140",
+      debtorName: "Vega Manufacturing GmbH",
+      amountCspr: "80",
       dueDays: "30",
       description: "Bulk haulage, oversized single shipment against a shallow pool",
       history: "4 prior invoices, all paid within terms",
@@ -676,7 +717,12 @@ function Drawer({
   onSettle: (id: number) => void;
 }) {
   const chainState = pool?.onchain.find((o) => o.id === record.id);
-  const status = chainState && record.id ? stateName(chainState.state) : record.status;
+  const status =
+    record.status === "policy_blocked"
+      ? "policy_blocked"
+      : chainState && record.id
+        ? stateName(chainState.state)
+        : record.status;
   const d = record.decision;
   const explorer = pool?.explorer ?? "https://testnet.cspr.live";
   const showcase = meta?.mode !== "live-testnet";
@@ -799,11 +845,14 @@ function Drawer({
           {txs.map(([label, hash]) => (
             <div className="txlink" key={String(hash)}>
               <span>{label}</span>
-              <a target="_blank" rel="noreferrer" href={`${explorer}/deploy/${hash}`}>
-                {String(hash).slice(0, 14)}… ↗
-              </a>
+              <TxLink hash={String(hash)} explorer={explorer} />
             </div>
           ))}
+          {record.chain.attestPending && (
+            <div className="note" style={{ marginTop: 8 }}>
+              Funded on-chain; attestation retry required.
+            </div>
+          )}
         </div>
 
         {d?.approve && record.id > 0 && (
@@ -846,7 +895,8 @@ function PolicyFirewall({
   const tvl = pool ? motesToCspr(pool.stats.liquid) + motesToCspr(pool.stats.deployed) : 0;
   const advance = (record.intake.amountCspr * (10_000 - d.discountBps)) / 10_000;
   const singleCapCspr = (tvl * policy.maxSingleInvoiceBps) / 10_000;
-  const capExceeded = d.policyNotes.some((n) => /cap|exposure/i.test(n));
+  const capExceeded =
+    !!record.chain.fundError || d.policyNotes.some((n) => /cap|exposure|liquidity/i.test(n));
   const checks = [
     {
       label: "Risk score",
@@ -882,10 +932,16 @@ function PolicyFirewall({
         ) : (
           <>
             ✕ Result: transaction reverted by Casper policy
-            {capExceeded && <> — SingleInvoiceCapExceeded (User error 15)</>}
+            {record.chain.fundError && <> — {record.chain.fundError}</>}
           </>
         )}
       </div>
+      {record.chain.fundError && (
+        <div className="fund-error">
+          fund_invoice → {record.chain.fundError}. The AI approved this invoice and it registered
+          on-chain — the contract refused to move the capital.
+        </div>
+      )}
     </div>
   );
 }
