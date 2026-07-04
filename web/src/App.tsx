@@ -577,7 +577,10 @@ function ProofStrip({
     { label: "Latest attestation", hash: latest((r) => r.chain.attestHashes.at(-1)) },
     {
       label: "Latest decision hash",
-      text: invoices.find((r) => r.decision)?.decision?.decisionHash.slice(0, 21) + "…",
+      text:
+        invoices
+          .find((r) => r.decision && r.chain.registerHash && !isSimulatedHash(r.chain.registerHash))
+          ?.decision?.decisionHash.slice(0, 21) + "…",
     },
   ];
   return (
@@ -872,7 +875,11 @@ function Drawer({
                   model {d.model} · {new Date(d.decidedTs).toLocaleTimeString()}
                 </div>
                 <div className="note" style={{ marginTop: 4 }}>
-                  memo hash {d.decisionHash.slice(0, 26)}… anchored on-chain
+                  memo hash {d.decisionHash.slice(0, 26)}…{" "}
+                  {record.chain.attestHashes.some((h) => h && !isSimulatedHash(h)) ||
+                  (record.chain.registerHash && !isSimulatedHash(record.chain.registerHash))
+                    ? "anchored on-chain"
+                    : "(anchoring simulated in showcase)"}
                 </div>
               </div>
             </div>
@@ -1388,8 +1395,10 @@ function McpDrawer({
       const p = await api.pool();
       const s = p.stats;
       const cspr = (m: string) => Number(BigInt(m) / 1_000_000n) / 1000;
+      // Field-for-field identical to the pool_stats tool in agents/src/mcp.ts.
       const body = {
         contract: p.contract,
+        explorer: `${p.explorer}/contract-package/${p.contract.replace("hash-", "")}`,
         tvlCspr: cspr(s.liquid) + cspr(s.deployed),
         liquidCspr: cspr(s.liquid),
         deployedCspr: cspr(s.deployed),
@@ -1398,6 +1407,8 @@ function McpDrawer({
             ? Number(((BigInt(s.liquid) + BigInt(s.deployed)) * 10_000n) / BigInt(s.totalShares)) /
               10_000
             : 1,
+        totalFundedCspr: cspr(s.totalFunded),
+        totalSettledCspr: cspr(s.totalSettled),
         totalDefaultedCspr: cspr(s.totalDefaulted),
         invoiceCount: s.invoiceCount,
         aiAttestationsOnChain: s.attestationCount,
@@ -1431,6 +1442,10 @@ function McpDrawer({
             verdict: match
               ? "MATCH — the memo the AI produced is exactly what was anchored on-chain"
               : "MISMATCH",
+            registerTx:
+              target.chain.registerHash && !isSimulatedHash(target.chain.registerHash)
+                ? `${p.explorer}/deploy/${target.chain.registerHash}`
+                : undefined,
           },
           null,
           2,
@@ -1446,7 +1461,10 @@ function McpDrawer({
       <div className="drawer-backdrop" onClick={onClose} />
       <div className="drawer mcp-drawer">
         <h2>
-          MCP Agent Interface <span className="badge FUNDED">LIVE</span>
+          MCP Agent Interface{" "}
+          <span className={`badge ${meta?.mode === "live-testnet" ? "FUNDED" : "LISTED"}`}>
+            {meta?.mode === "live-testnet" ? "LIVE TESTNET" : "SHOWCASE"}
+          </span>
         </h2>
         <div className="muted" style={{ fontSize: 13 }}>
           Faktura exposes the whole credit desk as 5 MCP tools over stdio — any MCP-capable agent
@@ -1500,7 +1518,7 @@ function McpDrawer({
         </div>
 
         <div className="section">
-          <h3>Live preview (read-only)</h3>
+          <h3>Tool output preview (read-only)</h3>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button className="btn ghost sm" disabled={busy} onClick={previewPool}>
               ▸ pool_stats
@@ -1511,7 +1529,9 @@ function McpDrawer({
           </div>
           {preview && (
             <div className="mcp-preview">
-              <div className="mcp-preview-head">{preview.tool} → exactly what the agent gets:</div>
+              <div className="mcp-preview-head">
+                {preview.tool} → the same fields the MCP tool returns:
+              </div>
               <pre>{preview.body}</pre>
             </div>
           )}

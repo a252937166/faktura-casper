@@ -79,7 +79,7 @@ server.tool(
 
 server.tool(
   "submit_invoice",
-  "Submit a receivable to the autonomous AI underwriter. It runs pre-checks + LLM risk scoring, and the on-chain policy decides; approved invoices are registered, funded to the supplier and attested on Casper.",
+  "Submit a receivable to the autonomous AI underwriter. It runs pre-checks + LLM risk scoring, and the on-chain policy decides; approved invoices are registered, funded to the supplier and attested on Casper. Against a showcase host the AI runs live but writes are simulated — their hashes carry a 'showcase:' tag instead of being real deploys.",
   {
     supplierName: z.string().describe("Legal name of the supplier selling the invoice"),
     debtorName: z.string().describe("Company that owes the invoice"),
@@ -170,9 +170,12 @@ server.tool(
         offchainHash === onchainHash
           ? "MATCH — the memo the AI produced is exactly what was anchored on-chain"
           : "MISMATCH — the off-chain memo does not correspond to the on-chain anchor",
-      registerTx: record.chain?.registerHash
-        ? `${pool.body.explorer}/deploy/${record.chain.registerHash}`
-        : undefined,
+      // Simulated showcase writes are tagged 'showcase:' — never build an
+      // explorer URL out of one.
+      registerTx:
+        record.chain?.registerHash && !String(record.chain.registerHash).startsWith("showcase")
+          ? `${pool.body.explorer}/deploy/${record.chain.registerHash}`
+          : undefined,
     });
   },
 );
