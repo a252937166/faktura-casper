@@ -127,7 +127,8 @@ export interface PoolResponse {
 }
 
 const j = <T>(r: Response): Promise<T> => {
-  if (!r.ok) return r.json().then((b) => Promise.reject(new Error((b as any).error ?? r.statusText)));
+  if (!r.ok)
+    return r.json().then((b) => Promise.reject(new Error((b as any).error ?? r.statusText)));
   return r.json() as Promise<T>;
 };
 
@@ -178,5 +179,4 @@ export const motesToCspr = (m: string | undefined) =>
 /** Simulated showcase writes carry a `showcase:` tag — never explorer-linkable. */
 export const isSimulatedHash = (h?: string) => !!h && h.startsWith("showcase");
 
-export const stateName = (s: number) =>
-  ["LISTED", "FUNDED", "SETTLED", "DEFAULTED"][s] ?? `#${s}`;
+export const stateName = (s: number) => ["LISTED", "FUNDED", "SETTLED", "DEFAULTED"][s] ?? `#${s}`;

@@ -36,8 +36,8 @@ endef
 
 test:
 	$(CONTRACTS) && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-	$(AGENTS) && npm install --no-audit --no-fund && npm run typecheck
-	$(WEB) && npm install --no-audit --no-fund && npm run build
+	$(AGENTS) && npm install --no-audit --no-fund && npm run format:check && npm run typecheck
+	$(WEB) && npm install --no-audit --no-fund && npm run format:check && npm run build
 
 build:
 	$(CONTRACTS) && cargo odra build -c FakturaHub && cargo build --features livenet --bin livenet
