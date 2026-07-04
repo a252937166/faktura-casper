@@ -1,6 +1,6 @@
 # Faktura — judge evidence pack
 
-Everything below is verifiable on <https://testnet.cspr.live> right now. This
+Everything below is verifiable on [testnet.cspr.live](https://testnet.cspr.live) right now. This
 file exists so a judge can check every claim in the README in under five
 minutes, without running anything.
 
@@ -12,7 +12,7 @@ minutes, without running anything.
 | Odra address (env `FAKTURA_CONTRACT`) | `hash-fb209bb1d3a1d5e675841f7d184ab7fa96d65adc099f6fd0105f29115fb49d7e` |
 | Network | `casper-test` |
 | Framework | Odra 2.8 (Rust), single contract `FakturaHub` |
-| Live showcase | <https://faktura.axiqo.xyz> (UI banner explains showcase vs live mode) |
+| Live showcase | [faktura.axiqo.xyz](https://faktura.axiqo.xyz) (UI banner explains showcase vs live mode) |
 
 ### The five agent accounts (separation of duties)
 
