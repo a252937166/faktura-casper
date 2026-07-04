@@ -74,6 +74,15 @@ the live position the showcase shows):
 | `fund_invoice` #4 — 39.4 CSPR advance to the supplier | agent | [`59c8ee92…`](https://testnet.cspr.live/deploy/59c8ee927cd13790983d6d4348f52fb43fb2bf3a9c3c2185ab35ddd0d1073fcf) |
 | `attest` UNDERWRITE_APPROVE #4 | agent | [`04e625c0…`](https://testnet.cspr.live/deploy/04e625c0915a4a4eb6742e20be36f28fd37715eb07cc68ec462fbc8846a97a10) |
 
+And a machine bought invoice #4's risk report over **x402** (`npm run x402-demo`):
+2.5 CSPR native transfer carrying the one-time nonce as the transfer id — the
+oracle verified it over RPC and released the report, whose `decisionHash`
+matches attestation #7 above.
+
+| Step | Signer | Transaction |
+|---|---|---|
+| x402 settlement for `GET /api/risk/4` (nonce as transfer id) | buyer agent | [`adf150c7…`](https://testnet.cspr.live/deploy/adf150c7a0e07976da430b85f58e48a930095dd3bfe31837a021061c34688c7c) |
+
 Pool accounting after the run (read `stats` on the contract, or the UI):
 deposits 200 → funded 147.5 → settled +100 → default −49.5 ⇒ the LP share
 price moved with real yield and a real loss. Nothing here is mocked.
