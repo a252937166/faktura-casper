@@ -72,7 +72,7 @@ async function verifyPayment(deployHash: string, nonce: string): Promise<{ ok: b
   try {
     const info = await rpc("info_get_deploy", { deploy_hash: deployHash });
     const deploy = info?.deploy;
-    const results = info?.execution_results ?? info?.execution_info?.execution_result;
+    const results = info?.execution_info?.execution_result ?? info?.execution_results;
     const session = deploy?.session?.Transfer?.args as [string, any][] | undefined;
     if (!session) return { ok: false, reason: "not a native transfer" };
 
@@ -90,7 +90,12 @@ async function verifyPayment(deployHash: string, nonce: string): Promise<{ ok: b
       return { ok: false, reason: "wrong payee" };
     if (id !== nonce) return { ok: false, reason: "nonce mismatch" };
 
-    const success = JSON.stringify(results ?? "").includes("Success");
+    // Casper 1.x reports {"Success": ...}; Casper 2.0 (Condor) reports
+    // execution_result.Version2 with error_message === null on success.
+    const v2 = (results as { Version2?: { error_message: string | null } } | undefined)?.Version2;
+    const success = v2
+      ? v2.error_message == null
+      : JSON.stringify(results ?? "").includes("Success");
     if (!success) return { ok: false, reason: "deploy not (yet) successful" };
 
     settledDeploys.add(deployHash);
@@ -144,7 +149,9 @@ export function x402Gate() {
     const nonceHeader = req.header("PAYMENT-NONCE");
 
     if (!proof || !nonceHeader) {
-      const nonce = crypto.randomBytes(8).readBigUInt64BE().toString();
+      // Keep the nonce under 2^48: it rides the Casper transfer id (u64) and
+      // comes back through JSON, where larger values lose precision.
+      const nonce = String(crypto.randomInt(1, 2 ** 48));
       pending.set(nonce, { nonce, createdTs: Date.now() });
       // GC old charges
       for (const [k, v] of pending) if (Date.now() - v.createdTs > config.x402.ttlMs) pending.delete(k);
