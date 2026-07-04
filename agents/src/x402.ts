@@ -15,7 +15,9 @@ import { feed } from "./feed.js";
  * server verifies execution, recipient, amount and nonce over RPC.
  *
  * This keeps the wire format x402-compatible while staying self-contained;
- * swapping in the official facilitator is a config change (see README).
+ * set X402_MODE=official-facilitator (+ X402_FACILITATOR_URL) to delegate
+ * verification to a standard x402 facilitator's /verify API instead
+ * (docs/x402.md covers both modes).
  */
 
 interface PendingCharge {
@@ -41,7 +43,8 @@ function paymentRequirements(req: Request, nonce: string) {
         mimeType: "application/json",
         maxTimeoutSeconds: Math.floor(config.x402.ttlMs / 1000),
         extra: {
-          settlement: "native-transfer",
+          settlement:
+            config.x402.mode === "official-facilitator" ? "facilitator" : "native-transfer",
           transferIdNonce: nonce,
           proofHeader: "PAYMENT-SIGNATURE",
           proofFormat: "deploy-hash-hex",
@@ -97,6 +100,43 @@ async function verifyPayment(deployHash: string, nonce: string): Promise<{ ok: b
   }
 }
 
+/**
+ * Delegates verification to an external x402 facilitator (`POST /verify`,
+ * standard x402 facilitator API). Used when X402_MODE=official-facilitator.
+ */
+async function verifyViaFacilitator(
+  proof: string,
+  nonce: string,
+  resource: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  if (!config.x402.facilitatorUrl)
+    return { ok: false, reason: "X402_FACILITATOR_URL not configured" };
+  try {
+    const res = await fetch(`${config.x402.facilitatorUrl.replace(/\/$/, "")}/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        x402Version: 1,
+        paymentHeader: proof,
+        paymentRequirements: {
+          scheme: "exact",
+          network: `casper:${config.chainName}`,
+          maxAmountRequired: config.x402.priceMotes,
+          payTo: config.x402.payTo,
+          resource,
+          extra: { transferIdNonce: nonce },
+        },
+      }),
+    });
+    const body = (await res.json()) as { isValid?: boolean; invalidReason?: string };
+    return body.isValid
+      ? { ok: true }
+      : { ok: false, reason: body.invalidReason ?? `facilitator returned ${res.status}` };
+  } catch (e) {
+    return { ok: false, reason: `facilitator unreachable: ${(e as Error).message}` };
+  }
+}
+
 /** Express middleware that gates a route behind an x402 charge. */
 export function x402Gate() {
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -122,7 +162,10 @@ export function x402Gate() {
       res.status(402).json({ x402Version: 1, error: "unknown or expired nonce" });
       return;
     }
-    const verdict = await verifyPayment(proof.trim(), nonceHeader);
+    const verdict =
+      config.x402.mode === "official-facilitator"
+        ? await verifyViaFacilitator(proof.trim(), nonceHeader, req.originalUrl)
+        : await verifyPayment(proof.trim(), nonceHeader);
     if (!verdict.ok) {
       feed.publish({
         actor: "oracle",

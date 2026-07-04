@@ -11,7 +11,7 @@
 //! - `ODRA_CASPER_LIVENET_CHAIN_NAME` (casper-test)
 //! - `ODRA_CASPER_LIVENET_EVENTS_URL`
 
-use faktura::{FakturaHub, FakturaHubHostRef, FakturaHubInitArgs, Invoice, PoolStats};
+use faktura::{FakturaHub, FakturaHubHostRef, FakturaHubInitArgs, Invoice, Policy, PoolStats};
 use odra::casper_types::U512;
 use odra::host::{Deployer, HostEnv, HostRef, HostRefLoader};
 use odra::prelude::*;
@@ -177,6 +177,32 @@ fn main() {
             hub.set_agents(parse_address(&args[3]), parse_address(&args[4]));
             println!(r#"RESULT {{"ok":true}}"#);
         }
+        // set-policy <contract> <max_risk> <min_bps> <max_bps> <single_bps> <debtor_bps>   (admin key)
+        "set-policy" => {
+            let mut hub = load(&env, &args[2]);
+            env.set_gas(gas(5));
+            hub.set_policy(
+                args[3].parse().expect("max_risk"),
+                args[4].parse().expect("min_bps"),
+                args[5].parse().expect("max_bps"),
+                args[6].parse().expect("single_bps"),
+                args[7].parse().expect("debtor_bps"),
+            );
+            println!(r#"RESULT {{"ok":true}}"#);
+        }
+        // policy <contract>   (free query)
+        "policy" => {
+            let hub = load(&env, &args[2]);
+            let p: Policy = hub.get_policy();
+            println!(
+                r#"RESULT {{"maxRiskScore":{},"minDiscountBps":{},"maxDiscountBps":{},"maxSingleInvoiceBps":{},"maxDebtorExposureBps":{}}}"#,
+                p.max_risk_score,
+                p.min_discount_bps,
+                p.max_discount_bps,
+                p.max_single_invoice_bps,
+                p.max_debtor_exposure_bps
+            );
+        }
         // invoice <contract> <id>   (free query)
         "invoice" => {
             let hub = load(&env, &args[2]);
@@ -218,7 +244,7 @@ fn main() {
         }
         _ => {
             eprintln!(
-                "usage: livenet <deploy|register|fund|settle|default|deposit|withdraw|attest|set-agents|invoice|invoices|stats|shares|caller> ..."
+                "usage: livenet <deploy|register|fund|settle|default|deposit|withdraw|attest|set-agents|set-policy|policy|invoice|invoices|stats|shares|caller> ..."
             );
             std::process::exit(2);
         }

@@ -1,0 +1,442 @@
+{
+  "capturedAt": "2026-07-04T01:08:39.931Z",
+  "contract": "hash-fb209bb1d3a1d5e675841f7d184ab7fa96d65adc099f6fd0105f29115fb49d7e",
+  "explorer": "https://testnet.cspr.live",
+  "stats": {
+    "liquid": "113100000000",
+    "deployed": "39400000000",
+    "totalShares": "200000000000",
+    "totalFunded": "186900000000",
+    "totalSettled": "100000000000",
+    "totalDefaulted": "49500000000",
+    "invoiceCount": 4,
+    "attestationCount": 7
+  },
+  "onchain": [
+    {
+      "id": 1,
+      "supplier": "entity-account-c8981d32a123d050479a5290bd5780836775ba26f24c13969b6bad02d1336efc",
+      "debtorTag": "debtor:a2bd626c4c36831d",
+      "docHash": "sha256:6b9f055c84ee971de4993a9262f59329ab55f4fd7db2960cf81ae12e131a1395",
+      "faceValue": "100000000000",
+      "dueTs": 1785718254190,
+      "riskScore": 20,
+      "discountBps": 200,
+      "decisionHash": "sha256:6cbc6d5865ec088e9708d64b42582a0585ec75f6759aeab3bb7dc82bbbc3dc0c",
+      "state": 2,
+      "advance": "98000000000",
+      "registeredTs": 1783126288120,
+      "fundedTs": 1783126312125,
+      "closedTs": 1783126504155
+    },
+    {
+      "id": 2,
+      "supplier": "entity-account-c8981d32a123d050479a5290bd5780836775ba26f24c13969b6bad02d1336efc",
+      "debtorTag": "debtor:d4ea7a3ff2262f60",
+      "docHash": "sha256:29cfadc589d4b417ce7166de3d65e5900df22a3c2aeb1294432192990229b20e",
+      "faceValue": "50000000000",
+      "dueTs": 1783126473552,
+      "riskScore": 10,
+      "discountBps": 100,
+      "decisionHash": "sha256:60679fbcc5add4250bc126d42774db18b243e2fc32df8342f4d28f0ee122df60",
+      "state": 3,
+      "advance": "49500000000",
+      "registeredTs": 1783126432145,
+      "fundedTs": 1783126456149,
+      "closedTs": 1783126664180
+    },
+    {
+      "id": 3,
+      "supplier": "entity-account-c8981d32a123d050479a5290bd5780836775ba26f24c13969b6bad02d1336efc",
+      "debtorTag": "debtor:fab897a6d804c814",
+      "docHash": "sha256:4f149b87289be983bbe9d80de00bfd2e4403af87f0a1aa390f748edc76f553d0",
+      "faceValue": "80000000000",
+      "dueTs": 1787014886216,
+      "riskScore": 20,
+      "discountBps": 200,
+      "decisionHash": "sha256:240ce60c91ba3dae1f01e32f9ff77e7dc9b527a292638d11155076ab29076ed0",
+      "state": 0,
+      "advance": "78400000000",
+      "registeredTs": 1783126936214,
+      "fundedTs": 0,
+      "closedTs": 0
+    },
+    {
+      "id": 4,
+      "supplier": "entity-account-c8981d32a123d050479a5290bd5780836775ba26f24c13969b6bad02d1336efc",
+      "debtorTag": "debtor:e129fbb7e7694907",
+      "docHash": "sha256:5e0b48352bd3ad0d1e375e69b7793e508003d4e0a30958b36fc06afa5052478a",
+      "faceValue": "40000000000",
+      "dueTs": 1785719105155,
+      "riskScore": 12,
+      "discountBps": 150,
+      "decisionHash": "sha256:ba8dc0181e1f447ff894138ca7d34726f00baa4a07d2af01a5cec0bc31677c07",
+      "state": 1,
+      "advance": "39400000000",
+      "registeredTs": 1783127160251,
+      "fundedTs": 1783127192256,
+      "closedTs": 0
+    }
+  ],
+  "policy": {
+    "maxRiskScore": 70,
+    "minDiscountBps": 50,
+    "maxDiscountBps": 3000,
+    "maxSingleInvoiceBps": 5000,
+    "maxDebtorExposureBps": 6000
+  },
+  "personas": {
+    "agent": "entity-account-025a06c0319478189fcb95c2f62503b0b257af59a346a295d4eb112d867384bf",
+    "collector": "entity-account-3af70494b86de5df33fec197705b766b3ff8fa4647bcb972ecbc5106d853f5b7",
+    "supplier": "entity-account-c8981d32a123d050479a5290bd5780836775ba26f24c13969b6bad02d1336efc",
+    "investor": "entity-account-2e814f0cdf1d016e0c0a8fb10e4df3f530a506ab785166d051912a040179a192",
+    "debtor": "entity-account-6b6db703cd59f19e1ff2f813dd3f2d12799ac0a06e781eeae1988d1b45334fb4"
+  },
+  "records": [
+    {
+      "id": 1,
+      "intakeId": "b43b8b69-fd6c-4337-bf1f-8ceee5b191ac",
+      "status": "settled",
+      "intake": {
+        "supplierName": "Nordwind Logistics GmbH",
+        "supplierAddress": "entity-account-c8981d32a123d050479a5290bd5780836775ba26f24c13969b6bad02d1336efc",
+        "debtorName": "Aurora Retail AG",
+        "debtorTag": "debtor:a2bd626c4c36831d",
+        "amountCspr": 100,
+        "dueTs": 1785718254190,
+        "invoiceNumber": "INV-2026-501",
+        "description": "Freight services, 14 pallet shipments Hamburg to Vienna",
+        "history": "6 prior invoices, all paid within terms",
+        "docHash": "sha256:6b9f055c84ee971de4993a9262f59329ab55f4fd7db2960cf81ae12e131a1395",
+        "receivedTs": 1783126254191
+      },
+      "chain": {
+        "attestHashes": [
+          "8099c8ea425dead0dfdcdbdc85e3e2eb74500e3fd3f3415b50cd6612a254d381"
+        ],
+        "registerHash": "5a86ef94b7bdfcd54cc57d97a2468e42bd1e83ebce30a36eeebc34fe8d5d11cd",
+        "fundHash": "96602a8c227476fdfafd81f640ed295375beaaab86c8f5c9621664d5bedd9338",
+        "settleHash": "6ff7d0a4b7bbe6a5757ce3251871788aec7ac42bf554830e5c557f0af95850dd"
+      },
+      "decision": {
+        "approve": true,
+        "riskScore": 20,
+        "discountBps": 200,
+        "rationale": "Invoice INV-2026-501 from Nordwind Logistics GmbH to Aurora Retail AG for 100 CSPR represents freight services and is due in 30 days. The supplier has a clean payment history with six prior invoices paid within terms. No internal inconsistencies or suspicious patterns were detected, indicating a low risk of default.",
+        "redFlags": [],
+        "policyNotes": [],
+        "model": "autonomous-ai-underwriter",
+        "decisionHash": "sha256:6cbc6d5865ec088e9708d64b42582a0585ec75f6759aeab3bb7dc82bbbc3dc0c",
+        "decidedTs": 1783126284640
+      }
+    },
+    {
+      "id": 0,
+      "intakeId": "f3521302-52db-430b-8726-78de064a9e0f",
+      "status": "rejected",
+      "intake": {
+        "supplierName": "QuickCash Trading",
+        "debtorName": "Unknown Shell Ltd",
+        "debtorTag": "debtor:e8157ac0b9ed5ad7",
+        "amountCspr": 40,
+        "dueTs": 1790902341769,
+        "invoiceNumber": "INV-2026-502",
+        "description": "Consulting, lump sum, no deliverables specified",
+        "history": "new counterparty, one prior invoice disputed and overdue",
+        "docHash": "sha256:cc63a6bea1a0cef8d16bf1cda887dda5fbde93236b3bac7a267aab89699aac9f",
+        "receivedTs": 1783126341769
+      },
+      "chain": {
+        "attestHashes": [
+          "dee005adb59f8336b985e1480853a460eb6f5a224cd0ed0972222b31ef3b2305"
+        ]
+      },
+      "decision": {
+        "approve": false,
+        "riskScore": 90,
+        "discountBps": 1500,
+        "rationale": "The debtor is an unknown shell entity with a disputed and overdue prior invoice, indicating high default risk. The invoice description is vague ('consulting, lump sum, no deliverables'), which is typical of fraudulent invoices. Combined with the absence of positive payment history, the risk score exceeds the protocol's maximum acceptable threshold, leading to rejection.",
+        "redFlags": [
+          "Debtor name suggests shell entity",
+          "Prior invoice disputed and overdue",
+          "Vague description with no deliverables"
+        ],
+        "policyNotes": [],
+        "model": "autonomous-ai-underwriter",
+        "decisionHash": "sha256:17e47bb055967734bbe1ae40725989641221c434975e1cc1c2989bc83b82d697",
+        "decidedTs": 1783126360316
+      }
+    },
+    {
+      "id": 2,
+      "intakeId": "c089de6e-8161-41b4-b9cf-043ced43ff41",
+      "status": "defaulted",
+      "intake": {
+        "supplierName": "Helios Solar Kft",
+        "supplierAddress": "entity-account-c8981d32a123d050479a5290bd5780836775ba26f24c13969b6bad02d1336efc",
+        "debtorName": "Metro Utilities Zrt",
+        "debtorTag": "debtor:d4ea7a3ff2262f60",
+        "amountCspr": 50,
+        "dueTs": 1783126473552,
+        "invoiceNumber": "INV-2026-503",
+        "description": "Panel maintenance, Q1 service contract",
+        "history": "3 prior invoices paid on time",
+        "docHash": "sha256:29cfadc589d4b417ce7166de3d65e5900df22a3c2aeb1294432192990229b20e",
+        "receivedTs": 1783126383552
+      },
+      "chain": {
+        "attestHashes": [
+          "d3403e24aefc62ed978bd7c176de4a2c7f586acadb7f8a3ca2f7d3988c54a19c"
+        ],
+        "registerHash": "c0fb8fe866608bd2a58ed3c72248e872a7c3a40201d43e212008d0bc49f4ab13",
+        "fundHash": "6602961945250dd30443f3e7e90b7c2bc7991f759c3362c0988de55aecc3ccf5",
+        "defaultHash": "f6b3b7469ed26e08f7f560b4b93cf3d3f792d03029396f23a84e388d7f4d6930"
+      },
+      "decision": {
+        "approve": true,
+        "riskScore": 10,
+        "discountBps": 100,
+        "rationale": "Invoice for a service contract from a supplier with a clean payment history, drawn on a stable utility debtor. Due immediately, leaving minimal collection exposure. Low risk.",
+        "redFlags": [],
+        "policyNotes": [],
+        "model": "autonomous-ai-underwriter",
+        "decisionHash": "sha256:60679fbcc5add4250bc126d42774db18b243e2fc32df8342f4d28f0ee122df60",
+        "decidedTs": 1783126425215
+      }
+    },
+    {
+      "id": 3,
+      "intakeId": "a939a632-5db2-40d2-a127-90723404d8a9",
+      "status": "approved",
+      "intake": {
+        "supplierName": "Baltic Components OÜ",
+        "supplierAddress": "entity-account-c8981d32a123d050479a5290bd5780836775ba26f24c13969b6bad02d1336efc",
+        "debtorName": "Vega Manufacturing GmbH",
+        "debtorTag": "debtor:fab897a6d804c814",
+        "amountCspr": 80,
+        "dueTs": 1787014886216,
+        "invoiceNumber": "INV-2026-504",
+        "description": "Precision-machined housings, batch 7 of 12, net 45",
+        "history": "4 prior invoices, all paid on time",
+        "docHash": "sha256:4f149b87289be983bbe9d80de00bfd2e4403af87f0a1aa390f748edc76f553d0",
+        "receivedTs": 1783126886216
+      },
+      "chain": {
+        "attestHashes": [],
+        "registerHash": "4e68fbc73a9fa5646bfe3a84f8307f88f39f0cdc1ca2df7bcb381774b48dbd08"
+      },
+      "decision": {
+        "approve": true,
+        "riskScore": 20,
+        "discountBps": 200,
+        "rationale": "Vega Manufacturing GmbH is a recurring debtor with four prior invoices paid on time. The description (batch 7 of 12, net 45) aligns with ongoing production, and all fields are internally consistent. The 45-day tenor and good history support a low-risk profile and standard fee.",
+        "redFlags": [],
+        "policyNotes": [],
+        "model": "autonomous-ai-underwriter",
+        "decisionHash": "sha256:240ce60c91ba3dae1f01e32f9ff77e7dc9b527a292638d11155076ab29076ed0",
+        "decidedTs": 1783126927937
+      }
+    },
+    {
+      "id": 4,
+      "intakeId": "959595a6-9f32-4902-b366-63d8bf130c47",
+      "status": "funded",
+      "intake": {
+        "supplierName": "Adriatic Foods d.o.o.",
+        "supplierAddress": "entity-account-c8981d32a123d050479a5290bd5780836775ba26f24c13969b6bad02d1336efc",
+        "debtorName": "Helvetia Grocers AG",
+        "debtorTag": "debtor:e129fbb7e7694907",
+        "amountCspr": 40,
+        "dueTs": 1785719105155,
+        "invoiceNumber": "INV-2026-505",
+        "description": "Chilled goods delivery, week 26, net 30",
+        "history": "9 prior invoices, all paid within terms",
+        "docHash": "sha256:5e0b48352bd3ad0d1e375e69b7793e508003d4e0a30958b36fc06afa5052478a",
+        "receivedTs": 1783127105155
+      },
+      "chain": {
+        "attestHashes": [
+          "04e625c0915a4a4eb6742e20be36f28fd37715eb07cc68ec462fbc8846a97a10"
+        ],
+        "registerHash": "6a4a814e40664d9220767dbef7c5d7ead46d9abffd678b600ea344bf9de5334c",
+        "fundHash": "59c8ee927cd13790983d6d4348f52fb43fb2bf3a9c3c2185ab35ddd0d1073fcf"
+      },
+      "decision": {
+        "approve": true,
+        "riskScore": 12,
+        "discountBps": 150,
+        "rationale": "Nine-payment history with zero defaults indicates strong debtor-supplier relationship. Internal consistency is high: due date aligns with net-30 terms, invoice number is sequential, and description is plausible for a food logistics trade. Amount and tenor fall within normal pilot parameters. Very low risk of non-performance.",
+        "redFlags": [],
+        "policyNotes": [],
+        "model": "autonomous-ai-underwriter",
+        "decisionHash": "sha256:ba8dc0181e1f447ff894138ca7d34726f00baa4a07d2af01a5cec0bc31677c07",
+        "decidedTs": 1783127149392
+      }
+    }
+  ],
+  "feed": [
+    {
+      "ts": 1783126254191,
+      "actor": "underwriter",
+      "kind": "intake",
+      "message": "Intake INV-2026-501: Nordwind Logistics GmbH → Aurora Retail AG, 100 CSPR"
+    },
+    {
+      "ts": 1783126284640,
+      "actor": "underwriter",
+      "kind": "decision",
+      "message": "APPROVED INV-2026-501: risk 20/100, discount 2.00% — registering on-chain"
+    },
+    {
+      "ts": 1783126314640,
+      "actor": "underwriter",
+      "kind": "onchain",
+      "message": "Invoice #1 registered on Casper Testnet",
+      "invoiceId": 1,
+      "deployHash": "5a86ef94b7bdfcd54cc57d97a2468e42bd1e83ebce30a36eeebc34fe8d5d11cd"
+    },
+    {
+      "ts": 1783126341769,
+      "actor": "underwriter",
+      "kind": "intake",
+      "message": "Intake INV-2026-502: QuickCash Trading → Unknown Shell Ltd, 40 CSPR"
+    },
+    {
+      "ts": 1783126359640,
+      "actor": "underwriter",
+      "kind": "onchain",
+      "message": "Invoice #1 FUNDED — advance paid from the pool to supplier account-hash-c8981d32a123d…",
+      "invoiceId": 1,
+      "deployHash": "96602a8c227476fdfafd81f640ed295375beaaab86c8f5c9621664d5bedd9338"
+    },
+    {
+      "ts": 1783126360316,
+      "actor": "underwriter",
+      "kind": "decision",
+      "message": "REJECTED INV-2026-502: Debtor name suggests shell entity; Prior invoice disputed and overdue; Vague description with no deliverables"
+    },
+    {
+      "ts": 1783126383552,
+      "actor": "underwriter",
+      "kind": "intake",
+      "message": "Intake INV-2026-503: Helios Solar Kft → Metro Utilities Zrt, 50 CSPR"
+    },
+    {
+      "ts": 1783126394640,
+      "actor": "underwriter",
+      "kind": "attest",
+      "message": "Decision memo hash anchored on-chain (INV-2026-501)",
+      "invoiceId": 1,
+      "deployHash": "8099c8ea425dead0dfdcdbdc85e3e2eb74500e3fd3f3415b50cd6612a254d381"
+    },
+    {
+      "ts": 1783126425215,
+      "actor": "underwriter",
+      "kind": "decision",
+      "message": "APPROVED INV-2026-503: risk 10/100, discount 1.00% — registering on-chain"
+    },
+    {
+      "ts": 1783126455215,
+      "actor": "underwriter",
+      "kind": "onchain",
+      "message": "Invoice #2 registered on Casper Testnet",
+      "invoiceId": 2,
+      "deployHash": "c0fb8fe866608bd2a58ed3c72248e872a7c3a40201d43e212008d0bc49f4ab13"
+    },
+    {
+      "ts": 1783126470316,
+      "actor": "underwriter",
+      "kind": "attest",
+      "message": "Decision memo hash anchored on-chain (INV-2026-502)",
+      "deployHash": "dee005adb59f8336b985e1480853a460eb6f5a224cd0ed0972222b31ef3b2305"
+    },
+    {
+      "ts": 1783126484640,
+      "actor": "collector",
+      "kind": "reconcile",
+      "message": "Invoice #1 settled on-chain — face value collected, yield realized by the pool",
+      "invoiceId": 1,
+      "deployHash": "6ff7d0a4b7bbe6a5757ce3251871788aec7ac42bf554830e5c557f0af95850dd"
+    },
+    {
+      "ts": 1783126500215,
+      "actor": "underwriter",
+      "kind": "onchain",
+      "message": "Invoice #2 FUNDED — advance paid from the pool to supplier account-hash-c8981d32a123d…",
+      "invoiceId": 2,
+      "deployHash": "6602961945250dd30443f3e7e90b7c2bc7991f759c3362c0988de55aecc3ccf5"
+    },
+    {
+      "ts": 1783126535215,
+      "actor": "underwriter",
+      "kind": "attest",
+      "message": "Decision memo hash anchored on-chain (INV-2026-503)",
+      "invoiceId": 2,
+      "deployHash": "d3403e24aefc62ed978bd7c176de4a2c7f586acadb7f8a3ca2f7d3988c54a19c"
+    },
+    {
+      "ts": 1783126685215,
+      "actor": "collector",
+      "kind": "onchain",
+      "message": "Invoice #2 written off on-chain by the collector; loss absorbed by pool share price",
+      "invoiceId": 2,
+      "deployHash": "f6b3b7469ed26e08f7f560b4b93cf3d3f792d03029396f23a84e388d7f4d6930"
+    },
+    {
+      "ts": 1783126886216,
+      "actor": "underwriter",
+      "kind": "intake",
+      "message": "Intake INV-2026-504: Baltic Components OÜ → Vega Manufacturing GmbH, 80 CSPR"
+    },
+    {
+      "ts": 1783126927937,
+      "actor": "underwriter",
+      "kind": "decision",
+      "message": "APPROVED INV-2026-504: risk 20/100, discount 2.00% — registering on-chain"
+    },
+    {
+      "ts": 1783126957937,
+      "actor": "underwriter",
+      "kind": "onchain",
+      "message": "Invoice #3 registered on Casper Testnet",
+      "invoiceId": 3,
+      "deployHash": "4e68fbc73a9fa5646bfe3a84f8307f88f39f0cdc1ca2df7bcb381774b48dbd08"
+    },
+    {
+      "ts": 1783127105155,
+      "actor": "underwriter",
+      "kind": "intake",
+      "message": "Intake INV-2026-505: Adriatic Foods d.o.o. → Helvetia Grocers AG, 40 CSPR"
+    },
+    {
+      "ts": 1783127149392,
+      "actor": "underwriter",
+      "kind": "decision",
+      "message": "APPROVED INV-2026-505: risk 12/100, discount 1.50% — registering on-chain"
+    },
+    {
+      "ts": 1783127179392,
+      "actor": "underwriter",
+      "kind": "onchain",
+      "message": "Invoice #4 registered on Casper Testnet",
+      "invoiceId": 4,
+      "deployHash": "6a4a814e40664d9220767dbef7c5d7ead46d9abffd678b600ea344bf9de5334c"
+    },
+    {
+      "ts": 1783127224392,
+      "actor": "underwriter",
+      "kind": "onchain",
+      "message": "Invoice #4 FUNDED — advance paid from the pool to supplier account-hash-c8981d32a123d…",
+      "invoiceId": 4,
+      "deployHash": "59c8ee927cd13790983d6d4348f52fb43fb2bf3a9c3c2185ab35ddd0d1073fcf"
+    },
+    {
+      "ts": 1783127259392,
+      "actor": "underwriter",
+      "kind": "attest",
+      "message": "Decision memo hash anchored on-chain (INV-2026-505)",
+      "invoiceId": 4,
+      "deployHash": "04e625c0915a4a4eb6742e20be36f28fd37715eb07cc68ec462fbc8846a97a10"
+    }
+  ]
+}

@@ -480,3 +480,37 @@ th:first-child, td:first-child { padding-left: 20px; }
   .stats { grid-template-columns: repeat(3, 1fr); }
   .grid { grid-template-columns: 1fr; }
 }
+
+/* ---------- mode banner (LIVE vs SHOWCASE) ---------- */
+.mode-banner {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--ink);
+  border-left: 5px solid var(--amber);
+  border-radius: 4px;
+  background: rgba(201, 138, 27, 0.08);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.mode-banner.live-testnet {
+  border-left-color: var(--green);
+  background: rgba(15, 138, 95, 0.07);
+}
+.mode-banner .mode-tag {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  padding: 3px 8px;
+  border: 1.5px solid var(--amber);
+  border-radius: 3px;
+  color: var(--amber);
+  background: var(--card);
+}
+.mode-banner.live-testnet .mode-tag { border-color: var(--green); color: var(--green); }
+.mode-banner .mode-text { color: var(--ink); }
+.mode-banner .policy-note { color: var(--muted); font-family: var(--mono); font-size: 11px; }

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { config } from "./config.js";
-import type { ChainInvoice, ChainResult, ChainStats } from "./chain.js";
+import type { ChainInvoice, ChainPolicy, ChainResult, ChainStats } from "./chain.js";
 
 /**
  * In-memory "chain" for the hosted public showcase. Reads come from a captured
@@ -16,6 +16,8 @@ export interface Seed {
   onchain: ChainInvoice[];
   contract: string;
   explorer: string;
+  policy?: ChainPolicy;
+  personas?: Record<string, string>;
   records?: unknown[];
   feed?: unknown[];
 }
@@ -40,7 +42,10 @@ export const showcaseChain = {
   invoice: async (id: number): Promise<ChainInvoice | null> =>
     getSeed().onchain.find((i) => i.id === id) ?? null,
 
-  caller: async (): Promise<string> =>
+  // Real testnet persona addresses (captured in the seed) so the showcase
+  // shows the same accounts a live run uses; falls back to a labeled stub.
+  caller: async (persona = "agent"): Promise<string> =>
+    getSeed().personas?.[persona] ??
     "account-hash-025a06c0d1c3e2b4f6a8c0e2d4f60718293a4b5c6d7e8f90a1b2c3d4e5f60718",
 
   register: async (a: {
@@ -132,9 +137,20 @@ export const showcaseChain = {
     _subjectId: number,
     _payloadHash: string,
     _model: string,
+    _persona = "agent",
   ): Promise<ChainResult<{ attestationId: number }>> => {
     const s = getSeed();
     s.stats.attestationCount += 1;
     return ok({ attestationId: s.stats.attestationCount });
   },
+
+  // Mirrors the on-chain Policy defaults set at deploy (see contracts/src/lib.rs).
+  policy: async (): Promise<ChainPolicy> =>
+    getSeed().policy ?? {
+      maxRiskScore: 70,
+      minDiscountBps: 50,
+      maxDiscountBps: 3000,
+      maxSingleInvoiceBps: 5000,
+      maxDebtorExposureBps: 6000,
+    },
 };

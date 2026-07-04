@@ -87,7 +87,7 @@ export function startCollector() {
 
 async function safeAttest(kind: string, id: number) {
   try {
-    const att = await chain.attest(kind, id, `sha256:auto-${kind}-${id}`, "collector-v1");
+    const att = await chain.attest(kind, id, `sha256:auto-${kind}-${id}`, "collector-v1", "collector");
     const local = findByChainId(id);
     if (local) {
       local.chain.attestHashes.push(att.deployHashes.at(-1) ?? "");

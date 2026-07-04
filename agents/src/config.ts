@@ -29,9 +29,20 @@ export const config = {
     process.env.CASPER_EVENTS_URL ??
     "https://node.testnet.casper.network/events",
 
-  /** Persona secret keys (Ed25519 PEM files). */
+  /**
+   * Persona secret keys (Ed25519 PEM files). Separation of duties:
+   * - agent:     underwriter — register/fund/attest (cannot mark defaults)
+   * - collector: workout desk — mark_default + its attestations only
+   * - supplier:  receives advances (never the debtor's account)
+   * - investor:  LP deposits/withdrawals
+   * - debtor:    pays settlements
+   */
   keys: {
     agent: process.env.AGENT_KEY_PATH ?? path.join(ROOT, "keys/agent/secret_key.pem"),
+    collector:
+      process.env.COLLECTOR_KEY_PATH ?? path.join(ROOT, "keys/collector/secret_key.pem"),
+    supplier:
+      process.env.SUPPLIER_KEY_PATH ?? path.join(ROOT, "keys/supplier/secret_key.pem"),
     investor:
       process.env.INVESTOR_KEY_PATH ?? path.join(ROOT, "keys/investor/secret_key.pem"),
     debtor: process.env.DEBTOR_KEY_PATH ?? path.join(ROOT, "keys/debtor/secret_key.pem"),
@@ -70,10 +81,18 @@ export const config = {
     model: process.env.DEEPSEEK_MODEL ?? "deepseek-v4-pro",
   },
 
-  /** x402 paid oracle pricing (motes). */
+  /**
+   * x402 paid oracle. Two settlement modes (see docs/x402.md):
+   * - "native-demo" (default): facilitator-less — buyer settles with a native
+   *   CSPR transfer carrying the nonce as transfer id; we verify over RPC.
+   * - "official-facilitator": delegates verification to an x402 facilitator
+   *   service (X402_FACILITATOR_URL) speaking the standard /verify API.
+   */
   x402: {
+    mode: process.env.X402_MODE ?? "native-demo",
+    facilitatorUrl: process.env.X402_FACILITATOR_URL ?? "",
     priceMotes: process.env.X402_PRICE_MOTES ?? "2500000000", // 2.5 CSPR
-    payTo: process.env.X402_PAY_TO ?? "", // agent account hash, set at boot
+    payTo: process.env.X402_PAY_TO ?? "", // agent public key hex, set at boot
     ttlMs: 10 * 60_000,
   },
 

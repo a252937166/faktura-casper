@@ -158,15 +158,34 @@ app.get("/api/activity", (req, res) => {
   req.on("close", () => feed.off("event", onEvent));
 });
 
+let metaCache: Record<string, unknown> | null = null;
 app.get("/api/meta", async (_req, res) => {
-  res.json({
-    contract: config.contract,
-    chain: config.chainName,
-    node: config.nodeAddress,
-    explorer: config.explorerBase,
-    x402Price: config.x402.priceMotes,
-    llmProvider: config.llmProvider,
-  });
+  if (!metaCache) {
+    let policy: unknown = null;
+    let supplier: string | null = null;
+    try {
+      policy = await chain.policy();
+    } catch {
+      /* pre-policy contract or node hiccup — banner degrades gracefully */
+    }
+    try {
+      supplier = await chain.caller("supplier");
+    } catch {
+      /* key missing on this host */
+    }
+    metaCache = {
+      mode: config.showcase ? "showcase" : "live-testnet",
+      contract: config.contract,
+      chain: config.chainName,
+      node: config.nodeAddress,
+      explorer: config.explorerBase,
+      x402Price: config.x402.priceMotes,
+      llmProvider: config.llmProvider,
+      policy,
+      supplier,
+    };
+  }
+  res.json(metaCache);
 });
 
 // ---- Static web app ---------------------------------------------------------
@@ -208,10 +227,19 @@ async function main() {
       console.warn("FAKTURA_CONTRACT not set — chain features disabled until deploy.");
     }
     if (!config.x402.payTo) {
+      // Prefer the agent PUBLIC KEY (buyers can transfer to it directly);
+      // fall back to the account hash from the livenet binary.
       try {
-        config.x402.payTo = await chain.caller("agent");
+        const fs = await import("node:fs");
+        config.x402.payTo = fs
+          .readFileSync(path.join(ROOT, "keys/agent/public_key_hex"), "utf8")
+          .trim();
       } catch {
-        /* key not funded yet */
+        try {
+          config.x402.payTo = await chain.caller("agent");
+        } catch {
+          /* key not present on this host */
+        }
       }
     }
   }

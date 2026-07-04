@@ -173,7 +173,11 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
   });
 
   const faceMotes = (BigInt(Math.round(input.amountCspr * 1e9))).toString();
-  const supplier = input.supplierAddress ?? (await chain.caller("debtor"));
+  // Advance recipient: caller-supplied address, else the demo SUPPLIER account.
+  // Never the debtor — the debtor owes the money; the supplier sold the invoice.
+  const supplier = input.supplierAddress ?? (await chain.caller("supplier"));
+  record.intake.supplierAddress = supplier;
+  upsertInvoice(record);
 
   const reg = await chain.register({
     supplier,
@@ -203,7 +207,7 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
   feed.publish({
     actor: "underwriter",
     kind: "onchain",
-    message: `Invoice #${record.id} FUNDED — advance streamed to supplier from the pool`,
+    message: `Invoice #${record.id} FUNDED — advance paid from the pool to supplier ${supplier.replace("entity-account-", "account-hash-").slice(0, 26)}…`,
     invoiceId: record.id,
     deployHash: record.chain.fundHash,
   });

@@ -1,11 +1,12 @@
 node_modules/
 dist/
 target/
-data/
 keys/
 .env
 .DS_Store
 *.log
-agents/data/
+agents/data/*
+!agents/data/seed.json
 contracts/wasm/*.wasm
 !contracts/wasm/.gitkeep
+docs/media/*.mp4

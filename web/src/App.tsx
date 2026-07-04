@@ -6,6 +6,7 @@ import {
   stateName,
   type FeedEvent,
   type InvoiceRecord,
+  type Meta,
   type PoolResponse,
 } from "./api";
 
@@ -31,6 +32,7 @@ function timeAgo(ts: number) {
 
 export default function App() {
   const [pool, setPool] = useState<PoolResponse | null>(null);
+  const [meta, setMeta] = useState<Meta | null>(null);
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
   const [events, setEvents] = useState<FeedEvent[]>([]);
   const [selected, setSelected] = useState<InvoiceRecord | null>(null);
@@ -51,6 +53,7 @@ export default function App() {
 
   useEffect(() => {
     refresh();
+    api.meta().then(setMeta).catch(() => {});
     const iv = setInterval(refresh, 12_000);
     const es = new EventSource(`${API_BASE}/activity`);
     es.onmessage = (m) => {
@@ -111,6 +114,35 @@ export default function App() {
           ⭐ GitHub
         </a>
       </header>
+
+      {meta && (
+        <div className={`mode-banner ${meta.mode}`}>
+          <span className="mode-tag">{meta.mode === "showcase" ? "SHOWCASE" : "LIVE TESTNET"}</span>
+          <span className="mode-text">
+            {meta.mode === "showcase" ? (
+              <>
+                On-chain <b>reads</b> come from a captured snapshot of the real testnet contract
+                (verifiable on cspr.live) and the AI underwriter runs <b>live</b> — but <b>writes are
+                simulated</b> in server memory, not signed transactions. Run the stack locally
+                (README) for real Casper transactions.
+              </>
+            ) : (
+              <>
+                Every action on this page is a <b>real Casper Testnet transaction</b> signed by the
+                agent keys — follow the tx links in the activity feed.
+              </>
+            )}
+            {meta.policy && (
+              <span className="policy-note">
+                {" "}On-chain policy: risk ≤ {meta.policy.maxRiskScore} · discount{" "}
+                {(meta.policy.minDiscountBps / 100).toFixed(1)}–{(meta.policy.maxDiscountBps / 100).toFixed(0)}% ·
+                invoice ≤ {(meta.policy.maxSingleInvoiceBps / 100).toFixed(0)}% of pool · debtor ≤{" "}
+                {(meta.policy.maxDebtorExposureBps / 100).toFixed(0)}%.
+              </span>
+            )}
+          </span>
+        </div>
+      )}
 
       <section className="hero">
         <div>
@@ -315,6 +347,7 @@ export default function App() {
 
           <div id="sell">
           <SubmitPanel
+            supplierDefault={meta?.supplier ?? null}
             onSubmitted={(r) => {
               notify(
                 r.status === "rejected"
@@ -387,10 +420,17 @@ export default function App() {
   );
 }
 
-function SubmitPanel({ onSubmitted }: { onSubmitted: (r: InvoiceRecord) => void }) {
+function SubmitPanel({
+  supplierDefault,
+  onSubmitted,
+}: {
+  supplierDefault: string | null;
+  onSubmitted: (r: InvoiceRecord) => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
     supplierName: "Nordwind Logistics GmbH",
+    supplierAddress: "",
     debtorName: "Aurora Retail AG",
     amountCspr: "120",
     dueDays: "30",
@@ -405,6 +445,7 @@ function SubmitPanel({ onSubmitted }: { onSubmitted: (r: InvoiceRecord) => void 
     try {
       const r = await api.submit({
         supplierName: form.supplierName,
+        supplierAddress: form.supplierAddress.trim() || undefined,
         debtorName: form.debtorName,
         amountCspr: Number(form.amountCspr),
         dueTs: Date.now() + Number(form.dueDays) * 86_400_000,
@@ -456,12 +497,24 @@ function SubmitPanel({ onSubmitted }: { onSubmitted: (r: InvoiceRecord) => void 
           <label>Description</label>
           <textarea rows={2} value={form.description} onChange={(e) => set("description", e.target.value)} />
         </div>
+        <div className="field full">
+          <label>Supplier Casper address — receives the advance (optional)</label>
+          <input
+            value={form.supplierAddress}
+            placeholder={
+              supplierDefault
+                ? `defaults to demo supplier ${supplierDefault.replace("entity-account-", "account-hash-").slice(0, 30)}…`
+                : "account-hash-… (defaults to the demo supplier account)"
+            }
+            onChange={(e) => set("supplierAddress", e.target.value)}
+          />
+        </div>
         <div className="full" style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <button className="btn" disabled={busy} onClick={submit}>
             {busy ? "Underwriting…" : "Submit to underwriter"}
           </button>
           <span className="muted" style={{ fontSize: 12 }}>
-            LLM proposes → policy layer disposes → registered, funded & attested on-chain
+            LLM proposes → on-chain policy disposes → registered, funded & attested on Casper
           </span>
         </div>
       </div>
@@ -580,6 +633,14 @@ function Drawer({
             </span>
             <span className="k">Pool fee</span>
             <span className="mono">{d ? `${(d.discountBps / 100).toFixed(2)}%` : "—"}</span>
+            {record.intake.supplierAddress && (
+              <>
+                <span className="k">Advance paid to</span>
+                <span className="mono" style={{ wordBreak: "break-all" }}>
+                  {record.intake.supplierAddress.replace("entity-account-", "account-hash-")} (supplier)
+                </span>
+              </>
+            )}
             <span className="k">Debtor tag</span>
             <span className="mono">{record.intake.debtorTag}</span>
             <span className="k">Document hash</span>

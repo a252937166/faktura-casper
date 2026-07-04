@@ -1,19 +1,20 @@
-# Faktura — the autonomous invoice-financing desk on Casper
+# Faktura — the autonomous RWA credit desk on Casper
 
-> Real-world invoices, underwritten by an **AI agent** whose every decision is
-> **hash-anchored on-chain**, financed by a **native-CSPR DeFi liquidity pool**,
-> and sold as a **machine-payable (x402) risk oracle** — Agentic AI × DeFi × RWA
-> on Casper.
+> Real-world invoices, underwritten by an **AI agent**, bounded by an
+> **on-chain risk policy**, financed by a **native-CSPR liquidity pool**, and
+> sold to other machines as an **x402 pay-per-call risk oracle** — an
+> autonomous credit desk for the Casper machine economy.
 
 **Casper Agentic Buildathon 2026** submission · Casper Innovation Track ·
 Deployed & running on **Casper Testnet**.
 
 | | |
 |---|---|
-| Contract package | [`a10c7ba4…44730d`](https://testnet.cspr.live/contract-package/a10c7ba41e599a31f25a0bed75a698f06b07f1bc5e84aa5ceb4c144b7e44730d) |
-| Odra address | `hash-a10c7ba41e599a31f25a0bed75a698f06b07f1bc5e84aa5ceb4c144b7e44730d` |
-| Deploy tx | [`0d27e86f…`](https://testnet.cspr.live/transaction/0d27e86f613f5bbba0f296d48d04d08069b770ea2315e397735963d97e3632a0) |
+| Contract package | [`fb209bb1…b49d7e`](https://testnet.cspr.live/contract-package/fb209bb1d3a1d5e675841f7d184ab7fa96d65adc099f6fd0105f29115fb49d7e) |
+| Odra address | `hash-fb209bb1d3a1d5e675841f7d184ab7fa96d65adc099f6fd0105f29115fb49d7e` |
+| Deploy tx | [`b59b3292…`](https://testnet.cspr.live/transaction/b59b32927dc57f614a56de4012990f4303542ac12f821c21e0408ade3fe90d5d) |
 | Network | Casper **Testnet** (`casper-test`) · built with **Odra 2.8** |
+| Evidence pack | [`DORAHACKS.md`](DORAHACKS.md) — every lifecycle step as an explorer-linkable transaction |
 
 ---
 
@@ -26,52 +27,65 @@ illiquid. Put an autonomous AI agent in the underwriter's seat and two questions
 immediately follow: **can you trust what the agent decided, and why?** If an AI
 drains a liquidity pool, "the model said so" is not an answer.
 
-Faktura's thesis: **autonomous underwriting is only fundable if it is auditable.**
+Faktura's thesis: **autonomous underwriting is only fundable if it is auditable
+— and only safe if the chain itself enforces the limits.**
 
 ## What makes it agentic — and safe
 
-Three agent roles run with no human in the loop:
+Three agent roles run with no human in the loop, each with its **own key** and
+**least-privilege permissions on-chain**:
 
-- **Underwriter agent** — on each invoice it runs deterministic pre-checks →
-  asks an LLM (Claude) for a risk score and price → applies hard policy
-  guardrails (risk ceiling, discount clamp, pool-exposure cap) → registers the
-  invoice, funds the advance from the pool, and **writes the SHA-256 of its full
-  decision memo on-chain**. The LLM *proposes*; deterministic Rust *disposes*.
-- **Collector agent** — reconciles settlements observed on-chain and
-  **autonomously writes off** invoices past due + grace.
-- **x402 risk oracle** — every underwriting produces a verified risk report,
-  sold to other agents over **HTTP 402** with native-CSPR settlement
-  (machine-to-machine, pay-per-call).
+- **Underwriter agent** (`agent` key) — runs deterministic pre-checks → asks an
+  LLM for a risk score and price → registers, funds and attests. The advance is
+  paid from the pool **to the supplier's account** (never the debtor's).
+- **Collector agent** (`collector` key) — reconciles settlements and
+  autonomously writes off invoices past due + grace. It is the *only* key the
+  contract accepts for `mark_default`, and it cannot register or fund.
+- **x402 risk oracle** — sells each underwriting as a verified risk report over
+  **HTTP 402** with native-CSPR settlement, machine-to-machine
+  ([docs/x402.md](docs/x402.md)).
 
-The load-bearing idea is the **on-chain attestation log**: `attest(...)` records
-`{actor, kind, subjectId, payloadHash, model, ts}` for **every** autonomous
-decision — approvals *and* rejections. You can prove after the fact exactly what
-the agent decided and which model produced it. That is what turns "an AI moved
-money" into "an auditable, fundable credit process."
+Two load-bearing ideas:
+
+1. **The LLM proposes; the on-chain policy disposes.** The contract stores a
+   `Policy` — max risk score, discount band, single-invoice cap and per-debtor
+   exposure cap (both as basis points of pool value) — and enforces it inside
+   `register_invoice` / `fund_invoice`. A buggy prompt, a hallucinating model,
+   or even a **compromised agent key** cannot exceed those bounds; the deploy
+   reverts with a typed error. Exposure is tracked per debtor and released on
+   settle/default.
+2. **The on-chain attestation log.** `attest(...)` records
+   `{actor, kind, subjectId, payloadHash, model, ts}` for **every** autonomous
+   decision — approvals *and* rejections. The SHA-256 of the full decision memo
+   is anchored at decision time, so anyone can prove after the fact exactly
+   what the agent decided. That turns "an AI moved money" into an auditable,
+   fundable credit process.
 
 ## The DeFi + RWA core (`FakturaHub`, Odra/Rust)
 
-- **RWA registry** — tokenized receivables with a `Listed → Funded → (Settled |
+- **RWA registry** — receivables with a `Listed → Funded → (Settled |
   Defaulted)` lifecycle.
 - **Native-CSPR liquidity pool** — `deposit()` mints LP shares at the current
   share price; yield and losses accrue to the **share price**
-  (`poolValue / totalShares`), so LPs who entered earlier capture the spread.
-  `withdraw()` is limited to liquid (un-deployed) capital.
+  (`poolValue / totalShares`). `withdraw()` is limited to liquid capital.
+- **On-chain risk policy** — admin-set, contract-enforced (see above), readable
+  by anyone via `get_policy` / `debtor_exposure_of`.
 - **Agent permission layer** — separate underwriter / collector keys, rotatable
-  by an admin; every mutating entrypoint is access-controlled with typed errors.
-- **Auditable attestations** — the append-only AI-decision log described above.
+  by the admin; every mutating entrypoint is access-controlled with typed
+  errors.
+- **Auditable attestations** — the append-only AI-decision log.
 
-A single deployed contract does all of it; see
-[`contracts/src/lib.rs`](contracts/src/lib.rs). **12 Odra tests pass** and a
-**live-testnet end-to-end run** exercises the whole lifecycle
-([`agents/src/e2e.ts`](agents/src/e2e.ts)).
+One deployed contract does all of it: [`contracts/src/lib.rs`](contracts/src/lib.rs).
+**12 Odra tests** cover the pool math, the policy caps (including the
+compromised-key scenario) and the permission layer; CI runs them plus
+`fmt`/`clippy`/typecheck/web build on every push.
 
 ## Architecture
 
 ```
    Supplier ── invoice ──▶ ┌───────────────────────────┐
                            │   Underwriter agent        │  pre-checks → LLM
-   ┌──────────┐  REST/SSE  │  (Node.js + Odra livenet)  │  → policy → on-chain
+   ┌──────────┐  REST/SSE  │  (Node.js + Odra livenet)  │  → on-chain policy
    │  Web UI   │◀──────────│  register · fund · attest  │
    │ (React)   │           └───────────┬───────────────┘
    └──────────┘                        │ Odra livenet CLI (Rust)
@@ -79,60 +93,89 @@ A single deployed contract does all of it; see
    │Collector │───────────▶┌─────────────────────────────────────────┐
    │  agent   │            │        FakturaHub  (Odra / Rust)          │
    └──────────┘            │  RWA registry · native-CSPR pool ·        │
-   ┌──────────┐  HTTP 402  │  agent permissions · AI-attestation log   │
-   │x402 buyer│───────────▶│                                           │
+   ┌──────────┐  HTTP 402  │  on-chain risk policy · agent permissions │
+   │x402 buyer│───────────▶│  · AI-attestation log                     │
    └──────────┘ pay-per-call         Casper Testnet
+   ┌──────────┐  MCP/stdio
+   │ any agent│───────────▶ 5 tools: pool_stats · submit_invoice ·
+   └──────────┘             get_risk_report · verify_decision_hash ·
+                            list_funded_invoices
 ```
 
 See [`docs/architecture.md`](docs/architecture.md) for the sequence diagram and
 the on-chain data model.
 
-## What was built for this hackathon
+## Plug your agent in (MCP)
 
-Everything here is new work for the Casper Agentic Buildathon:
+Faktura is itself a service *for* agents: an MCP server exposes the desk to any
+MCP-capable assistant.
 
-- `contracts/` — `FakturaHub` in Odra/Rust: the RWA registry, the native-CSPR
-  pool with an LP share-price yield model, the agent permission layer, and the
-  on-chain AI-attestation log. Plus a small **livenet ops CLI**
-  (`contracts/bin/livenet.rs`) the agents drive to transact.
-- `agents/` — the autonomous underwriter + collector + x402 oracle (TypeScript;
-  pluggable LLM: Anthropic API / local `claude` CLI / deterministic fallback).
-- `web/` — a live operations dashboard (React + Vite).
+```bash
+claude mcp add faktura -- npx tsx agents/src/mcp.ts     # or: make mcp
+```
+
+Tools: `pool_stats`, `list_funded_invoices`, `submit_invoice` (drives the real
+underwriting pipeline), `get_risk_report` (x402: returns the 402 payment
+challenge, then the paid report), `verify_decision_hash` (audits that the
+off-chain memo matches the on-chain anchor).
+
+## Live demo vs. local run — read this first
+
+Two ways to see Faktura, honestly labeled (the UI shows the active mode in a
+banner):
+
+- **Hosted showcase** — <https://faktura.axiqo.xyz> runs in **showcase mode**:
+  on-chain *reads* come from a captured snapshot of the real testnet contract
+  (verifiable on cspr.live) and the AI underwriter runs *live*, but *writes*
+  are simulated in server memory so visitors don't burn testnet gas or wait
+  30–120 s per block. No transaction shown there is claimed to be on-chain.
+- **Local live mode** — run the stack yourself (below) with funded testnet
+  keys and **every state transition is a real Casper Testnet transaction**;
+  `make e2e` prints an explorer-linkable evidence table
+  (the one in [DORAHACKS.md](DORAHACKS.md) came from exactly that).
 
 ## Run it
 
 ```bash
-# prerequisites: Rust (nightly per rust-toolchain), cargo-odra, casper-client,
-# Node 20+, and a funded Casper testnet key (https://testnet.cspr.live/tools/faucet)
-cd contracts && cargo test          # 12 passing (Odra VM)
-cargo odra build -c FakturaHub      # -> wasm/FakturaHub.wasm
-cargo build --features livenet --bin livenet
+# prerequisites: Rust (rustup; the pinned nightly in contracts/rust-toolchain
+# installs automatically), cargo-odra, Node 20+, openssl
+make build            # wasm + livenet ops binary + web UI
+make test             # everything CI runs
+make keys             # generate the 5 demo persona keypairs (testnet only)
+#   fund the agent + investor keys: https://testnet.cspr.live/tools/faucet
 
-# deploy (prints the contract address)
-export ODRA_CASPER_LIVENET_SECRET_KEY_PATH=keys/agent/secret_key.pem
-export ODRA_CASPER_LIVENET_NODE_ADDRESS=https://node.testnet.casper.network
-export ODRA_CASPER_LIVENET_CHAIN_NAME=casper-test
-./contracts/target/debug/livenet deploy <agent-account-hash> 30000
+make deploy           # deploys FakturaHub, prints the contract address
+export FAKTURA_CONTRACT=hash-...
+make configure        # set-agents (underwriter/collector) + set-policy
+make fund-collector   # 150 CSPR gas so the collector can sign write-offs
 
-# agents + web, then drive the full lifecycle on live testnet
-cd agents && npm install && FAKTURA_CONTRACT=hash-... npm run e2e
+make e2e              # full lifecycle on live testnet + tx evidence table
+make serve            # agent service + web UI on :4020
+make x402-demo        # buyer agent pays the oracle, fetches a risk report
 ```
 
-`npm run e2e` deposits into the pool, then underwrites three invoices — one
-approved + funded + settled, one risk-rejected, one funded then defaulted — all
-as real Casper Testnet transactions.
+`make e2e` deposits into the pool, then underwrites three invoices — one
+approved + funded + settled, one risk-rejected, one funded then **written off
+by the collector key** after grace — all as real Casper Testnet transactions.
+
+No LLM key? The underwriter falls back to a deterministic, transparent scorer
+so the whole flow still runs (`LLM_PROVIDER=mock`); any OpenAI- or
+Anthropic-compatible key plugs in via env.
 
 ## Judging-criteria notes
 
 - **Working smart contracts on Testnet** — deployed and exercised on
-  `casper-test`; every state transition is a real on-chain deploy.
+  `casper-test`; every lifecycle step in [DORAHACKS.md](DORAHACKS.md) links to
+  a real deploy.
 - **Use of AI / agentic systems** — the agents run the entire credit process;
-  the on-chain attestation log makes each autonomous decision provable.
+  the attestation log + on-chain policy make each autonomous decision provable
+  *and* bounded.
 - **Real-world applicability (DeFi & RWA)** — invoice factoring is a live $3T
   market; the pool, yield model, and RWA lifecycle are the actual mechanism.
 - **Long-term plan** — permissioned institutional pools, real supplier-ERP
-  document ingestion with proof-of-authenticity, and a cross-framework agent
-  marketplace for the x402 risk oracle.
+  document ingestion with proof-of-authenticity, and the x402/MCP surfaces as
+  the distribution channel: other agents underwrite *with* Faktura instead of
+  rebuilding it.
 
 ## License
 
