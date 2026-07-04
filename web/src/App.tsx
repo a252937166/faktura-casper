@@ -18,7 +18,8 @@ import {
  */
 function TxLink({ hash, explorer, prefix }: { hash?: string; explorer: string; prefix?: string }) {
   if (!hash) return <span className="muted">—</span>;
-  if (isSimulatedHash(hash)) return <span className="sim-tag">simulated write — no explorer tx</span>;
+  if (isSimulatedHash(hash))
+    return <span className="sim-tag">simulated write — no explorer tx</span>;
   return (
     <a target="_blank" rel="noreferrer" href={`${explorer}/deploy/${hash}`}>
       {prefix}
@@ -57,6 +58,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [depositAmt, setDepositAmt] = useState("100");
   const [judgeOpen, setJudgeOpen] = useState(false);
+  const [mcpOpen, setMcpOpen] = useState(false);
   const feedRef = useRef<HTMLDivElement>(null);
 
   const refresh = async () => {
@@ -71,7 +73,10 @@ export default function App() {
 
   useEffect(() => {
     refresh();
-    api.meta().then(setMeta).catch(() => {});
+    api
+      .meta()
+      .then(setMeta)
+      .catch(() => {});
     const iv = setInterval(refresh, 12_000);
     const es = new EventSource(`${API_BASE}/activity`);
     es.onmessage = (m) => {
@@ -92,10 +97,14 @@ export default function App() {
   const tvl = stats ? motesToCspr(stats.liquid) + motesToCspr(stats.deployed) : 0;
   const sharePrice =
     stats && BigInt(stats.totalShares) > 0n
-      ? Number((BigInt(stats.liquid) + BigInt(stats.deployed)) * 10_000n / BigInt(stats.totalShares)) / 10_000
+      ? Number(
+          ((BigInt(stats.liquid) + BigInt(stats.deployed)) * 10_000n) / BigInt(stats.totalShares),
+        ) / 10_000
       : 1;
   const yieldRealized = stats
-    ? motesToCspr(stats.totalSettled) - motesToCspr(stats.totalFunded) + motesToCspr(stats.totalDefaulted) * 0
+    ? motesToCspr(stats.totalSettled) -
+      motesToCspr(stats.totalFunded) +
+      motesToCspr(stats.totalDefaulted) * 0
     : 0;
 
   const notify = (msg: string) => {
@@ -103,7 +112,9 @@ export default function App() {
     setTimeout(() => setToast(null), 4200);
   };
 
-  const contractShort = pool?.contract ? `${pool.contract.slice(0, 16)}…${pool.contract.slice(-6)}` : "not deployed";
+  const contractShort = pool?.contract
+    ? `${pool.contract.slice(0, 16)}…${pool.contract.slice(-6)}`
+    : "not deployed";
 
   return (
     <div className="shell">
@@ -129,9 +140,13 @@ export default function App() {
           </span>
         )}
         {meta?.mcp && (
-          <span className="chip" title="MCP server: 5 tools for any agent (agents/src/mcp.ts)">
-            MCP · 5 tools
-          </span>
+          <button
+            className="chip chip-btn"
+            title="Open the MCP agent interface — 5 tools, quick-start commands, live previews"
+            onClick={() => setMcpOpen(true)}
+          >
+            MCP · 5 tools ▾
+          </button>
         )}
         {pool?.contract && (
           <a
@@ -143,7 +158,12 @@ export default function App() {
             ⛓ {contractShort}
           </a>
         )}
-        <a className="chip" href="https://github.com/a252937166/faktura-casper" target="_blank" rel="noreferrer">
+        <a
+          className="chip"
+          href="https://github.com/a252937166/faktura-casper"
+          target="_blank"
+          rel="noreferrer"
+        >
           ⭐ GitHub
         </a>
       </header>
@@ -155,9 +175,9 @@ export default function App() {
             {meta.mode === "showcase" ? (
               <>
                 On-chain <b>reads</b> come from a captured snapshot of the real testnet contract
-                (verifiable on cspr.live) and the AI underwriter runs <b>live</b> — but <b>writes are
-                simulated</b> in server memory, not signed transactions. Run the stack locally
-                (README) for real Casper transactions.
+                (verifiable on cspr.live) and the AI underwriter runs <b>live</b> — but{" "}
+                <b>writes are simulated</b> in server memory, not signed transactions. Run the stack
+                locally (README) for real Casper transactions.
               </>
             ) : (
               <>
@@ -167,12 +187,18 @@ export default function App() {
             )}
             {meta.policy && (
               <span className="policy-note">
-                {" "}On-chain hard caps: risk ≤ {meta.policy.maxRiskScore} · discount{" "}
-                {(meta.policy.minDiscountBps / 100).toFixed(1)}–{(meta.policy.maxDiscountBps / 100).toFixed(0)}% ·
-                invoice ≤ {(meta.policy.maxSingleInvoiceBps / 100).toFixed(0)}% of pool · debtor ≤{" "}
+                {" "}
+                On-chain hard caps: risk ≤ {meta.policy.maxRiskScore} · discount{" "}
+                {(meta.policy.minDiscountBps / 100).toFixed(1)}–
+                {(meta.policy.maxDiscountBps / 100).toFixed(0)}% · invoice ≤{" "}
+                {(meta.policy.maxSingleInvoiceBps / 100).toFixed(0)}% of pool · debtor ≤{" "}
                 {(meta.policy.maxDebtorExposureBps / 100).toFixed(0)}%.
                 {meta.prefilter && (
-                  <> Agent prefilter (stricter, saves gas): risk ≤ {meta.prefilter.maxRiskScore}. The contract is the final authority.</>
+                  <>
+                    {" "}
+                    Agent prefilter (stricter, saves gas): risk ≤ {meta.prefilter.maxRiskScore}. The
+                    contract is the final authority.
+                  </>
                 )}
               </span>
             )}
@@ -197,14 +223,20 @@ export default function App() {
             receivable, a native-CSPR pool funds it, and every decision is hash-anchored on-chain —
             fully auditable.
           </p>
-          <p className="hero-note">LLM proposes → policy disposes → registered, funded &amp; attested on-chain.</p>
+          <p className="hero-note">
+            LLM proposes → policy disposes → registered, funded &amp; attested on-chain.
+          </p>
           <div className="hero-cta">
             <button className="btn-primary" onClick={() => setJudgeOpen(true)}>
               ▶ RUN JUDGE DEMO
             </button>
             <button
               className="btn-outline"
-              onClick={() => document.getElementById("sell")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              onClick={() =>
+                document
+                  .getElementById("sell")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" })
+              }
             >
               SELL AN INVOICE ↓
             </button>
@@ -241,13 +273,34 @@ export default function App() {
             <header>
               INVOICE <span>№ 2026-0347</span>
             </header>
-            <div className="doc-row"><span>Supplier</span><b>Nordwind Logistics</b></div>
-            <div className="doc-row"><span>Debtor</span><b>Aurora Retail AG</b></div>
-            <div className="doc-row"><span>Tenor</span><b>30 days</b></div>
-            <div className="doc-row"><span>Risk score</span><b className="r-red">28 / 100</b></div>
-            <div className="doc-row"><span>Discount</span><b>2.00%</b></div>
-            <div className="doc-row"><span>Decision hash</span><b>sha256:9d93…a8e1</b></div>
-            <div className="doc-total"><span>ADVANCE</span><b>58.8 CSPR</b></div>
+            <div className="doc-row">
+              <span>Supplier</span>
+              <b>Nordwind Logistics</b>
+            </div>
+            <div className="doc-row">
+              <span>Debtor</span>
+              <b>Aurora Retail AG</b>
+            </div>
+            <div className="doc-row">
+              <span>Tenor</span>
+              <b>30 days</b>
+            </div>
+            <div className="doc-row">
+              <span>Risk score</span>
+              <b className="r-red">28 / 100</b>
+            </div>
+            <div className="doc-row">
+              <span>Discount</span>
+              <b>2.00%</b>
+            </div>
+            <div className="doc-row">
+              <span>Decision hash</span>
+              <b>sha256:9d93…a8e1</b>
+            </div>
+            <div className="doc-total">
+              <span>ADVANCE</span>
+              <b>58.8 CSPR</b>
+            </div>
           </div>
           <div className="stamp s1">APPROVED</div>
           <div className="stamp s2">FUNDED</div>
@@ -259,7 +312,8 @@ export default function App() {
           <div className="label">Pool TVL</div>
           <div className="value">{fmtCspr(tvl)} CSPR</div>
           <div className="sub">
-            liquid {fmtCspr(motesToCspr(stats?.liquid))} · deployed {fmtCspr(motesToCspr(stats?.deployed))}
+            liquid {fmtCspr(motesToCspr(stats?.liquid))} · deployed{" "}
+            {fmtCspr(motesToCspr(stats?.deployed))}
           </div>
         </div>
         <div className="stat">
@@ -296,11 +350,17 @@ export default function App() {
           <div className="panel">
             <div className="head">
               Receivables pipeline
-              <span className="hint">every state transition is a Casper Testnet transaction</span>
+              <span className="hint">
+                {meta?.mode === "live-testnet"
+                  ? "every state transition is a Casper Testnet transaction"
+                  : "seeded from real Casper Testnet · new writes simulated"}
+              </span>
               <span className="right hint">{invoices.length} intakes</span>
             </div>
             {invoices.length === 0 ? (
-              <div className="empty">No invoices yet — submit one below and watch the underwriter work.</div>
+              <div className="empty">
+                No invoices yet — submit one below and watch the underwriter work.
+              </div>
             ) : (
               <table>
                 <thead>
@@ -329,12 +389,15 @@ export default function App() {
                       <tr key={r.intakeId} className="row" onClick={() => setSelected(r)}>
                         <td className="mono">{r.intake.invoiceNumber}</td>
                         <td>
-                          {r.intake.supplierName} <span className="muted">→</span> {r.intake.debtorName}
+                          {r.intake.supplierName} <span className="muted">→</span>{" "}
+                          {r.intake.debtorName}
                         </td>
                         <td className="num mono">{fmtCspr(r.intake.amountCspr)}</td>
                         <td className="num mono">
                           {r.decision?.approve
-                            ? fmtCspr((r.intake.amountCspr * (10_000 - r.decision.discountBps)) / 10_000)
+                            ? fmtCspr(
+                                (r.intake.amountCspr * (10_000 - r.decision.discountBps)) / 10_000,
+                              )
                             : "—"}
                         </td>
                         <td>
@@ -354,7 +417,9 @@ export default function App() {
                             <span className="muted mono">…</span>
                           )}
                         </td>
-                        <td className="mono muted">{new Date(r.intake.dueTs).toISOString().slice(0, 10)}</td>
+                        <td className="mono muted">
+                          {new Date(r.intake.dueTs).toISOString().slice(0, 10)}
+                        </td>
                         <td>
                           <span className={`badge ${status}`}>{status.toUpperCase()}</span>
                         </td>
@@ -394,19 +459,19 @@ export default function App() {
           </div>
 
           <div id="sell">
-          <SubmitPanel
-            supplierDefault={meta?.supplier ?? null}
-            onSubmitted={(r) => {
-              notify(
-                r.status === "rejected"
-                  ? `Underwriter REJECTED ${r.intake.invoiceNumber}`
-                  : r.status === "policy_blocked"
-                    ? `Casper policy BLOCKED funding of ${r.intake.invoiceNumber} — open it to see the firewall`
-                    : `Underwriter approved & funded ${r.intake.invoiceNumber}`,
-              );
-              refresh();
-            }}
-          />
+            <SubmitPanel
+              supplierDefault={meta?.supplier ?? null}
+              onSubmitted={(r) => {
+                notify(
+                  r.status === "rejected"
+                    ? `Underwriter REJECTED ${r.intake.invoiceNumber}`
+                    : r.status === "policy_blocked"
+                      ? `Casper policy BLOCKED funding of ${r.intake.invoiceNumber} — open it to see the firewall`
+                      : `Underwriter approved & funded ${r.intake.invoiceNumber}`,
+                );
+                refresh();
+              }}
+            />
           </div>
         </div>
 
@@ -477,6 +542,7 @@ export default function App() {
           }}
         />
       )}
+      {mcpOpen && <McpDrawer meta={meta} notify={notify} onClose={() => setMcpOpen(false)} />}
       {toast && <div className="toast">{toast}</div>}
     </div>
   );
@@ -516,7 +582,14 @@ function ProofStrip({
   ];
   return (
     <div className="proof-strip">
-      <span className="ps-title" title={showcase ? "Real transactions captured from the testnet contract into the showcase seed — new writes here are simulated and never shown as proof." : undefined}>
+      <span
+        className="ps-title"
+        title={
+          showcase
+            ? "Real transactions captured from the testnet contract into the showcase seed — new writes here are simulated and never shown as proof."
+            : undefined
+        }
+      >
         {showcase ? "SEEDED CASPER PROOF" : "LIVE CASPER PROOF"}
       </span>
       {items.map((it) => (
@@ -623,7 +696,10 @@ function SubmitPanel({
         history: form.history,
       });
       onSubmitted(r);
-      set("invoiceNumber", `INV-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 900) + 100)}`);
+      set(
+        "invoiceNumber",
+        `INV-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 900) + 100)}`,
+      );
     } catch (e) {
       alert((e as Error).message);
     } finally {
@@ -640,7 +716,12 @@ function SubmitPanel({
       <div className="presets">
         <span className="presets-label">Presets:</span>
         {Object.keys(presets).map((name) => (
-          <button key={name} className="preset" title={presets[name].hint} onClick={() => applyPreset(name)}>
+          <button
+            key={name}
+            className="preset"
+            title={presets[name].hint}
+            onClick={() => applyPreset(name)}
+          >
             {name}
           </button>
         ))}
@@ -664,7 +745,10 @@ function SubmitPanel({
         </div>
         <div className="field">
           <label>Invoice number</label>
-          <input value={form.invoiceNumber} onChange={(e) => set("invoiceNumber", e.target.value)} />
+          <input
+            value={form.invoiceNumber}
+            onChange={(e) => set("invoiceNumber", e.target.value)}
+          />
         </div>
         <div className="field">
           <label>Payment history</label>
@@ -672,7 +756,11 @@ function SubmitPanel({
         </div>
         <div className="field full">
           <label>Description</label>
-          <textarea rows={2} value={form.description} onChange={(e) => set("description", e.target.value)} />
+          <textarea
+            rows={2}
+            value={form.description}
+            onChange={(e) => set("description", e.target.value)}
+          />
         </div>
         <div className="field full">
           <label>Supplier Casper address — receives the advance (optional)</label>
@@ -744,11 +832,13 @@ function Drawer({
       <div className="drawer-backdrop" onClick={onClose} />
       <div className="drawer">
         <h2>
-          {record.intake.invoiceNumber} <span className={`badge ${status}`}>{status.toUpperCase()}</span>
+          {record.intake.invoiceNumber}{" "}
+          <span className={`badge ${status}`}>{status.toUpperCase()}</span>
         </h2>
         <div className="muted" style={{ fontSize: 13 }}>
-          {record.intake.supplierName} → {record.intake.debtorName} · {fmtCspr(record.intake.amountCspr)} CSPR ·
-          due {new Date(record.intake.dueTs).toLocaleString()}
+          {record.intake.supplierName} → {record.intake.debtorName} ·{" "}
+          {fmtCspr(record.intake.amountCspr)} CSPR · due{" "}
+          {new Date(record.intake.dueTs).toLocaleString()}
         </div>
 
         {d && (
@@ -775,7 +865,8 @@ function Drawer({
               </div>
               <div>
                 <div style={{ fontSize: 15, fontWeight: 600 }}>
-                  {d.approve ? "APPROVED" : "REJECTED"} · discount {(d.discountBps / 100).toFixed(2)}%
+                  {d.approve ? "APPROVED" : "REJECTED"} · discount{" "}
+                  {(d.discountBps / 100).toFixed(2)}%
                 </div>
                 <div className="muted" style={{ fontSize: 12.5 }}>
                   model {d.model} · {new Date(d.decidedTs).toLocaleTimeString()}
@@ -809,7 +900,9 @@ function Drawer({
           </div>
         )}
 
-        {d && meta?.policy && <PolicyFirewall record={record} d={d} policy={meta.policy} pool={pool} />}
+        {d && meta?.policy && (
+          <PolicyFirewall record={record} d={d} policy={meta.policy} pool={pool} />
+        )}
 
         <div className="section">
           <h3>Terms</h3>
@@ -818,7 +911,9 @@ function Drawer({
             <span className="mono">{fmtCspr(record.intake.amountCspr)} CSPR</span>
             <span className="k">Advance</span>
             <span className="mono">
-              {d?.approve ? `${fmtCspr((record.intake.amountCspr * (10_000 - d.discountBps)) / 10_000)} CSPR` : "—"}
+              {d?.approve
+                ? `${fmtCspr((record.intake.amountCspr * (10_000 - d.discountBps)) / 10_000)} CSPR`
+                : "—"}
             </span>
             <span className="k">Pool fee</span>
             <span className="mono">{d ? `${(d.discountBps / 100).toFixed(2)}%` : "—"}</span>
@@ -826,7 +921,8 @@ function Drawer({
               <>
                 <span className="k">Advance paid to</span>
                 <span className="mono" style={{ wordBreak: "break-all" }}>
-                  {record.intake.supplierAddress.replace("entity-account-", "account-hash-")} (supplier)
+                  {record.intake.supplierAddress.replace("entity-account-", "account-hash-")}{" "}
+                  (supplier)
                 </span>
               </>
             )}
@@ -856,7 +952,12 @@ function Drawer({
         </div>
 
         {d?.approve && record.id > 0 && (
-          <X402Panel invoiceId={record.id} showcase={showcase} priceMotes={meta?.x402Price} notify={notify} />
+          <X402Panel
+            invoiceId={record.id}
+            showcase={showcase}
+            priceMotes={meta?.x402Price}
+            notify={notify}
+          />
         )}
 
         {status === "FUNDED" && (
@@ -923,7 +1024,9 @@ function PolicyFirewall({
         <div className="fw-row" key={c.label}>
           <span className="fw-label">{c.label}</span>
           <span className="fw-value mono">{c.value}</span>
-          <span className={`fw-verdict ${c.pass ? "pass" : "fail"}`}>{c.pass ? "PASS" : "FAIL"}</span>
+          <span className={`fw-verdict ${c.pass ? "pass" : "fail"}`}>
+            {c.pass ? "PASS" : "FAIL"}
+          </span>
         </div>
       ))}
       <div className={`fw-result ${allow ? "allow" : "block"}`}>
@@ -1014,13 +1117,21 @@ function X402Panel({
       <div className="x402-steps">
         <div className={`x402-step ${step >= 1 ? "done" : step === 0 ? "active" : ""}`}>
           <b>1</b> GET /api/risk/{invoiceId} → 402 Payment Required
-          {step >= 1 && <div className="mono sm">nonce {nonce}</div>}
+          {step >= 1 && (
+            <div className="mono sm">
+              payTo {payTo.slice(0, 18)}… · price {price} CSPR · nonce {nonce}
+            </div>
+          )}
         </div>
         <div className={`x402-step ${step >= 2 ? "done" : step === 1 ? "active" : ""}`}>
           <b>2</b> {showcase ? "Buyer pays (simulated in showcase)" : "Buyer pays native CSPR"}
           {step >= 2 && (
             <div className="mono sm">
-              {proof.startsWith("showcase") ? proof : `deploy ${proof.slice(0, 14)}…`}
+              {proof.startsWith("showcase") ? (
+                proof
+              ) : (
+                <TxLink hash={proof} explorer="https://testnet.cspr.live" prefix="deploy " />
+              )}
             </div>
           )}
         </div>
@@ -1030,8 +1141,8 @@ function X402Panel({
       </div>
       {report && (
         <div className="x402-report">
-          risk {report.riskScore} · discount {(report.discountBps / 100).toFixed(2)}% · anchored hash{" "}
-          <span className="mono">{report.decisionHash.slice(0, 22)}…</span>
+          risk {report.riskScore} · discount {(report.discountBps / 100).toFixed(2)}% · anchored
+          hash <span className="mono">{report.decisionHash.slice(0, 22)}…</span>
         </div>
       )}
       {step === 0 && (
@@ -1050,15 +1161,56 @@ function X402Panel({
 
 /** Judge Demo: a guided, self-driving walkthrough of the whole lifecycle. */
 const JUDGE_STEPS = [
-  { actor: "investor", title: "LP deposits CSPR", detail: "Liquidity is added to the native-CSPR pool; LP shares mint at the current share price." },
-  { actor: "supplier", title: "Supplier submits an invoice", detail: "A receivable enters intake and goes straight to the autonomous underwriter." },
-  { actor: "underwriter", title: "AI underwriter scores risk", detail: "Deterministic pre-checks, then an LLM returns a risk score, a price and a rationale." },
-  { actor: "underwriter", title: "Casper policy checks the limits", detail: "The contract enforces risk ceiling, discount band and concentration caps — the agent cannot exceed them." },
-  { actor: "underwriter", title: "Contract registers the invoice", detail: "register_invoice writes the receivable on-chain with the decision hash." },
-  { actor: "underwriter", title: "Pool funds the supplier", detail: "fund_invoice streams the advance from the pool to the supplier account (never the debtor)." },
-  { actor: "underwriter", title: "AI decision is attested on-chain", detail: "The SHA-256 of the full decision memo is anchored — autonomous underwriting you can audit." },
-  { actor: "oracle", title: "Buyer purchases the risk report via x402", detail: "Another agent pays over HTTP 402 with native CSPR and gets the verified report." },
-  { actor: "debtor", title: "Debtor settles / collector writes off", detail: "On payment the pool realizes yield; past due + grace, the collector key defaults it and the loss hits the share price." },
+  {
+    actor: "investor",
+    title: "LP deposits CSPR",
+    detail:
+      "Liquidity is added to the native-CSPR pool; LP shares mint at the current share price.",
+  },
+  {
+    actor: "supplier",
+    title: "Supplier submits an invoice",
+    detail: "A receivable enters intake and goes straight to the autonomous underwriter.",
+  },
+  {
+    actor: "underwriter",
+    title: "AI underwriter scores risk",
+    detail: "Deterministic pre-checks, then an LLM returns a risk score, a price and a rationale.",
+  },
+  {
+    actor: "underwriter",
+    title: "Casper policy checks the limits",
+    detail:
+      "The contract enforces risk ceiling, discount band and concentration caps — the agent cannot exceed them.",
+  },
+  {
+    actor: "underwriter",
+    title: "Contract registers the invoice",
+    detail: "register_invoice writes the receivable on-chain with the decision hash.",
+  },
+  {
+    actor: "underwriter",
+    title: "Pool funds the supplier",
+    detail:
+      "fund_invoice streams the advance from the pool to the supplier account (never the debtor).",
+  },
+  {
+    actor: "underwriter",
+    title: "AI decision is attested on-chain",
+    detail:
+      "The SHA-256 of the full decision memo is anchored — autonomous underwriting you can audit.",
+  },
+  {
+    actor: "oracle",
+    title: "Buyer purchases the risk report via x402",
+    detail: "Another agent pays over HTTP 402 with native CSPR and gets the verified report.",
+  },
+  {
+    actor: "debtor",
+    title: "Debtor settles / collector writes off",
+    detail:
+      "On payment the pool realizes yield; past due + grace, the collector key defaults it and the loss hits the share price.",
+  },
 ];
 
 function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }) {
@@ -1074,7 +1226,9 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
             <div className="judge-kicker">JUDGE DEMO · the 30-second story</div>
             <h2>How Faktura moves capital, safely</h2>
           </div>
-          <button className="judge-x" onClick={onClose}>✕</button>
+          <button className="judge-x" onClick={onClose}>
+            ✕
+          </button>
         </div>
         <div className="judge-body">
           <ol className="judge-list">
@@ -1091,22 +1245,25 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
             ))}
           </ol>
           <div className="judge-detail">
-            <div className="jd-actor">{ACTOR_ICON[step.actor] ?? "•"} {step.actor}</div>
+            <div className="jd-actor">
+              {ACTOR_ICON[step.actor] ?? "•"} {step.actor}
+            </div>
             <h3>{step.title}</h3>
             <p>{step.detail}</p>
             {i === 3 && meta?.policy && (
               <div className="jd-policy">
                 On-chain hard caps — risk ≤ {meta.policy.maxRiskScore} · discount{" "}
-                {(meta.policy.minDiscountBps / 100).toFixed(1)}–{(meta.policy.maxDiscountBps / 100).toFixed(0)}% ·
-                invoice ≤ {meta.policy.maxSingleInvoiceBps / 100}% of pool · debtor ≤{" "}
+                {(meta.policy.minDiscountBps / 100).toFixed(1)}–
+                {(meta.policy.maxDiscountBps / 100).toFixed(0)}% · invoice ≤{" "}
+                {meta.policy.maxSingleInvoiceBps / 100}% of pool · debtor ≤{" "}
                 {meta.policy.maxDebtorExposureBps / 100}%.
               </div>
             )}
             {i === 7 && (
               <div className="jd-policy">
-                Price {meta ? (Number(meta.x402Price) / 1e9).toFixed(2) : "2.50"} CSPR · settled with a
-                native transfer carrying a one-time nonce · the report carries the on-chain-anchored
-                decision hash. The same surface is exposed as MCP tools.
+                Price {meta ? (Number(meta.x402Price) / 1e9).toFixed(2) : "2.50"} CSPR · settled
+                with a native transfer carrying a one-time nonce · the report carries the
+                on-chain-anchored decision hash. The same surface is exposed as MCP tools.
               </div>
             )}
             <div className="jd-nav">
@@ -1124,8 +1281,8 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
               )}
             </div>
             <div className="jd-hint">
-              Every step below is a real Casper Testnet transaction in live mode — follow the tx links
-              in the pipeline and activity feed.
+              Every step below is a real Casper Testnet transaction in live mode — follow the tx
+              links in the pipeline and activity feed.
             </div>
           </div>
         </div>
@@ -1153,12 +1310,206 @@ function AgentRoles() {
       <div className="roles-grid">
         {rows.map(([name, icon, role, color]) => (
           <div className="role" key={name}>
-            <span className="role-icon" style={{ background: color }}>{icon}</span>
+            <span className="role-icon" style={{ background: color }}>
+              {icon}
+            </span>
             <span className="role-name">{name}</span>
             <span className="role-can">{role}</span>
           </div>
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * The MCP agent interface, productized: the 5 tools, quick-start commands,
+ * and LIVE previews that call the same REST endpoints the MCP server wraps —
+ * the JSON shown is exactly what an MCP-connected agent receives.
+ */
+const MCP_TOOLS = [
+  {
+    name: "pool_stats",
+    what: "TVL, LP share price, funded/settled/defaulted totals, attestation count",
+    ask: '"What\'s the state of the Faktura pool?"',
+  },
+  {
+    name: "list_funded_invoices",
+    what: "every invoice the pool is currently financing, with risk and due date",
+    ask: '"Which invoices are we exposed to right now?"',
+  },
+  {
+    name: "submit_invoice",
+    what: "drives the real underwriting pipeline: AI scoring → on-chain policy → register/fund/attest",
+    ask: '"Sell this €40k receivable from Aurora Retail, due in 30 days."',
+  },
+  {
+    name: "get_risk_report",
+    what: "buys the verified report via x402 (returns the 402 challenge, then the paid report)",
+    ask: '"Buy the risk report for invoice #4."',
+  },
+  {
+    name: "verify_decision_hash",
+    what: "audits the AI: compares the off-chain memo hash with the on-chain anchor",
+    ask: '"Prove the AI decision on invoice #4 wasn\'t rewritten."',
+  },
+];
+
+function McpDrawer({
+  meta,
+  notify,
+  onClose,
+}: {
+  meta: Meta | null;
+  notify: (m: string) => void;
+  onClose: () => void;
+}) {
+  const [preview, setPreview] = useState<{ tool: string; body: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const quick = `FAKTURA_API=${window.location.origin} npm run mcp`;
+  const claudeCmd = "claude mcp add faktura -- npx tsx agents/src/mcp.ts";
+
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      notify("Command copied");
+    } catch {
+      notify("Copy failed — select the text manually");
+    }
+  };
+
+  // Real previews: same REST calls the MCP server wraps (read-only).
+  const previewPool = async () => {
+    setBusy(true);
+    try {
+      const p = await api.pool();
+      const s = p.stats;
+      const cspr = (m: string) => Number(BigInt(m) / 1_000_000n) / 1000;
+      const body = {
+        contract: p.contract,
+        tvlCspr: cspr(s.liquid) + cspr(s.deployed),
+        liquidCspr: cspr(s.liquid),
+        deployedCspr: cspr(s.deployed),
+        lpSharePrice:
+          BigInt(s.totalShares) > 0n
+            ? Number(((BigInt(s.liquid) + BigInt(s.deployed)) * 10_000n) / BigInt(s.totalShares)) /
+              10_000
+            : 1,
+        totalDefaultedCspr: cspr(s.totalDefaulted),
+        invoiceCount: s.invoiceCount,
+        aiAttestationsOnChain: s.attestationCount,
+      };
+      setPreview({ tool: "pool_stats", body: JSON.stringify(body, null, 2) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const previewVerify = async () => {
+    setBusy(true);
+    try {
+      const [inv, p] = await Promise.all([api.invoices(), api.pool()]);
+      const withDecision = inv.filter((r) => r.decision && r.id > 0);
+      const onchainById = new Map(p.onchain.map((o: { id: number }) => [o.id, o]));
+      const target = withDecision.find((r) => onchainById.has(r.id));
+      if (!target) {
+        setPreview({ tool: "verify_decision_hash", body: '{ "error": "no verifiable invoice" }' });
+        return;
+      }
+      const onchain = onchainById.get(target.id) as unknown as { decisionHash: string };
+      const match = target.decision!.decisionHash === onchain.decisionHash;
+      setPreview({
+        tool: `verify_decision_hash (#${target.id})`,
+        body: JSON.stringify(
+          {
+            invoiceId: target.id,
+            offchainMemoHash: target.decision!.decisionHash,
+            onchainAnchoredHash: onchain.decisionHash,
+            match,
+            verdict: match
+              ? "MATCH — the memo the AI produced is exactly what was anchored on-chain"
+              : "MISMATCH",
+          },
+          null,
+          2,
+        ),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="drawer-backdrop" onClick={onClose} />
+      <div className="drawer mcp-drawer">
+        <h2>
+          MCP Agent Interface <span className="badge FUNDED">LIVE</span>
+        </h2>
+        <div className="muted" style={{ fontSize: 13 }}>
+          Faktura exposes the whole credit desk as 5 MCP tools over stdio — any MCP-capable agent
+          can inspect the pool, submit invoices, buy x402 risk reports, and verify AI decisions
+          against Casper.
+        </div>
+
+        <div className="section">
+          <h3>Quick start</h3>
+          <div className="mcp-cmd">
+            <code>{quick}</code>
+            <button className="btn ghost sm" onClick={() => copy(quick)}>
+              Copy
+            </button>
+          </div>
+          <div className="mcp-cmd">
+            <code>{claudeCmd}</code>
+            <button className="btn ghost sm" onClick={() => copy(claudeCmd)}>
+              Copy
+            </button>
+          </div>
+          <div className="note" style={{ marginTop: 6 }}>
+            Defined in <span className="mono">agents/src/mcp.ts</span> · works against this host or
+            a local live-mode stack.
+          </div>
+        </div>
+
+        <div className="section">
+          <h3>The 5 tools</h3>
+          {MCP_TOOLS.map((t, i) => (
+            <div className="mcp-tool" key={t.name}>
+              <div className="mcp-tool-head">
+                <b className="mono">
+                  {i + 1}. {t.name}
+                </b>
+              </div>
+              <div className="mcp-tool-what">{t.what}</div>
+              <div className="mcp-tool-ask">agent prompt: {t.ask}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="section">
+          <h3>Live preview (read-only)</h3>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button className="btn ghost sm" disabled={busy} onClick={previewPool}>
+              ▸ pool_stats
+            </button>
+            <button className="btn ghost sm" disabled={busy} onClick={previewVerify}>
+              ▸ verify_decision_hash
+            </button>
+          </div>
+          {preview && (
+            <div className="mcp-preview">
+              <div className="mcp-preview-head">{preview.tool} → exactly what the agent gets:</div>
+              <pre>{preview.body}</pre>
+            </div>
+          )}
+          {!preview && (
+            <div className="note" style={{ marginTop: 8 }}>
+              These previews call the same REST endpoints the MCP server wraps
+              {meta?.mode !== "live-testnet" ? " (seeded showcase data)" : ""}.
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
