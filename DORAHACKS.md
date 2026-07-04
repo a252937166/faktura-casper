@@ -107,6 +107,11 @@ price moved with real yield and a real loss. Nothing here is mocked.
 5. **x402 machine-payable oracle** — `make x402-demo` (or read
    [docs/x402.md](docs/x402.md)): 402 challenge → native-CSPR settlement with
    nonce as transfer id → paid report carrying the on-chain `decisionHash`.
+   `make x402-facilitator-demo` runs the same purchase with
+   `X402_MODE=official-facilitator` against a bundled reference facilitator
+   (its `POST /verify` really checks the deploy over RPC). The hosted UI also
+   walks the three-step flow inside every funded invoice (simulated payment in
+   showcase, clearly labeled; a real transfer in live mode).
 
 ## Judging criteria mapping
 
