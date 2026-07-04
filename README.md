@@ -119,11 +119,12 @@ Faktura is itself a service *for* agents: an MCP server exposes the desk to any
 MCP-capable assistant.
 
 ```bash
-# quickest check — speaks MCP over stdio against the hosted showcase:
-cd agents && FAKTURA_API=https://faktura.axiqo.xyz npm run mcp
+# quickest check — speaks MCP over stdio against the hosted showcase
+# (from the repo root; npm install is one-time):
+cd agents && npm install && FAKTURA_API=https://faktura.axiqo.xyz npm run mcp
 
-# register it with Claude Code:
-claude mcp add faktura -- npx tsx agents/src/mcp.ts     # or: make mcp
+# register it with Claude Code (run inside agents/):
+claude mcp add faktura -e FAKTURA_API=https://faktura.axiqo.xyz -- npx tsx src/mcp.ts
 ```
 
 No terminal handy? Click the **MCP · 5 tools** chip on the

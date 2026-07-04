@@ -1366,8 +1366,11 @@ function McpDrawer({
 }) {
   const [preview, setPreview] = useState<{ tool: string; body: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  // Every command below is verified end-to-end from a fresh clone.
+  const setupCmd =
+    "git clone https://github.com/a252937166/faktura-casper && cd faktura-casper/agents && npm install";
   const quick = `FAKTURA_API=${window.location.origin} npm run mcp`;
-  const claudeCmd = "claude mcp add faktura -- npx tsx agents/src/mcp.ts";
+  const claudeCmd = `claude mcp add faktura -e FAKTURA_API=${window.location.origin} -- npx tsx src/mcp.ts`;
 
   const copy = async (text: string) => {
     try {
@@ -1453,12 +1456,21 @@ function McpDrawer({
 
         <div className="section">
           <h3>Quick start</h3>
+          <div className="mcp-step">1 · one-time setup</div>
+          <div className="mcp-cmd">
+            <code>{setupCmd}</code>
+            <button className="btn ghost sm" onClick={() => copy(setupCmd)}>
+              Copy
+            </button>
+          </div>
+          <div className="mcp-step">2 · speak MCP to this host (from agents/)</div>
           <div className="mcp-cmd">
             <code>{quick}</code>
             <button className="btn ghost sm" onClick={() => copy(quick)}>
               Copy
             </button>
           </div>
+          <div className="mcp-step">3 · or register it with Claude Code (from agents/)</div>
           <div className="mcp-cmd">
             <code>{claudeCmd}</code>
             <button className="btn ghost sm" onClick={() => copy(claudeCmd)}>
@@ -1466,8 +1478,9 @@ function McpDrawer({
             </button>
           </div>
           <div className="note" style={{ marginTop: 6 }}>
-            Defined in <span className="mono">agents/src/mcp.ts</span> · works against this host or
-            a local live-mode stack.
+            POSIX shell (macOS / Linux / WSL) · defined in{" "}
+            <span className="mono">agents/src/mcp.ts</span> · works against this host or a local
+            live-mode stack.
           </div>
         </div>
 
