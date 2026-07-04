@@ -10,3 +10,4 @@ agents/data/*
 contracts/wasm/*.wasm
 !contracts/wasm/.gitkeep
 docs/media/*.mp4
+.playwright-cli/

@@ -5,6 +5,11 @@
  * Prints a transaction evidence table at the end (explorer-verifiable).
  *
  *   FAKTURA_CONTRACT=hash-... npm run e2e
+ *
+ * The full run takes ~4-6 minutes (testnet finality per deploy, plus waiting
+ * out the due date + grace before the collector's write-off). Set
+ * FAKTURA_E2E_FAST=1 (make e2e-fast) to run only the happy path + rejection
+ * (~2-3 minutes, no default-window wait).
  */
 import { config } from "./config.js";
 import { chain } from "./chain.js";
@@ -13,9 +18,11 @@ import { feed } from "./feed.js";
 import { upsertInvoice } from "./store.js";
 
 const CSPR = 1_000_000_000n; // motes
-const motes = (cspr: number) => (BigInt(Math.round(cspr * 1000)) * CSPR / 1000n).toString();
+const motes = (cspr: number) => ((BigInt(Math.round(cspr * 1000)) * CSPR) / 1000n).toString();
 
 feed.on("event", () => {});
+
+const FAST = process.env.FAKTURA_E2E_FAST === "1";
 
 const evidence: { step: string; tx: string }[] = [];
 const track = (step: string, tx?: string) => {
@@ -38,7 +45,9 @@ async function main() {
 
   const before = await chain.stats();
   console.log("\n== stats before ==");
-  console.log(`liquid ${Number(BigInt(before.liquid) / CSPR)} CSPR, invoices ${before.invoiceCount}`);
+  console.log(
+    `liquid ${Number(BigInt(before.liquid) / CSPR)} CSPR, invoices ${before.invoiceCount}`,
+  );
 
   if (BigInt(before.liquid) < 150n * CSPR) {
     console.log("\nseeding pool with 200 CSPR from investor...");
@@ -58,7 +67,9 @@ async function main() {
     description: "Freight services, 14 pallet shipments Hamburg to Vienna",
     history: "6 prior invoices, all paid within terms",
   });
-  console.log(`-> status=${r1.status} id=${r1.id} risk=${r1.decision?.riskScore} discount=${r1.decision?.discountBps}bps`);
+  console.log(
+    `-> status=${r1.status} id=${r1.id} risk=${r1.decision?.riskScore} discount=${r1.decision?.discountBps}bps`,
+  );
   console.log(`   advance recipient: ${r1.intake.supplierAddress}`);
   track("register_invoice #1 (agent)", r1.chain.registerHash);
   track("fund_invoice #1 → supplier (agent)", r1.chain.fundHash);
@@ -74,8 +85,25 @@ async function main() {
     description: "Consulting, lump sum, no deliverables specified",
     history: "new counterparty, one prior invoice disputed and overdue",
   });
-  console.log(`-> status=${r2.status} risk=${r2.decision?.riskScore} flags=${r2.decision?.redFlags.join("|")}`);
+  console.log(
+    `-> status=${r2.status} risk=${r2.decision?.riskScore} flags=${r2.decision?.redFlags.join("|")}`,
+  );
   track("attest UNDERWRITE_REJECT (agent)", r2.chain.attestHashes.at(-1));
+
+  if (FAST) {
+    console.log("\n(FAKTURA_E2E_FAST=1 — skipping the funded-then-default path)");
+    if (r1.status === "funded") {
+      console.log(`\n== settling invoice #${r1.id} (debtor pays 100 CSPR face value) ==`);
+      const st = await chain.settle(r1.id, motes(100));
+      track("settle_invoice (debtor)", st.deployHashes.at(-1));
+      r1.chain.settleHash = st.deployHashes.at(-1);
+      r1.status = "settled";
+      upsertInvoice(r1);
+      console.log("settled");
+    }
+    await printSummary();
+    return;
+  }
 
   console.log("\n== intake 3: short-dated invoice (expect APPROVE + fund, then DEFAULT) ==");
   const r3 = await processIntake({
@@ -102,7 +130,9 @@ async function main() {
   }
 
   if (r3.status === "funded") {
-    console.log(`\n== waiting out due + grace, then defaulting invoice #${r3.id} (collector key) ==`);
+    console.log(
+      `\n== waiting out due + grace, then defaulting invoice #${r3.id} (collector key) ==`,
+    );
     await new Promise((res) => setTimeout(res, (90 + 30 + 15) * 1000));
     const def = await chain.markDefault(r3.id);
     track("mark_default #3 (collector)", def.deployHashes.at(-1));
@@ -112,6 +142,10 @@ async function main() {
     console.log(`invoice #${r3.id} written off on-chain`);
   }
 
+  await printSummary();
+}
+
+async function printSummary() {
   const after = await chain.stats();
   console.log("\n== stats after ==");
   console.log(`liquid        ${Number(BigInt(after.liquid) / CSPR)} CSPR`);
@@ -122,7 +156,9 @@ async function main() {
 
   console.log("\n== transaction evidence (paste into DORAHACKS.md) ==");
   for (const e of evidence) {
-    console.log(`| ${e.step} | [\`${e.tx.slice(0, 10)}…\`](${config.explorerBase}/deploy/${e.tx}) |`);
+    console.log(
+      `| ${e.step} | [\`${e.tx.slice(0, 10)}…\`](${config.explorerBase}/deploy/${e.tx}) |`,
+    );
   }
   console.log(`\n✅ e2e complete — verify on ${config.explorerBase}/`);
 }

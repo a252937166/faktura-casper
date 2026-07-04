@@ -7,6 +7,37 @@ import { db, upsertInvoice, type InvoiceRecord } from "./store.js";
 
 const CSPR = 1_000_000_000n;
 
+/**
+ * The on-chain Policy is the source of truth; config.policy is a stricter UX
+ * prefilter. At runtime we take the tighter of the two so the numbers shown
+ * to users can never drift looser than the contract.
+ */
+let effectivePolicy: {
+  maxRiskScore: number;
+  minDiscountBps: number;
+  maxDiscountBps: number;
+} | null = null;
+
+async function loadEffectivePolicy() {
+  if (effectivePolicy) return effectivePolicy;
+  const p = config.policy;
+  try {
+    const onchain = await chain.policy();
+    effectivePolicy = {
+      maxRiskScore: Math.min(p.maxRiskScore, onchain.maxRiskScore),
+      minDiscountBps: Math.max(p.minDiscountBps, onchain.minDiscountBps),
+      maxDiscountBps: Math.min(p.maxDiscountBps, onchain.maxDiscountBps),
+    };
+  } catch {
+    effectivePolicy = {
+      maxRiskScore: p.maxRiskScore,
+      minDiscountBps: p.minDiscountBps,
+      maxDiscountBps: p.maxDiscountBps,
+    };
+  }
+  return effectivePolicy;
+}
+
 export interface IntakeInput {
   supplierName: string;
   /** Casper public key or account hash that receives the advance. Defaults to the demo supplier. */
@@ -77,15 +108,21 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
     });
   };
 
-  if (!(input.amountCspr >= p.minFaceCspr)) return hardFail(`face value below ${p.minFaceCspr} CSPR`);
-  if (!(input.amountCspr <= p.maxFaceCspr)) return hardFail(`face value above ${p.maxFaceCspr} CSPR`);
+  if (!(input.amountCspr >= p.minFaceCspr))
+    return hardFail(`face value below ${p.minFaceCspr} CSPR`);
+  if (!(input.amountCspr <= p.maxFaceCspr))
+    return hardFail(`face value above ${p.maxFaceCspr} CSPR`);
   const dueIn = input.dueTs - Date.now();
   if (dueIn < p.minDueInMs) return hardFail("due date not sufficiently in the future");
   if (dueIn > p.maxDueInMs) return hardFail("tenor exceeds policy maximum");
   const duplicate = db.invoices.find(
-    (x) => x.intake.docHash === record.intake.docHash && x.intakeId !== intakeId && x.status !== "rejected",
+    (x) =>
+      x.intake.docHash === record.intake.docHash &&
+      x.intakeId !== intakeId &&
+      x.status !== "rejected",
   );
-  if (duplicate) return hardFail(`duplicate document (matches intake ${duplicate.intake.invoiceNumber})`);
+  if (duplicate)
+    return hardFail(`duplicate document (matches intake ${duplicate.intake.invoiceNumber})`);
 
   // ---- LLM opinion --------------------------------------------------------
   feed.publish({
@@ -104,13 +141,17 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
   });
 
   // ---- Policy guardrails on top of the model ------------------------------
+  // (tightest of the TS prefilter and the on-chain policy — see loadEffectivePolicy)
+  const eff = await loadEffectivePolicy();
   let { approve, risk_score, discount_bps } = opinion;
-  discount_bps = Math.max(p.minDiscountBps, Math.min(p.maxDiscountBps, discount_bps));
+  discount_bps = Math.max(eff.minDiscountBps, Math.min(eff.maxDiscountBps, discount_bps));
   if (discount_bps !== opinion.discount_bps)
     policyNotes.push(`discount clamped ${opinion.discount_bps} → ${discount_bps} bps`);
-  if (risk_score > p.maxRiskScore && approve) {
+  if (risk_score > eff.maxRiskScore && approve) {
     approve = false;
-    policyNotes.push(`model approved but risk ${risk_score} > policy max ${p.maxRiskScore}`);
+    policyNotes.push(
+      `model approved but risk ${risk_score} > prefilter max ${eff.maxRiskScore} (on-chain hard cap applies at register)`,
+    );
   }
 
   // Exposure cap vs. current pool liquidity.
@@ -172,7 +213,7 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
     data: { decisionHash, redFlags: opinion.red_flags },
   });
 
-  const faceMotes = (BigInt(Math.round(input.amountCspr * 1e9))).toString();
+  const faceMotes = BigInt(Math.round(input.amountCspr * 1e9)).toString();
   // Advance recipient: caller-supplied address, else the demo SUPPLIER account.
   // Never the debtor — the debtor owes the money; the supplier sold the invoice.
   const supplier = input.supplierAddress ?? (await chain.caller("supplier"));
@@ -212,7 +253,12 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
     deployHash: record.chain.fundHash,
   });
 
-  const att = await chain.attest("UNDERWRITE_APPROVE", record.id, decisionHash, "autonomous-ai-underwriter");
+  const att = await chain.attest(
+    "UNDERWRITE_APPROVE",
+    record.id,
+    decisionHash,
+    "autonomous-ai-underwriter",
+  );
   record.chain.attestHashes.push(att.deployHashes.at(-1) ?? "");
   upsertInvoice(record);
   feed.publish({
@@ -239,8 +285,7 @@ async function finalizeReject(
   },
 ): Promise<InvoiceRecord> {
   const decisionHash =
-    d.decisionHash ??
-    `sha256:${sha256(JSON.stringify({ intakeId: record.intakeId, ...d }))}`;
+    d.decisionHash ?? `sha256:${sha256(JSON.stringify({ intakeId: record.intakeId, ...d }))}`;
   record.decision = {
     approve: false,
     riskScore: d.riskScore,

@@ -54,6 +54,11 @@ Two load-bearing ideas:
    or even a **compromised agent key** cannot exceed those bounds; the deploy
    reverts with a typed error. Exposure is tracked per debtor and released on
    settle/default.
+   *Two layers, one source of truth:* the TypeScript agent also applies a
+   **stricter UX prefilter** (e.g. risk ≤ 65 vs. the contract's hard cap of
+   70) so bad intakes fail fast without burning gas — at boot it reads
+   `get_policy()` and always takes the tighter of the two. The contract is
+   the final authority; the UI banner shows both numbers.
 2. **The on-chain attestation log.** `attest(...)` records
    `{actor, kind, subjectId, payloadHash, model, ts}` for **every** autonomous
    decision — approvals *and* rejections. The SHA-256 of the full decision memo
@@ -111,6 +116,10 @@ Faktura is itself a service *for* agents: an MCP server exposes the desk to any
 MCP-capable assistant.
 
 ```bash
+# quickest check — speaks MCP over stdio against the hosted showcase:
+cd agents && FAKTURA_API=https://faktura.axiqo.xyz npm run mcp
+
+# register it with Claude Code:
 claude mcp add faktura -- npx tsx agents/src/mcp.ts     # or: make mcp
 ```
 
@@ -150,13 +159,25 @@ make configure        # set-agents (underwriter/collector) + set-policy
 make fund-collector   # 150 CSPR gas so the collector can sign write-offs
 
 make e2e              # full lifecycle on live testnet + tx evidence table
+make e2e-fast         # happy path + AI rejection only (~2-3 min)
 make serve            # agent service + web UI on :4020
 make x402-demo        # buyer agent pays the oracle, fetches a risk report
+make x402-facilitator-demo  # same purchase via a reference x402 facilitator
 ```
 
 `make e2e` deposits into the pool, then underwrites three invoices — one
 approved + funded + settled, one risk-rejected, one funded then **written off
 by the collector key** after grace — all as real Casper Testnet transactions.
+It takes **~4–6 minutes**: each deploy waits for testnet finality, and the
+default path deliberately waits out the due date + grace window before the
+collector signs the write-off. `make e2e-fast` skips the default path.
+
+`make x402-facilitator-demo` runs the same machine-payable purchase with
+`X402_MODE=official-facilitator`: a bundled **reference facilitator**
+(implementing the standard `POST /verify` API, really checking the settlement
+deploy over RPC) authorizes the release instead of the in-process verifier —
+so the facilitator wire path is demonstrated, not just stubbed
+([docs/x402.md](docs/x402.md)).
 
 No LLM key? The underwriter falls back to a deterministic, transparent scorer
 so the whole flow still runs (`LLM_PROVIDER=mock`); any OpenAI- or

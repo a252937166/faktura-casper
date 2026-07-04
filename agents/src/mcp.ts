@@ -13,7 +13,9 @@ import { z } from "zod";
 const base = (process.env.FAKTURA_API ?? "http://localhost:4020").replace(/\/$/, "");
 
 const text = (v: unknown) => ({
-  content: [{ type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) }],
+  content: [
+    { type: "text" as const, text: typeof v === "string" ? v : JSON.stringify(v, null, 2) },
+  ],
 });
 
 async function get(path: string): Promise<any> {
@@ -35,7 +37,8 @@ server.tool(
     const tvl = cspr(s.liquid) + cspr(s.deployed);
     const sharePrice =
       s.totalShares && BigInt(s.totalShares) > 0n
-        ? Number(((BigInt(s.liquid) + BigInt(s.deployed)) * 10_000n) / BigInt(s.totalShares)) / 10_000
+        ? Number(((BigInt(s.liquid) + BigInt(s.deployed)) * 10_000n) / BigInt(s.totalShares)) /
+          10_000
         : 1;
     return text({
       contract: body.contract,
@@ -88,7 +91,9 @@ server.tool(
     supplierAddress: z
       .string()
       .optional()
-      .describe("Casper account (account-hash-…) that receives the advance; defaults to the demo supplier"),
+      .describe(
+        "Casper account (account-hash-…) that receives the advance; defaults to the demo supplier",
+      ),
   },
   async (a) => {
     const r = await fetch(`${base}/api/invoices`, {
@@ -127,7 +132,10 @@ server.tool(
   {
     invoiceId: z.number().describe("On-chain invoice id"),
     paymentDeployHash: z.string().optional().describe("Deploy hash of your settlement transfer"),
-    nonce: z.string().optional().describe("Nonce from the 402 PaymentRequirements you are settling"),
+    nonce: z
+      .string()
+      .optional()
+      .describe("Nonce from the 402 PaymentRequirements you are settling"),
   },
   async (a) => {
     const headers: Record<string, string> = {};

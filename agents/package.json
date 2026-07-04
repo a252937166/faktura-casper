@@ -8,6 +8,11 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "e2e": "tsx src/e2e.ts",
+    "mcp": "tsx src/mcp.ts",
+    "x402-demo": "tsx src/x402-client.ts",
+    "facilitator": "tsx scripts/mock-facilitator.ts",
+    "format": "prettier --write \"src/**/*.ts\" \"scripts/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"scripts/**/*.ts\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -22,6 +27,7 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.5",
     "casper-js-sdk": "^2.15.6",
+    "prettier": "^3.4.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }
