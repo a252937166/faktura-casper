@@ -126,6 +126,11 @@ cd agents && FAKTURA_API=https://faktura.axiqo.xyz npm run mcp
 claude mcp add faktura -- npx tsx agents/src/mcp.ts     # or: make mcp
 ```
 
+No terminal handy? Click the **MCP · 5 tools** chip on the
+[live showcase](https://faktura.axiqo.xyz) — it opens the agent interface with
+all five tools, copyable commands, and live read-only previews (including the
+real off-chain vs. on-chain decision-hash comparison).
+
 Tools: `pool_stats`, `list_funded_invoices`, `submit_invoice` (drives the real
 underwriting pipeline), `get_risk_report` (x402: returns the 402 payment
 challenge, then the paid report), `verify_decision_hash` (audits that the
