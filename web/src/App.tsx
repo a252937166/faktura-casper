@@ -596,10 +596,13 @@ function ProofStrip({
     { label: "Latest attestation", hash: latest((r) => r.chain.attestHashes.at(-1)) },
     {
       label: "Latest decision hash",
-      text:
-        invoices
-          .find((r) => r.decision && r.chain.registerHash && !isSimulatedHash(r.chain.registerHash))
-          ?.decision?.decisionHash.slice(0, 21) + "…",
+      // Only anchored (real-register) records qualify; empty state renders "—".
+      text: (() => {
+        const h = invoices.find(
+          (r) => r.decision && r.chain.registerHash && !isSimulatedHash(r.chain.registerHash),
+        )?.decision?.decisionHash;
+        return h ? `${h.slice(0, 21)}…` : undefined;
+      })(),
     },
   ];
   return (
@@ -1054,6 +1057,17 @@ function PolicyFirewall({
     },
   ];
   const allow = d.approve && checks.every((c) => c.pass);
+  // Attribute the block to the layer that actually said no: the AI itself,
+  // the agent prefilter (never sent on-chain), or the Casper contract. A
+  // model-approved record that still fails a check was stopped by the chain
+  // (covers older records that predate the explicit fundError field).
+  const source: "allowed" | "chain" | "prefilter" | "ai" = allow
+    ? "allowed"
+    : record.status === "policy_blocked" || record.chain.fundError || d.approve
+      ? "chain"
+      : d.model === "policy-gate" || d.policyNotes.some((n) => /prefilter|liquidity check/i.test(n))
+        ? "prefilter"
+        : "ai";
   return (
     <div className="section firewall">
       <h3>Casper Policy Firewall</h3>
@@ -1071,18 +1085,22 @@ function PolicyFirewall({
           </span>
         </div>
       ))}
-      <div className={`fw-result ${allow ? "allow" : "block"}`}>
-        {allow ? (
+      <div className={`fw-result ${source === "allowed" ? "allow" : "block"}`}>
+        {source === "allowed" ? (
           showcase ? (
             <>✓ Result: policy allowed funding — simulated in showcase</>
           ) : (
             <>✓ Result: capital movement allowed on-chain</>
           )
-        ) : (
+        ) : source === "chain" ? (
           <>
             ✕ Result: funding blocked by Casper policy
             {record.chain.fundError && <> — {record.chain.fundError}</>}
           </>
+        ) : source === "prefilter" ? (
+          <>✕ Result: blocked by the agent prefilter — never sent on-chain</>
+        ) : (
+          <>✕ Result: rejected by the AI underwriter — never sent on-chain</>
         )}
       </div>
       {record.chain.fundError && (
