@@ -171,7 +171,12 @@ async function requireRiskReport(
 }
 
 // Basic anti-abuse rate limit for the public showcase (generous for judges).
-const apiLimiter = rateLimit({ windowMs: 60_000, max: 300, standardHeaders: true, legacyHeaders: false });
+const apiLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 app.use(apiLimiter);
 
 app.get("/api/risk/:id", requireRiskReport, x402Gate(), async (req, res) => {
