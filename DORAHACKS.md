@@ -8,11 +8,15 @@ minutes, without running anything.
 
 You don't have to take the transactions below on faith. On
 [faktura.axiqo.xyz](https://faktura.axiqo.xyz), click **Run Real Testnet
-Workflow** and pick a preset — each step signs a **real Casper Testnet
-transaction** and shows you its CSPR.live link as it confirms:
+Workflow** and pick a guided walkthrough. You trigger each step yourself: the
+AI decision is instant, and every on-chain step signs exactly **one real Casper
+Testnet transaction** (~30–120 s to finality, with a live timer), then shows its
+CSPR.live link and unlocks the next step — short, bounded waits instead of one
+long run, and every screen tells you what just happened, why it matters, and
+what comes next:
 
-- **Happy path** — submit → AI underwrite → `register_invoice` → `fund_invoice`
-  → `attest` → x402 report purchase → `settle_invoice`, end to end.
+- **Full lifecycle** — AI underwrite → `register_invoice` → `fund_invoice`
+  → `attest` → x402 report purchase → `settle_invoice` (6 steps, 5 transactions).
 - **Policy firewall** (the one to watch) — the AI *approves* an invoice sized
   above the on-chain single-invoice cap, and the **contract reverts funding**
   with `User error 15 (SingleInvoiceCapExceeded)`. A valid agent key with a
@@ -20,11 +24,10 @@ transaction** and shows you its CSPR.live link as it confirms:
 - **x402** — a buyer agent pays over HTTP 402 with native CSPR for the verified
   risk report.
 
-Runs are preset-only, small-capped and rate-limited (one run / 10 min), signed
-by pre-funded testnet-only demo keys, so anyone can trigger real value safely.
-Expect ~30–120 s per deploy; a full run takes several minutes. The panel shows a
-live health check (key balances, RPC/contract reachability) and auto-pauses to
-the safe showcase if a key needs a faucet top-up — a judge never hits a dead
+Walkthroughs are preset-only and small-capped, signed by pre-funded
+testnet-only demo keys, so anyone can trigger real value safely. The page shows
+a live health check (key balances, RPC/contract reachability) and pauses itself
+to the safe showcase if a key needs a faucet top-up — a judge never hits a dead
 button. Design notes: [docs/judge-mode-design.md](docs/judge-mode-design.md).
 
 The transactions in this file were produced by exactly these code paths.
