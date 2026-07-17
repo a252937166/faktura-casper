@@ -3,10 +3,15 @@ import {
   api,
   API_BASE,
   isSimulatedHash,
+  judge,
   motesToCspr,
   stateName,
   type FeedEvent,
   type InvoiceRecord,
+  type JudgeHealth,
+  type JudgePreset,
+  type JudgeRun,
+  type JudgeStep,
   type Meta,
   type PoolResponse,
   type RiskReport,
@@ -58,8 +63,20 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [depositAmt, setDepositAmt] = useState("100");
   const [judgeOpen, setJudgeOpen] = useState(false);
+  const [runnerOpen, setRunnerOpen] = useState(false);
+  const [jhealth, setJhealth] = useState<JudgeHealth | null>(null);
+  const [judgeProbed, setJudgeProbed] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
   const feedRef = useRef<HTMLDivElement>(null);
+
+  // Detect the live judge backend (:4034 behind /api/judge). Its presence flips
+  // the hero to the real-testnet path; absence gracefully keeps the showcase.
+  const probeJudge = () =>
+    judge
+      .health()
+      .then((h) => setJhealth(h))
+      .catch(() => setJhealth(null))
+      .finally(() => setJudgeProbed(true));
 
   const refresh = async () => {
     try {
@@ -77,6 +94,8 @@ export default function App() {
       .meta()
       .then(setMeta)
       .catch(() => {});
+    probeJudge();
+    const jiv = setInterval(probeJudge, 30_000);
     const iv = setInterval(refresh, 12_000);
     const es = new EventSource(`${API_BASE}/activity`);
     es.onmessage = (m) => {
@@ -90,8 +109,11 @@ export default function App() {
     return () => {
       es.close();
       clearInterval(iv);
+      clearInterval(jiv);
     };
   }, []);
+
+  const liveJudge = !!jhealth; // the dedicated live-testnet backend answered
 
   const stats = pool?.stats;
   const tvl = stats ? motesToCspr(stats.liquid) + motesToCspr(stats.deployed) : 0;
@@ -231,19 +253,23 @@ export default function App() {
               : "LLM proposes → policy disposes → seeded on-chain proof, new writes simulated."}
           </p>
           <div className="hero-cta">
-            <button className="btn-primary" onClick={() => setJudgeOpen(true)}>
-              ▶ RUN JUDGE DEMO
-            </button>
-            <button
+            {liveJudge ? (
+              <button className="btn-primary" onClick={() => setRunnerOpen(true)}>
+                ▶ RUN REAL TESTNET WORKFLOW
+              </button>
+            ) : (
+              <button className="btn-primary" onClick={() => setJudgeOpen(true)}>
+                ▶ RUN JUDGE DEMO
+              </button>
+            )}
+            <a
               className="btn-outline"
-              onClick={() =>
-                document
-                  .getElementById("sell")
-                  ?.scrollIntoView({ behavior: "smooth", block: "start" })
-              }
+              href="https://youtu.be/47ZNPZlRXVA"
+              target="_blank"
+              rel="noreferrer"
             >
-              SELL AN INVOICE ↓
-            </button>
+              WATCH 3-MIN DEMO ↗
+            </a>
             <a
               className="btn-outline"
               target="_blank"
@@ -254,9 +280,27 @@ export default function App() {
                   : "https://testnet.cspr.live"
               }
             >
-              VERIFY ON-CHAIN ↗
+              OPEN EVIDENCE PACK ↗
             </a>
           </div>
+          {liveJudge ? (
+            <div className="hero-live">
+              <span className={`live-dot ${jhealth?.paused ? "amber" : "green"}`} />
+              {jhealth?.paused
+                ? "Live judge mode is paused (topping up testnet keys) — explore the safe showcase below."
+                : "Live Testnet Judge Mode is online — every step you run signs a real Casper Testnet transaction."}{" "}
+              <button className="linklike" onClick={() => setJudgeOpen(true)}>
+                Prefer the 30-second story?
+              </button>
+            </div>
+          ) : (
+            judgeProbed && (
+              <div className="hero-live">
+                <span className="live-dot muted" /> Safe Showcase — no gas, writes simulated from a
+                real testnet snapshot. Run the stack in live mode to sign every step.
+              </div>
+            )
+          )}
           <div className="hero-metrics">
             <div className="hm-red">
               <b>{fmtCspr(tvl)} CSPR</b>
@@ -557,6 +601,16 @@ export default function App() {
           meta={meta}
           onClose={() => {
             setJudgeOpen(false);
+            refresh();
+          }}
+        />
+      )}
+      {runnerOpen && (
+        <JudgeRunner
+          health={jhealth}
+          onHealth={setJhealth}
+          onClose={() => {
+            setRunnerOpen(false);
             refresh();
           }}
         />
@@ -1387,6 +1441,269 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
                 : "In this showcase the steps replay in memory (nothing is signed). The seeded records link to the real Casper Testnet transactions; run the stack locally in live mode to sign every step for real."}
             </div>
           </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ---- Live Testnet Judge Mode: interactive runner ---------------------------
+
+const STEP_PILL: Record<JudgeStep["status"], { label: string; cls: string }> = {
+  pending: { label: "queued", cls: "sp-pending" },
+  signing: { label: "signing…", cls: "sp-active" },
+  submitted: { label: "waiting finality…", cls: "sp-active" },
+  confirmed: { label: "confirmed", cls: "sp-ok" },
+  reverted: { label: "reverted ✔ (expected)", cls: "sp-revert" },
+  skipped: { label: "skipped", cls: "sp-skip" },
+  failed: { label: "failed", cls: "sp-fail" },
+};
+
+function HealthDots({ health }: { health: JudgeHealth | null }) {
+  if (!health) return null;
+  const keys = Object.keys(health.balances);
+  return (
+    <div className="jr-health">
+      <span className={`live-dot ${health.rpcOk ? "green" : "amber"}`} title="Casper RPC" /> RPC
+      <span className={`live-dot ${health.contractOk ? "green" : "amber"}`} title="Contract" />{" "}
+      contract
+      <span className="jr-sep">·</span>
+      {keys.map((k) => {
+        const bal = health.balances[k];
+        const low = health.low.includes(k);
+        return (
+          <span key={k} className="jr-bal" title={`${k} key balance`}>
+            <span className={`live-dot ${bal == null ? "amber" : low ? "amber" : "green"}`} />
+            {k} {bal == null ? "—" : `${bal.toFixed(0)}`}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function StepRow({ step, explorer }: { step: JudgeStep; explorer: string }) {
+  const [open, setOpen] = useState(false);
+  const pill = STEP_PILL[step.status];
+  return (
+    <li className={`jr-step ${step.status}`}>
+      <div className="jr-step-head" onClick={() => setOpen((o) => !o)}>
+        <span className={`jr-pill ${pill.cls}`}>{pill.label}</span>
+        <span className="jr-actor">{ACTOR_ICON[step.actor] ?? "•"}</span>
+        <span className="jr-title">{step.title}</span>
+        <span className="jr-caret">{open ? "▾" : "▸"}</span>
+      </div>
+      {step.result && <div className="jr-result">{step.result}</div>}
+      {step.txHash && !isSimulatedHash(step.txHash) && (
+        <a
+          className="jr-tx"
+          target="_blank"
+          rel="noreferrer"
+          href={`${explorer}/deploy/${step.txHash}`}
+        >
+          {step.txHash.slice(0, 14)}… ↗ view on CSPR.live
+        </a>
+      )}
+      {open && (step.what || step.who || step.why) && (
+        <div className="jr-explain">
+          {step.what && (
+            <div>
+              <b>What</b> {step.what}
+            </div>
+          )}
+          {step.who && (
+            <div>
+              <b>Who</b> {step.who}
+            </div>
+          )}
+          {step.why && (
+            <div>
+              <b>Why</b> {step.why}
+            </div>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+function JudgeRunner({
+  health,
+  onHealth,
+  onClose,
+}: {
+  health: JudgeHealth | null;
+  onHealth: (h: JudgeHealth | null) => void;
+  onClose: () => void;
+}) {
+  const [presets, setPresets] = useState<JudgePreset[]>([]);
+  const [run, setRun] = useState<JudgeRun | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const explorer = health?.explorer ?? "https://testnet.cspr.live";
+
+  useEffect(() => {
+    judge
+      .presets()
+      .then(setPresets)
+      .catch(() => {});
+    judge
+      .health()
+      .then(onHealth)
+      .catch(() => {});
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const start = async (preset: string) => {
+    setErr(null);
+    setStarting(true);
+    try {
+      const { runId } = await judge.run(preset);
+      const poll = async () => {
+        try {
+          const r = await judge.get(runId);
+          setRun(r);
+          if (r.status !== "running" && pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+            judge
+              .health()
+              .then(onHealth)
+              .catch(() => {});
+          }
+        } catch {
+          /* transient */
+        }
+      };
+      await poll();
+      pollRef.current = setInterval(poll, 3000);
+    } catch (e) {
+      setErr((e as Error).message);
+      judge
+        .health()
+        .then(onHealth)
+        .catch(() => {});
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const reset = () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = null;
+    setRun(null);
+    setErr(null);
+    judge
+      .health()
+      .then(onHealth)
+      .catch(() => {});
+  };
+
+  const paused = health?.paused;
+  const running = run?.status === "running";
+
+  return (
+    <>
+      <div className="drawer-backdrop" onClick={onClose} />
+      <div className="judge jr">
+        <div className="judge-head">
+          <div>
+            <div className="judge-kicker">LIVE TESTNET JUDGE MODE · real Casper transactions</div>
+            <h2>
+              Run the real workflow <span className="badge FUNDED">LIVE TESTNET</span>
+            </h2>
+          </div>
+          <button className="judge-x" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+
+        <div className="jr-body">
+          <HealthDots health={health} />
+
+          {paused && (
+            <div className="jr-paused">
+              Live judge mode is temporarily paused — testnet keys need a top-up or the node is
+              unreachable. The safe showcase remains fully available.
+            </div>
+          )}
+
+          {!run && (
+            <>
+              <p className="jr-intro">
+                Pick a preset. Each step signs a <b>real Casper Testnet transaction</b> with an
+                explorer link. Runs are preset-only, capped and rate-limited (one run / 10 min).
+                Expect <b>~30–120 s per deploy</b>; a full run takes several minutes — please don't
+                refresh.
+              </p>
+              <div className="jr-presets">
+                {presets.map((p) => (
+                  <button
+                    key={p.id}
+                    className={`jr-preset ${p.id === "policy-block" ? "ace" : ""}`}
+                    disabled={paused || starting}
+                    onClick={() => start(p.id)}
+                  >
+                    <div className="jr-preset-title">{p.title}</div>
+                    <div className="jr-preset-blurb">{p.blurb}</div>
+                    <div className="jr-preset-est">
+                      {p.est} · {p.steps.length} steps
+                    </div>
+                  </button>
+                ))}
+              </div>
+              {err && <div className="jr-err">{err}</div>}
+              {health?.lastRun && (
+                <button className="linklike jr-last" onClick={() => setRun(health.lastRun)}>
+                  View the latest completed run ({health.lastRun.runId}) →
+                </button>
+              )}
+            </>
+          )}
+
+          {run && (
+            <>
+              <div className="jr-runbar">
+                <span className="jr-runid">{run.runId}</span>
+                <span className={`jr-runstatus ${run.status}`}>
+                  {run.status === "running"
+                    ? "running — signing on Casper Testnet…"
+                    : run.status === "done"
+                      ? "run complete"
+                      : "run failed"}
+                </span>
+                {!running && (
+                  <button className="btn ghost sm" onClick={reset}>
+                    ← Back to presets
+                  </button>
+                )}
+              </div>
+              {run.note && <div className="jr-note">{run.note}</div>}
+              <ol className="jr-steps">
+                {run.steps.map((s) => (
+                  <StepRow key={s.key} step={s} explorer={explorer} />
+                ))}
+              </ol>
+              {run.status === "failed" && run.error && <div className="jr-err">{run.error}</div>}
+              {run.poolAfter && run.status === "done" && (
+                <div className="jr-pool">
+                  Pool now: liquid <b>{run.poolAfter.liquid}</b> · deployed{" "}
+                  <b>{run.poolAfter.deployed}</b> · settled <b>{run.poolAfter.totalSettled}</b> CSPR
+                  · <b>{run.poolAfter.invoiceCount}</b> invoices
+                </div>
+              )}
+              {running && (
+                <div className="jr-hint">
+                  Testnet finality is ~30–120 s per deploy. Steps light up as each transaction
+                  confirms — keep this open.
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
     </>
