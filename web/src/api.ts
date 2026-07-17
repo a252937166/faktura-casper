@@ -173,6 +173,80 @@ export const api = {
   },
 };
 
+// ---- Live Testnet Judge Mode ------------------------------------------------
+
+export type JudgeStepStatus =
+  "pending" | "signing" | "submitted" | "confirmed" | "reverted" | "skipped" | "failed";
+
+export interface JudgeStep {
+  key: string;
+  actor: string;
+  title: string;
+  status: JudgeStepStatus;
+  txHash?: string;
+  explorerUrl?: string;
+  result?: string;
+  what?: string;
+  who?: string;
+  why?: string;
+  startedTs?: number;
+  endedTs?: number;
+}
+
+export interface JudgeRun {
+  runId: string;
+  preset: string;
+  status: "running" | "done" | "failed";
+  steps: JudgeStep[];
+  startedTs: number;
+  endedTs?: number;
+  error?: string;
+  note?: string;
+  poolBefore?: Record<string, number>;
+  poolAfter?: Record<string, number>;
+}
+
+export interface JudgePreset {
+  id: "happy" | "policy-block" | "x402";
+  title: string;
+  blurb: string;
+  est: string;
+  steps: { key: string; actor: string; title: string }[];
+}
+
+export interface JudgeHealth {
+  mode: "live-testnet";
+  contract: string;
+  explorer: string;
+  chain: string;
+  node: string;
+  balances: Record<string, number | null>;
+  floors: Record<string, number>;
+  low: string[];
+  rpcOk: boolean;
+  contractOk: boolean;
+  paused: boolean;
+  pool: Record<string, number> | null;
+  x402Price: string;
+  lastRun: JudgeRun | null;
+  busy: boolean;
+}
+
+/** The judge backend is a separate origin (:4034) behind nginx at /api/judge. */
+const JUDGE_BASE = `${import.meta.env.BASE_URL}api/judge`.replace(/\/\/api\/judge$/, "/api/judge");
+
+export const judge = {
+  health: () => fetch(`${JUDGE_BASE}/health`).then((r) => j<JudgeHealth>(r)),
+  presets: () => fetch(`${JUDGE_BASE}/presets`).then((r) => j<JudgePreset[]>(r)),
+  run: (preset: string) =>
+    fetch(`${JUDGE_BASE}/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preset }),
+    }).then((r) => j<{ runId: string; preset: string }>(r)),
+  get: (runId: string) => fetch(`${JUDGE_BASE}/run/${runId}`).then((r) => j<JudgeRun>(r)),
+};
+
 export const motesToCspr = (m: string | undefined) =>
   m ? Number(BigInt(m) / 1_000_000n) / 1000 : 0;
 

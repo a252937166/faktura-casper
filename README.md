@@ -139,18 +139,33 @@ off-chain memo matches the on-chain anchor).
 
 ## Live demo vs. local run — read this first
 
-Two ways to see Faktura, honestly labeled (the UI shows the active mode in a
+Three ways to see Faktura, honestly labeled (the UI shows the active mode in a
 banner):
 
-- **Hosted showcase** — [faktura.axiqo.xyz](https://faktura.axiqo.xyz) runs in **showcase mode**:
-  on-chain *reads* come from a captured snapshot of the real testnet contract
-  (verifiable on cspr.live) and the AI underwriter runs *live*, but *writes*
-  are simulated in server memory so visitors don't burn testnet gas or wait
-  30–120 s per block. No transaction shown there is claimed to be on-chain.
-- **Local live mode** — run the stack yourself (below) with funded testnet
-  keys and **every state transition is a real Casper Testnet transaction**;
-  `make e2e` prints an explorer-linkable evidence table
+- **🟢 Live Testnet Judge Mode** — on [faktura.axiqo.xyz](https://faktura.axiqo.xyz)
+  click **Run Real Testnet Workflow**. Each preset drives the *full* lifecycle as
+  **real Casper Testnet transactions** with a CSPR.live link on every step —
+  no simulation. Three presets: the happy path (submit → AI underwrite →
+  register → fund → attest → x402 purchase → settle), the **policy firewall**
+  (the AI approves an oversized invoice and the *contract* reverts funding with
+  `SingleInvoiceCapExceeded`), and a standalone x402 report purchase. Runs are
+  preset-only, small-capped and rate-limited (one run / 10 min), signed by
+  pre-funded testnet-only demo keys — a controlled way to let anyone trigger
+  real value safely. See [docs/judge-mode-design.md](docs/judge-mode-design.md).
+- **Safe showcase** — the same site, secondary entry: on-chain *reads* come from
+  a captured snapshot of the real testnet contract (verifiable on cspr.live) and
+  the AI underwriter runs *live*, but *writes* are simulated in server memory so
+  casual visitors don't burn testnet gas or wait 30–120 s per block. Nothing
+  there is ever claimed to be on-chain (writes are labelled `simulated`).
+- **Local live mode** — run the whole stack yourself (below) with your own funded
+  testnet keys; `make e2e` prints the same explorer-linkable evidence table
   (the one in [DORAHACKS.md](DORAHACKS.md) came from exactly that).
+
+> The Live Judge Mode and the Safe Showcase run as two independent backends
+> behind one nginx: the showcase stays up untouched as the always-available
+> fallback, while the live backend holds the keys and signs. If the live backend
+> is paused (e.g. a key needs a faucet top-up) the site degrades to the showcase
+> rather than showing a judge a dead button.
 
 ## Run it
 

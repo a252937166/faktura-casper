@@ -10,6 +10,7 @@ import { processIntake, type IntakeInput } from "./underwriter.js";
 import { startCollector } from "./collector.js";
 import { x402Gate } from "./x402.js";
 import { getSeed } from "./chain-showcase.js";
+import { makeJudgeRouter } from "./judge.js";
 import type { FeedEvent } from "./feed.js";
 import type { InvoiceRecord } from "./store.js";
 
@@ -299,6 +300,14 @@ app.get("/api/meta", async (_req, res) => {
   res.json(metaCache);
 });
 
+// ---- Live Testnet Judge Mode -----------------------------------------------
+// Mounted only on the dedicated live backend (FAKTURA_JUDGE=1, real keys + the
+// livenet binary). The public showcase never exposes it. See docs/judge-mode-design.md.
+if (process.env.FAKTURA_JUDGE === "1" && !config.showcase) {
+  app.use("/api/judge", makeJudgeRouter());
+  console.log("Live Testnet Judge Mode mounted at /api/judge");
+}
+
 // ---- Static web app ---------------------------------------------------------
 
 const webDist = path.join(ROOT, "web", "dist");
@@ -363,7 +372,10 @@ async function main() {
         : `Faktura agent service on :${config.port} — contract ${config.contract || "(unset)"}`,
     });
     // The autonomous collector only runs against the real chain, never the showcase snapshot.
-    if (config.contract && !config.showcase) startCollector();
+    // On the judge backend it is disabled by default (FAKTURA_DISABLE_COLLECTOR=1) so preset
+    // runs drive every write explicitly and no background gas is spent mid-judging.
+    if (config.contract && !config.showcase && process.env.FAKTURA_DISABLE_COLLECTOR !== "1")
+      startCollector();
   });
 }
 
