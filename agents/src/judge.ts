@@ -237,6 +237,37 @@ async function health() {
   };
 }
 
+/**
+ * Cached health so the polled endpoint and (critically) session creation return
+ * instantly — the 5 balance RPC calls are the slow part. The frontend polls
+ * every 30 s, keeping it warm; activeSession is patched in fresh so it never
+ * goes stale.
+ */
+let healthCache: { ts: number; data: Awaited<ReturnType<typeof health>> | null } = {
+  ts: 0,
+  data: null,
+};
+let healthInflight: Promise<void> | null = null;
+async function cachedHealth(ttlMs = 15_000) {
+  const fresh = Date.now() - healthCache.ts < ttlMs;
+  if (!fresh && !healthInflight) {
+    healthInflight = health()
+      .then((d) => {
+        healthCache = { ts: Date.now(), data: d };
+      })
+      .catch(() => {})
+      .finally(() => {
+        healthInflight = null;
+      });
+  }
+  if (!healthCache.data) await healthInflight; // cold start: must wait once
+  const data = healthCache.data;
+  if (!data) throw new Error("health unavailable");
+  // always reflect the live active session
+  const activeId = order.filter((id) => sessions.get(id)?.status === "active").at(-1);
+  return { ...data, activeSession: activeId ? publicSession(sessions.get(activeId)!) : null };
+}
+
 // ---- underwriting (shared by the first step of the invoice presets) ---------
 
 /** Fixed, preset-only demo invoices — no free-form input from the client. */
@@ -661,8 +692,8 @@ const PRESETS = [
 
 // ---- rate limiting ----------------------------------------------------------
 
-const NEW_SESSION_COOLDOWN_MS = 5 * 60_000;
-const SESSION_STALE_MS = 20 * 60_000;
+const NEW_SESSION_COOLDOWN_MS = 8_000; // just debounces accidental double-submits
+const SESSION_STALE_MS = 10 * 60_000;
 const lastNewByIp = new Map<string, number>();
 let STEPPING = false; // single in-flight chain step across all sessions
 
@@ -697,7 +728,7 @@ export function makeJudgeRouter(): Router {
 
   r.get("/health", async (_req, res) => {
     try {
-      res.json(await health());
+      res.json(await cachedHealth());
     } catch (e) {
       res.status(500).json({ error: (e as Error).message, mode: "live-testnet", paused: true });
     }
@@ -731,34 +762,35 @@ export function makeJudgeRouter(): Router {
       res.status(400).json({ error: "preset must be happy | policy-block | x402" });
       return;
     }
+    const ip = clientIp(req);
     const existing = activeSession();
-    if (existing) {
+    // Same visitor (e.g. refreshed the page) — abandon their old session and
+    // start fresh, so they are never locked out. A DIFFERENT visitor mid-signing
+    // is the only reason to wait (steps are globally single-flight).
+    if (existing && existing.ip === ip) {
+      existing.status = "failed";
+      existing.note = "Replaced by a new walkthrough.";
+    } else if (existing && existing.ip !== ip && STEPPING) {
       res.status(429).json({
-        error: "A guided session is already in progress — finish or wait for it to expire.",
-        activeSession: publicSession(existing),
+        error: "Another judge is signing a live step right now — try again in a few seconds.",
       });
       return;
     }
-    const h = await health().catch(() => null);
+    const h = await cachedHealth().catch(() => null);
     if (!h || h.paused) {
-      res
-        .status(503)
-        .json({
-          error:
-            "Live judge mode is temporarily paused — a key needs a top-up or the node is unreachable.",
-          paused: true,
-        });
+      res.status(503).json({
+        error:
+          "Live judge mode is temporarily paused — a key needs a top-up or the node is unreachable.",
+        paused: true,
+      });
       return;
     }
-    const ip = clientIp(req);
+    // Light guard against accidental double-submits (session creation is gas-free).
     const wait = NEW_SESSION_COOLDOWN_MS - (Date.now() - (lastNewByIp.get(ip) ?? 0));
     if (wait > 0) {
       res
         .status(429)
-        .json({
-          error: `Please wait ${Math.ceil(wait / 60000)} min before starting another guided run.`,
-          retryAfterMs: wait,
-        });
+        .json({ error: `One moment — starting your walkthrough…`, retryAfterMs: wait });
       return;
     }
     lastNewByIp.set(ip, Date.now());
