@@ -173,15 +173,16 @@ export const api = {
   },
 };
 
-// ---- Live Testnet Judge Mode ------------------------------------------------
+// ---- Live Testnet Judge Mode (guided, step-by-step) -------------------------
 
-export type JudgeStepStatus =
-  "pending" | "signing" | "submitted" | "confirmed" | "reverted" | "skipped" | "failed";
+export type JudgeStepStatus = "locked" | "ready" | "running" | "done" | "reverted" | "failed";
 
 export interface JudgeStep {
   key: string;
   actor: string;
   title: string;
+  action: string;
+  kind: "compute" | "chain";
   status: JudgeStepStatus;
   txHash?: string;
   explorerUrl?: string;
@@ -193,25 +194,27 @@ export interface JudgeStep {
   endedTs?: number;
 }
 
-export interface JudgeRun {
-  runId: string;
+export interface JudgeSession {
+  id: string;
   preset: string;
-  status: "running" | "done" | "failed";
+  title: string;
+  subtitle: string;
   steps: JudgeStep[];
+  cursor: number;
+  status: "active" | "done" | "failed";
   startedTs: number;
   endedTs?: number;
-  error?: string;
   note?: string;
   poolBefore?: Record<string, number>;
   poolAfter?: Record<string, number>;
+  nextStep: JudgeStep | null;
 }
 
 export interface JudgePreset {
   id: "happy" | "policy-block" | "x402";
   title: string;
-  blurb: string;
-  est: string;
-  steps: { key: string; actor: string; title: string }[];
+  subtitle: string;
+  steps: { key: string; actor: string; title: string; kind: "compute" | "chain" }[];
 }
 
 export interface JudgeHealth {
@@ -228,8 +231,7 @@ export interface JudgeHealth {
   paused: boolean;
   pool: Record<string, number> | null;
   x402Price: string;
-  lastRun: JudgeRun | null;
-  busy: boolean;
+  activeSession: JudgeSession | null;
 }
 
 /** The judge backend is a separate origin (:4034) behind nginx at /api/judge. */
@@ -238,13 +240,15 @@ const JUDGE_BASE = `${import.meta.env.BASE_URL}api/judge`.replace(/\/\/api\/judg
 export const judge = {
   health: () => fetch(`${JUDGE_BASE}/health`).then((r) => j<JudgeHealth>(r)),
   presets: () => fetch(`${JUDGE_BASE}/presets`).then((r) => j<JudgePreset[]>(r)),
-  run: (preset: string) =>
-    fetch(`${JUDGE_BASE}/run`, {
+  createSession: (preset: string) =>
+    fetch(`${JUDGE_BASE}/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ preset }),
-    }).then((r) => j<{ runId: string; preset: string }>(r)),
-  get: (runId: string) => fetch(`${JUDGE_BASE}/run/${runId}`).then((r) => j<JudgeRun>(r)),
+    }).then((r) => j<JudgeSession>(r)),
+  nextStep: (id: string) =>
+    fetch(`${JUDGE_BASE}/session/${id}/next`, { method: "POST" }).then((r) => j<JudgeSession>(r)),
+  getSession: (id: string) => fetch(`${JUDGE_BASE}/session/${id}`).then((r) => j<JudgeSession>(r)),
 };
 
 export const motesToCspr = (m: string | undefined) =>

@@ -10,7 +10,7 @@ import {
   type InvoiceRecord,
   type JudgeHealth,
   type JudgePreset,
-  type JudgeRun,
+  type JudgeSession,
   type JudgeStep,
   type Meta,
   type PoolResponse,
@@ -606,7 +606,7 @@ export default function App() {
         />
       )}
       {runnerOpen && (
-        <JudgeRunner
+        <JudgeGuided
           health={jhealth}
           onHealth={setJhealth}
           onClose={() => {
@@ -1449,32 +1449,31 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
 
 // ---- Live Testnet Judge Mode: interactive runner ---------------------------
 
-const STEP_PILL: Record<JudgeStep["status"], { label: string; cls: string }> = {
-  pending: { label: "queued", cls: "sp-pending" },
-  signing: { label: "signing…", cls: "sp-active" },
-  submitted: { label: "waiting finality…", cls: "sp-active" },
-  confirmed: { label: "confirmed", cls: "sp-ok" },
-  reverted: { label: "reverted ✔ (expected)", cls: "sp-revert" },
-  skipped: { label: "skipped", cls: "sp-skip" },
-  failed: { label: "failed", cls: "sp-fail" },
+// ---- Live Testnet Judge Mode: guided, step-by-step full-page experience -----
+
+const STEP_ICON: Record<JudgeStep["status"], string> = {
+  locked: "○",
+  ready: "▶",
+  running: "…",
+  done: "✓",
+  reverted: "✓",
+  failed: "✕",
 };
 
-function HealthDots({ health }: { health: JudgeHealth | null }) {
+function JudgeHealthBar({ health }: { health: JudgeHealth | null }) {
   if (!health) return null;
-  const keys = Object.keys(health.balances);
   return (
-    <div className="jr-health">
-      <span className={`live-dot ${health.rpcOk ? "green" : "amber"}`} title="Casper RPC" /> RPC
-      <span className={`live-dot ${health.contractOk ? "green" : "amber"}`} title="Contract" />{" "}
-      contract
-      <span className="jr-sep">·</span>
-      {keys.map((k) => {
+    <div className="lj-health">
+      <span className={`live-dot ${health.rpcOk ? "green" : "amber"}`} /> RPC
+      <span className={`live-dot ${health.contractOk ? "green" : "amber"}`} /> contract
+      <span className="lj-hsep">·</span>
+      {Object.keys(health.balances).map((k) => {
         const bal = health.balances[k];
         const low = health.low.includes(k);
         return (
-          <span key={k} className="jr-bal" title={`${k} key balance`}>
-            <span className={`live-dot ${bal == null ? "amber" : low ? "amber" : "green"}`} />
-            {k} {bal == null ? "—" : `${bal.toFixed(0)}`}
+          <span key={k} className="lj-bal" title={`${k} key balance`}>
+            <span className={`live-dot ${bal == null || low ? "amber" : "green"}`} />
+            {k} {bal == null ? "—" : bal.toFixed(0)}
           </span>
         );
       })}
@@ -1482,52 +1481,94 @@ function HealthDots({ health }: { health: JudgeHealth | null }) {
   );
 }
 
-function StepRow({ step, explorer }: { step: JudgeStep; explorer: string }) {
-  const [open, setOpen] = useState(false);
-  const pill = STEP_PILL[step.status];
+/** One row in the guided stepper. The current (ready) step carries the action button. */
+function GuidedStep({
+  step,
+  index,
+  isCurrent,
+  onRun,
+  running,
+}: {
+  step: JudgeStep;
+  index: number;
+  isCurrent: boolean;
+  onRun: () => void;
+  running: boolean;
+}) {
+  const done = step.status === "done" || step.status === "reverted";
   return (
-    <li className={`jr-step ${step.status}`}>
-      <div className="jr-step-head" onClick={() => setOpen((o) => !o)}>
-        <span className={`jr-pill ${pill.cls}`}>{pill.label}</span>
-        <span className="jr-actor">{ACTOR_ICON[step.actor] ?? "•"}</span>
-        <span className="jr-title">{step.title}</span>
-        <span className="jr-caret">{open ? "▾" : "▸"}</span>
+    <div className={`lj-step ${step.status} ${isCurrent ? "current" : ""}`}>
+      <div className="lj-step-rail">
+        <span className={`lj-node ${step.status}`}>{STEP_ICON[step.status]}</span>
       </div>
-      {step.result && <div className="jr-result">{step.result}</div>}
-      {step.txHash && !isSimulatedHash(step.txHash) && (
-        <a
-          className="jr-tx"
-          target="_blank"
-          rel="noreferrer"
-          href={`${explorer}/deploy/${step.txHash}`}
-        >
-          {step.txHash.slice(0, 14)}… ↗ view on CSPR.live
-        </a>
-      )}
-      {open && (step.what || step.who || step.why) && (
-        <div className="jr-explain">
-          {step.what && (
-            <div>
-              <b>What</b> {step.what}
-            </div>
-          )}
-          {step.who && (
-            <div>
-              <b>Who</b> {step.who}
-            </div>
-          )}
-          {step.why && (
-            <div>
-              <b>Why</b> {step.why}
-            </div>
+      <div className="lj-step-body">
+        <div className="lj-step-head">
+          <span className="lj-step-n">STEP {index + 1}</span>
+          <span className="lj-step-actor">
+            {ACTOR_ICON[step.actor] ?? "•"} {step.actor}
+          </span>
+          {step.kind === "chain" ? (
+            <span className="lj-badge-chain">on-chain tx</span>
+          ) : (
+            <span className="lj-badge-instant">instant · no gas</span>
           )}
         </div>
-      )}
-    </li>
+        <h3 className="lj-step-title">{step.title}</h3>
+
+        {(step.status === "locked" || step.status === "ready") && (
+          <p className="lj-step-what">{step.what}</p>
+        )}
+
+        {step.result && (
+          <div className={`lj-step-result ${step.status}`}>
+            {step.status === "reverted" ? "⛔ " : done ? "✓ " : ""}
+            {step.result}
+          </div>
+        )}
+        {step.txHash && (
+          <a className="lj-step-tx" target="_blank" rel="noreferrer" href={step.explorerUrl}>
+            {step.txHash.slice(0, 16)}… — verify on CSPR.live ↗
+          </a>
+        )}
+
+        {isCurrent && step.status === "ready" && (
+          <div className="lj-step-run">
+            <button className="lj-run-btn" onClick={onRun} disabled={running}>
+              {running
+                ? step.kind === "chain"
+                  ? "Signing on Casper Testnet…"
+                  : "Running the AI underwriter…"
+                : `▶ ${step.action}`}
+            </button>
+            <span className="lj-run-hint">
+              {step.kind === "chain"
+                ? "Signs one real transaction · ~30–120 s for finality"
+                : "Runs the model · a couple of seconds, no gas"}
+            </span>
+          </div>
+        )}
+
+        {(done || isCurrent) && (step.who || step.why) && (
+          <details className="lj-step-more">
+            <summary>Who signs · why it matters</summary>
+            {step.who && (
+              <div>
+                <b>Who</b> {step.who}
+              </div>
+            )}
+            {step.why && (
+              <div>
+                <b>Why</b> {step.why}
+              </div>
+            )}
+          </details>
+        )}
+      </div>
+    </div>
   );
 }
 
-function JudgeRunner({
+function JudgeGuided({
   health,
   onHealth,
   onClose,
@@ -1537,10 +1578,9 @@ function JudgeRunner({
   onClose: () => void;
 }) {
   const [presets, setPresets] = useState<JudgePreset[]>([]);
-  const [run, setRun] = useState<JudgeRun | null>(null);
-  const [starting, setStarting] = useState(false);
+  const [session, setSession] = useState<JudgeSession | null>(null);
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const explorer = health?.explorer ?? "https://testnet.cspr.live";
 
   useEffect(() => {
@@ -1552,35 +1592,14 @@ function JudgeRunner({
       .health()
       .then(onHealth)
       .catch(() => {});
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const start = async (preset: string) => {
     setErr(null);
-    setStarting(true);
+    setBusy(true);
     try {
-      const { runId } = await judge.run(preset);
-      const poll = async () => {
-        try {
-          const r = await judge.get(runId);
-          setRun(r);
-          if (r.status !== "running" && pollRef.current) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
-            judge
-              .health()
-              .then(onHealth)
-              .catch(() => {});
-          }
-        } catch {
-          /* transient */
-        }
-      };
-      await poll();
-      pollRef.current = setInterval(poll, 3000);
+      setSession(await judge.createSession(preset));
     } catch (e) {
       setErr((e as Error).message);
       judge
@@ -1588,14 +1607,36 @@ function JudgeRunner({
         .then(onHealth)
         .catch(() => {});
     } finally {
-      setStarting(false);
+      setBusy(false);
+    }
+  };
+
+  const runNext = async () => {
+    if (!session) return;
+    setErr(null);
+    setBusy(true);
+    try {
+      const updated = await judge.nextStep(session.id);
+      setSession(updated);
+      if (updated.status !== "active")
+        judge
+          .health()
+          .then(onHealth)
+          .catch(() => {});
+    } catch (e) {
+      setErr((e as Error).message);
+      // refresh session state (the step may have been marked failed server-side)
+      judge
+        .getSession(session.id)
+        .then(setSession)
+        .catch(() => {});
+    } finally {
+      setBusy(false);
     }
   };
 
   const reset = () => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = null;
-    setRun(null);
+    setSession(null);
     setErr(null);
     judge
       .health()
@@ -1604,109 +1645,133 @@ function JudgeRunner({
   };
 
   const paused = health?.paused;
-  const running = run?.status === "running";
+  const doneCount = session
+    ? session.steps.filter((s) => s.status === "done" || s.status === "reverted").length
+    : 0;
 
   return (
-    <>
-      <div className="drawer-backdrop" onClick={onClose} />
-      <div className="judge jr">
-        <div className="judge-head">
-          <div>
-            <div className="judge-kicker">LIVE TESTNET JUDGE MODE · real Casper transactions</div>
-            <h2>
-              Run the real workflow <span className="badge FUNDED">LIVE TESTNET</span>
-            </h2>
-          </div>
-          <button className="judge-x" onClick={onClose}>
-            ✕
-          </button>
+    <div className="lj-page">
+      <header className="lj-top">
+        <div className="lj-brand">
+          FAKTU<em>RA</em> <span className="lj-live">● LIVE TESTNET JUDGE MODE</span>
         </div>
+        <button className="lj-close" onClick={onClose}>
+          ✕ close
+        </button>
+      </header>
 
-        <div className="jr-body">
-          <HealthDots health={health} />
+      <JudgeHealthBar health={health} />
 
-          {paused && (
-            <div className="jr-paused">
-              Live judge mode is temporarily paused — testnet keys need a top-up or the node is
-              unreachable. The safe showcase remains fully available.
+      {paused && (
+        <div className="lj-paused">
+          Live judge mode is temporarily paused — a testnet key needs a top-up or the node is
+          unreachable. The safe showcase remains fully available.
+        </div>
+      )}
+
+      {!session && (
+        <div className="lj-intro">
+          <h1>Run the real workflow, one step at a time.</h1>
+          <p>
+            Pick a walkthrough. You'll trigger each step yourself — every on-chain step signs a{" "}
+            <b>real Casper Testnet transaction</b> and shows its explorer link the moment it
+            confirms, then the next step unlocks. No long waits between clicks.
+          </p>
+          <div className="lj-presets">
+            {presets.map((p) => (
+              <button
+                key={p.id}
+                className={`lj-preset ${p.id === "policy-block" ? "ace" : ""}`}
+                disabled={paused || busy}
+                onClick={() => start(p.id)}
+              >
+                <div className="lj-preset-title">{p.title}</div>
+                <div className="lj-preset-sub">{p.subtitle}</div>
+                <div className="lj-preset-meta">
+                  {p.steps.length} steps · {p.steps.filter((s) => s.kind === "chain").length}{" "}
+                  transactions
+                  {p.id === "policy-block" && <span className="lj-ace-tag">the ace</span>}
+                </div>
+              </button>
+            ))}
+          </div>
+          {err && <div className="lj-err">{err}</div>}
+        </div>
+      )}
+
+      {session && (
+        <div className="lj-run">
+          <div className="lj-run-top">
+            <div>
+              <div className="lj-run-kicker">
+                {session.id} · {session.subtitle}
+              </div>
+              <h1>{session.title}</h1>
+            </div>
+            <div className="lj-progress">
+              <div className="lj-progress-count">
+                {doneCount}
+                <span>/{session.steps.length}</span>
+              </div>
+              <div className="lj-progress-label">
+                {session.status === "active"
+                  ? "steps done"
+                  : session.status === "done"
+                    ? "complete"
+                    : "stopped"}
+              </div>
+            </div>
+          </div>
+
+          {session.note && <div className="lj-note">{session.note}</div>}
+
+          <div className="lj-steps">
+            {session.steps.map((s, i) => (
+              <GuidedStep
+                key={s.key}
+                step={s}
+                index={i}
+                isCurrent={i === session.cursor && session.status === "active"}
+                onRun={runNext}
+                running={busy && i === session.cursor}
+              />
+            ))}
+          </div>
+
+          {err && <div className="lj-err">{err}</div>}
+
+          {session.status === "done" && (
+            <div className="lj-finish">
+              <div className="lj-finish-head">
+                ✓ Walkthrough complete — every step above is a real Casper Testnet transaction you
+                can open on CSPR.live.
+              </div>
+              {session.poolAfter && (
+                <div className="lj-finish-pool">
+                  Pool now: liquid <b>{session.poolAfter.liquid}</b> · deployed{" "}
+                  <b>{session.poolAfter.deployed}</b> · settled{" "}
+                  <b>{session.poolAfter.totalSettled}</b> CSPR ·{" "}
+                  <b>{session.poolAfter.invoiceCount}</b> invoices
+                </div>
+              )}
+              <button className="lj-run-btn ghost" onClick={reset}>
+                Run another walkthrough →
+              </button>
             </div>
           )}
-
-          {!run && (
-            <>
-              <p className="jr-intro">
-                Pick a preset. Each step signs a <b>real Casper Testnet transaction</b> with an
-                explorer link. Runs are preset-only, capped and rate-limited (one run / 10 min).
-                Expect <b>~30–120 s per deploy</b>; a full run takes several minutes — please don't
-                refresh.
-              </p>
-              <div className="jr-presets">
-                {presets.map((p) => (
-                  <button
-                    key={p.id}
-                    className={`jr-preset ${p.id === "policy-block" ? "ace" : ""}`}
-                    disabled={paused || starting}
-                    onClick={() => start(p.id)}
-                  >
-                    <div className="jr-preset-title">{p.title}</div>
-                    <div className="jr-preset-blurb">{p.blurb}</div>
-                    <div className="jr-preset-est">
-                      {p.est} · {p.steps.length} steps
-                    </div>
-                  </button>
-                ))}
+          {session.status === "failed" && (
+            <div className="lj-finish">
+              <div className="lj-finish-head fail">
+                This run stopped early. You can start a fresh walkthrough.
               </div>
-              {err && <div className="jr-err">{err}</div>}
-              {health?.lastRun && (
-                <button className="linklike jr-last" onClick={() => setRun(health.lastRun)}>
-                  View the latest completed run ({health.lastRun.runId}) →
-                </button>
-              )}
-            </>
-          )}
-
-          {run && (
-            <>
-              <div className="jr-runbar">
-                <span className="jr-runid">{run.runId}</span>
-                <span className={`jr-runstatus ${run.status}`}>
-                  {run.status === "running"
-                    ? "running — signing on Casper Testnet…"
-                    : run.status === "done"
-                      ? "run complete"
-                      : "run failed"}
-                </span>
-                {!running && (
-                  <button className="btn ghost sm" onClick={reset}>
-                    ← Back to presets
-                  </button>
-                )}
-              </div>
-              {run.note && <div className="jr-note">{run.note}</div>}
-              <ol className="jr-steps">
-                {run.steps.map((s) => (
-                  <StepRow key={s.key} step={s} explorer={explorer} />
-                ))}
-              </ol>
-              {run.status === "failed" && run.error && <div className="jr-err">{run.error}</div>}
-              {run.poolAfter && run.status === "done" && (
-                <div className="jr-pool">
-                  Pool now: liquid <b>{run.poolAfter.liquid}</b> · deployed{" "}
-                  <b>{run.poolAfter.deployed}</b> · settled <b>{run.poolAfter.totalSettled}</b> CSPR
-                  · <b>{run.poolAfter.invoiceCount}</b> invoices
-                </div>
-              )}
-              {running && (
-                <div className="jr-hint">
-                  Testnet finality is ~30–120 s per deploy. Steps light up as each transaction
-                  confirms — keep this open.
-                </div>
-              )}
-            </>
+              <button className="lj-run-btn ghost" onClick={reset}>
+                ← Back to walkthroughs
+              </button>
+            </div>
           )}
         </div>
-      </div>
-    </>
+      )}
+    </div>
   );
 }
 
