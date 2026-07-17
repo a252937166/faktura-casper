@@ -524,6 +524,7 @@ export default function App() {
             <SubmitPanel
               supplierDefault={meta?.supplier ?? null}
               liveMode={meta?.mode === "live-testnet"}
+              onOpenGuided={() => setRunnerOpen(true)}
               onSubmitted={(r) => {
                 notify(
                   r.status === "rejected"
@@ -698,10 +699,12 @@ function ProofStrip({
 function SubmitPanel({
   supplierDefault,
   liveMode,
+  onOpenGuided,
   onSubmitted,
 }: {
   supplierDefault: string | null;
   liveMode: boolean;
+  onOpenGuided: () => void;
   onSubmitted: (r: InvoiceRecord) => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -855,15 +858,37 @@ function SubmitPanel({
             onChange={(e) => set("supplierAddress", e.target.value)}
           />
         </div>
-        <div className="full" style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <button className="btn" disabled={busy} onClick={submit}>
-            {busy ? "Underwriting…" : "Submit to underwriter"}
-          </button>
-          <span className="muted" style={{ fontSize: 12 }}>
-            {liveMode
-              ? "LLM proposes → on-chain policy disposes → registered, funded & attested on Casper"
-              : "LLM proposes → on-chain policy disposes → writes simulated in showcase"}
-          </span>
+        <div
+          className="full"
+          style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}
+        >
+          {liveMode ? (
+            <>
+              <button className="btn" onClick={onOpenGuided}>
+                ▶ Run it live, step by step →
+              </button>
+              <span className="muted" style={{ fontSize: 12 }}>
+                On the live desk each step is a separate Casper transaction — the guided walkthrough
+                runs them one click at a time, no long waits.
+              </span>
+            </>
+          ) : (
+            <>
+              <button className="btn" disabled={busy} onClick={submit}>
+                {busy ? (
+                  <span className="btn-working">
+                    <span className="btn-orb">AI</span> Underwriting…
+                  </span>
+                ) : (
+                  "Submit to underwriter"
+                )}
+              </button>
+              <span className="muted" style={{ fontSize: 12 }}>
+                LLM proposes → on-chain policy disposes → writes simulated in showcase (a few
+                seconds)
+              </span>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -1482,73 +1507,123 @@ function JudgeHealthBar({ health }: { health: JudgeHealth | null }) {
 }
 
 /** One row in the guided stepper. The current (ready) step carries the action button. */
+/** Counts up mm:ss from a client-side start time (chain-step finality feedback). */
+function ElapsedTimer({ startTs }: { startTs: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const iv = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, []);
+  const s = Math.max(0, Math.floor((now - startTs) / 1000));
+  return (
+    <span className="lj-timer">
+      {Math.floor(s / 60)}:{String(s % 60).padStart(2, "0")}
+    </span>
+  );
+}
+
 function GuidedStep({
   step,
   index,
   isCurrent,
   onRun,
   running,
+  runStartTs,
 }: {
   step: JudgeStep;
   index: number;
   isCurrent: boolean;
   onRun: () => void;
   running: boolean;
+  runStartTs: number;
 }) {
   const done = step.status === "done" || step.status === "reverted";
+  const isAi = step.kind === "compute";
   return (
-    <div className={`lj-step ${step.status} ${isCurrent ? "current" : ""}`}>
+    <div
+      className={`lj-step ${step.status} ${isCurrent ? "current" : ""} ${running ? "busy" : ""}`}
+    >
       <div className="lj-step-rail">
-        <span className={`lj-node ${step.status}`}>{STEP_ICON[step.status]}</span>
+        <span
+          className={`lj-node ${step.status} ${running ? "busy" : ""} ${running && isAi ? "ai" : ""}`}
+        >
+          {running ? (isAi ? "AI" : "") : STEP_ICON[step.status]}
+        </span>
       </div>
       <div className="lj-step-body">
         <div className="lj-step-head">
           <span className="lj-step-n">STEP {index + 1}</span>
-          <span className="lj-step-actor">
+          <span className={`lj-step-actor ${isAi ? "ai" : ""}`}>
             {ACTOR_ICON[step.actor] ?? "•"} {step.actor}
           </span>
           {step.kind === "chain" ? (
             <span className="lj-badge-chain">on-chain tx</span>
           ) : (
-            <span className="lj-badge-instant">instant · no gas</span>
+            <span className="lj-badge-instant">AI · instant · no gas</span>
           )}
         </div>
         <h3 className="lj-step-title">{step.title}</h3>
 
-        {(step.status === "locked" || step.status === "ready") && (
+        {(step.status === "locked" || (step.status === "ready" && !running)) && (
           <p className="lj-step-what">{step.what}</p>
         )}
 
-        {step.result && (
+        {/* Running feedback — a prominent AI indicator for the model step,
+            a live finality timer for on-chain steps. */}
+        {running && isAi && (
+          <div className="lj-ai-working">
+            <span className="lj-ai-orb">AI</span>
+            <div className="lj-ai-text">
+              The autonomous underwriter is scoring &amp; pricing the invoice…
+              <span className="lj-ai-dots">
+                <i />
+                <i />
+                <i />
+              </span>
+            </div>
+          </div>
+        )}
+        {running && !isAi && (
+          <div className="lj-signing">
+            <div className="lj-signing-top">
+              <span className="lj-spinner" /> Signing on Casper Testnet…
+              <ElapsedTimer startTs={runStartTs} />
+            </div>
+            <div className="lj-wait-bar">
+              <span className="lj-wait-fill" />
+            </div>
+            <span className="lj-run-hint">
+              One real transaction · finality usually 30–120 s · keep this open
+            </span>
+          </div>
+        )}
+
+        {step.result && !running && (
           <div className={`lj-step-result ${step.status}`}>
             {step.status === "reverted" ? "⛔ " : done ? "✓ " : ""}
             {step.result}
           </div>
         )}
-        {step.txHash && (
+        {step.txHash && !running && (
           <a className="lj-step-tx" target="_blank" rel="noreferrer" href={step.explorerUrl}>
             {step.txHash.slice(0, 16)}… — verify on CSPR.live ↗
           </a>
         )}
 
-        {isCurrent && step.status === "ready" && (
+        {isCurrent && step.status === "ready" && !running && (
           <div className="lj-step-run">
-            <button className="lj-run-btn" onClick={onRun} disabled={running}>
-              {running
-                ? step.kind === "chain"
-                  ? "Signing on Casper Testnet…"
-                  : "Running the AI underwriter…"
-                : `▶ ${step.action}`}
+            <button className="lj-run-btn" onClick={onRun}>
+              ▶ {step.action}
             </button>
             <span className="lj-run-hint">
               {step.kind === "chain"
                 ? "Signs one real transaction · ~30–120 s for finality"
-                : "Runs the model · a couple of seconds, no gas"}
+                : "Runs the AI model · a couple of seconds, no gas"}
             </span>
           </div>
         )}
 
-        {(done || isCurrent) && (step.who || step.why) && (
+        {(done || (isCurrent && !running)) && (step.who || step.why) && (
           <details className="lj-step-more">
             <summary>Who signs · why it matters</summary>
             {step.who && (
@@ -1581,16 +1656,20 @@ function JudgeGuided({
   const [session, setSession] = useState<JudgeSession | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const explorer = health?.explorer ?? "https://testnet.cspr.live";
+  const [runStartTs, setRunStartTs] = useState(0);
 
   useEffect(() => {
     judge
       .presets()
       .then(setPresets)
       .catch(() => {});
+    // Resume an in-progress walkthrough after a refresh instead of stranding it.
     judge
       .health()
-      .then(onHealth)
+      .then((h) => {
+        onHealth(h);
+        if (h.activeSession && h.activeSession.status === "active") setSession(h.activeSession);
+      })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1614,6 +1693,7 @@ function JudgeGuided({
   const runNext = async () => {
     if (!session) return;
     setErr(null);
+    setRunStartTs(Date.now());
     setBusy(true);
     try {
       const updated = await judge.nextStep(session.id);
@@ -1701,6 +1781,9 @@ function JudgeGuided({
 
       {session && (
         <div className="lj-run">
+          <button className="lj-back" onClick={reset} disabled={busy}>
+            ← Walkthroughs
+          </button>
           <div className="lj-run-top">
             <div>
               <div className="lj-run-kicker">
@@ -1734,6 +1817,7 @@ function JudgeGuided({
                 isCurrent={i === session.cursor && session.status === "active"}
                 onRun={runNext}
                 running={busy && i === session.cursor}
+                runStartTs={runStartTs}
               />
             ))}
           </div>
