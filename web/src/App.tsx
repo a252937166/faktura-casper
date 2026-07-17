@@ -1525,51 +1525,89 @@ function ElapsedTimer({ startTs }: { startTs: number }) {
 function GuidedStep({
   step,
   index,
+  total,
   isCurrent,
   onRun,
   running,
   runStartTs,
+  nextTitle,
 }: {
   step: JudgeStep;
   index: number;
+  total: number;
   isCurrent: boolean;
   onRun: () => void;
   running: boolean;
   runStartTs: number;
+  nextTitle?: string;
 }) {
   const done = step.status === "done" || step.status === "reverted";
   const isAi = step.kind === "compute";
+
+  // Completed and not-yet-reached steps render as compact rows so the CURRENT
+  // step stays the single focus — you always know exactly where you are.
+  if (!isCurrent) {
+    return (
+      <div className={`lj-row ${step.status}`}>
+        <span className={`lj-node ${step.status}`}>{STEP_ICON[step.status]}</span>
+        <div className="lj-row-main">
+          <div className="lj-row-title">
+            <span className="lj-row-n">{index + 1}</span>
+            {step.title}
+          </div>
+          {done && step.result && <div className="lj-row-result">{step.result}</div>}
+        </div>
+        {done && step.txHash && (
+          <a className="lj-row-tx" target="_blank" rel="noreferrer" href={step.explorerUrl}>
+            {step.txHash.slice(0, 10)}… ↗
+          </a>
+        )}
+      </div>
+    );
+  }
+
+  // The current step — the expanded story card. What's happening, why it
+  // matters, and what comes next are all visible, never hidden behind a toggle.
   return (
-    <div
-      className={`lj-step ${step.status} ${isCurrent ? "current" : ""} ${running ? "busy" : ""}`}
-    >
+    <div className={`lj-step current ${running ? "busy" : ""} ${isAi ? "ai" : "chain"}`}>
       <div className="lj-step-rail">
-        <span
-          className={`lj-node ${step.status} ${running ? "busy" : ""} ${running && isAi ? "ai" : ""}`}
-        >
-          {running ? (isAi ? "AI" : "") : STEP_ICON[step.status]}
+        <span className={`lj-node current ${running ? "busy" : ""} ${running && isAi ? "ai" : ""}`}>
+          {running ? (isAi ? "AI" : "") : String(index + 1)}
         </span>
       </div>
       <div className="lj-step-body">
         <div className="lj-step-head">
-          <span className="lj-step-n">STEP {index + 1}</span>
+          <span className="lj-step-n">
+            STEP {index + 1} <span className="lj-step-of">of {total}</span>
+          </span>
           <span className={`lj-step-actor ${isAi ? "ai" : ""}`}>
             {ACTOR_ICON[step.actor] ?? "•"} {step.actor}
           </span>
-          {step.kind === "chain" ? (
-            <span className="lj-badge-chain">on-chain tx</span>
+          {isAi ? (
+            <span className="lj-badge-instant">AI decision · instant · no gas</span>
           ) : (
-            <span className="lj-badge-instant">AI · instant · no gas</span>
+            <span className="lj-badge-chain">signs 1 Casper transaction</span>
           )}
         </div>
         <h3 className="lj-step-title">{step.title}</h3>
 
-        {(step.status === "locked" || (step.status === "ready" && !running)) && (
-          <p className="lj-step-what">{step.what}</p>
+        {/* The narrative — always visible on the active step */}
+        {!running && (
+          <div className="lj-story">
+            <p className="lj-story-now">
+              <span className="lj-story-lbl">What happens</span>
+              {step.what}
+            </p>
+            {step.why && (
+              <p className="lj-story-why">
+                <span className="lj-story-lbl">Why it matters</span>
+                {step.why}
+              </p>
+            )}
+          </div>
         )}
 
-        {/* Running feedback — a prominent AI indicator for the model step,
-            a live finality timer for on-chain steps. */}
+        {/* Running feedback */}
         {running && isAi && (
           <div className="lj-ai-working">
             <span className="lj-ai-orb">AI</span>
@@ -1598,45 +1636,20 @@ function GuidedStep({
           </div>
         )}
 
-        {step.result && !running && (
-          <div className={`lj-step-result ${step.status}`}>
-            {step.status === "reverted" ? "⛔ " : done ? "✓ " : ""}
-            {step.result}
-          </div>
-        )}
-        {step.txHash && !running && (
-          <a className="lj-step-tx" target="_blank" rel="noreferrer" href={step.explorerUrl}>
-            {step.txHash.slice(0, 16)}… — verify on CSPR.live ↗
-          </a>
-        )}
-
-        {isCurrent && step.status === "ready" && !running && (
+        {step.status === "ready" && !running && (
           <div className="lj-step-run">
-            <button className="lj-run-btn" onClick={onRun}>
-              ▶ {step.action}
+            <button className={`lj-run-btn ${isAi ? "ai" : ""}`} onClick={onRun}>
+              {isAi ? "✦" : "▶"} {step.action}
             </button>
-            <span className="lj-run-hint">
-              {step.kind === "chain"
-                ? "Signs one real transaction · ~30–120 s for finality"
-                : "Runs the AI model · a couple of seconds, no gas"}
-            </span>
+            {step.who && <span className="lj-run-signer">Signed by: {step.who}</span>}
           </div>
         )}
 
-        {(done || (isCurrent && !running)) && (step.who || step.why) && (
-          <details className="lj-step-more">
-            <summary>Who signs · why it matters</summary>
-            {step.who && (
-              <div>
-                <b>Who</b> {step.who}
-              </div>
-            )}
-            {step.why && (
-              <div>
-                <b>Why</b> {step.why}
-              </div>
-            )}
-          </details>
+        {/* What's next — so the user always knows where the story is going */}
+        {nextTitle && !running && (
+          <div className="lj-next">
+            <span className="lj-next-lbl">Up next</span> {nextTitle}
+          </div>
         )}
       </div>
     </div>
@@ -1751,14 +1764,16 @@ function JudgeGuided({
 
       {!session && (
         <div className="lj-intro">
-          <h1>Run the real workflow, one step at a time.</h1>
-          <p>
-            Pick a walkthrough. You'll trigger each step yourself — every on-chain step signs a{" "}
-            <b>real Casper Testnet transaction</b> and shows its explorer link the moment it
-            confirms, then the next step unlocks. No long waits between clicks.
+          <p className="lj-intro-kicker">You are the credit desk.</p>
+          <h1>Move real capital on Casper — one step, one signature at a time.</h1>
+          <p className="lj-intro-lede">
+            Choose a story below. You trigger each step yourself: the AI underwriter thinks out
+            loud, then every on-chain move signs a <b>real Casper Testnet transaction</b> you can
+            open on the explorer the instant it confirms. Each screen tells you what just happened,
+            why it matters, and what comes next.
           </p>
           <div className="lj-presets">
-            {presets.map((p) => (
+            {presets.map((p, idx) => (
               <button
                 key={p.id}
                 className={`lj-preset ${p.id === "policy-block" ? "ace" : ""}`}
@@ -1768,10 +1783,11 @@ function JudgeGuided({
                 <div className="lj-preset-title">{p.title}</div>
                 <div className="lj-preset-sub">{p.subtitle}</div>
                 <div className="lj-preset-meta">
-                  {p.steps.length} steps · {p.steps.filter((s) => s.kind === "chain").length}{" "}
+                  {p.steps.length} steps · {p.steps.filter((s) => s.kind === "chain").length} real
                   transactions
-                  {p.id === "policy-block" && <span className="lj-ace-tag">the ace</span>}
+                  {p.id === "policy-block" && <span className="lj-ace-tag">the one to watch</span>}
                 </div>
+                <span className="lj-preset-go">Begin →</span>
               </button>
             ))}
           </div>
@@ -1814,10 +1830,12 @@ function JudgeGuided({
                 key={s.key}
                 step={s}
                 index={i}
+                total={session.steps.length}
                 isCurrent={i === session.cursor && session.status === "active"}
                 onRun={runNext}
                 running={busy && i === session.cursor}
                 runStartTs={runStartTs}
+                nextTitle={session.steps[i + 1]?.title}
               />
             ))}
           </div>
