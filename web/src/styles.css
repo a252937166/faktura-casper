@@ -1625,3 +1625,200 @@ td:first-child {
   font-size: 13px;
 }
 .jr-hint { margin-top: 12px; font-size: 12.5px; color: var(--muted); font-style: italic; }
+
+/* ---- Live Testnet Judge Mode: guided full-page experience --------------- */
+.lj-page {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: var(--paper);
+  overflow-y: auto;
+  padding: 0 0 80px;
+  animation: ljfade 0.18s ease;
+}
+@keyframes ljfade { from { opacity: 0; } to { opacity: 1; } }
+.lj-top {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 32px;
+  background: var(--paper);
+  border-bottom: 2px solid var(--ink);
+}
+.lj-brand { font-family: var(--serif); font-weight: 800; font-size: 20px; letter-spacing: -0.01em; }
+.lj-brand em { color: var(--red); font-style: normal; }
+.lj-live {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--red);
+  letter-spacing: 0.08em;
+  margin-left: 10px;
+}
+.lj-close {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: none;
+  border: 1.5px solid var(--ink);
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.lj-close:hover { background: var(--ink); color: var(--paper); }
+
+.lj-health {
+  max-width: 860px;
+  margin: 14px auto 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 8px 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.lj-health .lj-bal { display: inline-flex; align-items: center; gap: 4px; }
+.lj-hsep { color: var(--line); }
+.lj-paused {
+  max-width: 860px;
+  margin: 14px auto 0;
+  padding: 12px 16px;
+  border: 1.5px solid var(--amber);
+  background: rgba(201, 138, 27, 0.08);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.lj-intro { max-width: 860px; margin: 0 auto; padding: 40px 24px 0; }
+.lj-intro h1 { font-family: var(--serif); font-size: 40px; line-height: 1.05; margin: 0 0 16px; }
+.lj-intro p { font-size: 16px; line-height: 1.65; color: var(--ink); max-width: 640px; }
+.lj-presets { display: grid; grid-template-columns: 1fr; gap: 14px; margin-top: 28px; }
+@media (min-width: 720px) { .lj-presets { grid-template-columns: repeat(3, 1fr); } }
+.lj-preset {
+  text-align: left;
+  padding: 20px;
+  background: var(--card);
+  border: 1.5px solid var(--ink);
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 4px 4px 0 rgba(23, 19, 13, 0.14);
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.lj-preset:hover:not(:disabled) { transform: translate(-2px, -2px); box-shadow: 6px 6px 0 var(--red); }
+.lj-preset:disabled { opacity: 0.5; cursor: not-allowed; }
+.lj-preset.ace { border-color: var(--red); }
+.lj-preset-title { font-family: var(--serif); font-weight: 700; font-size: 20px; margin-bottom: 8px; }
+.lj-preset-sub { font-size: 13.5px; color: var(--muted); line-height: 1.5; min-height: 40px; }
+.lj-preset-meta {
+  margin-top: 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--red);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lj-ace-tag { background: var(--red); color: #fff; padding: 1px 7px; border-radius: 3px; }
+
+.lj-run { max-width: 780px; margin: 0 auto; padding: 32px 24px 0; }
+.lj-run-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.lj-run-kicker { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.lj-run-top h1 { font-family: var(--serif); font-size: 34px; margin: 0; line-height: 1.1; }
+.lj-progress { text-align: right; flex: none; }
+.lj-progress-count { font-family: var(--serif); font-size: 40px; font-weight: 800; line-height: 1; color: var(--red); }
+.lj-progress-count span { color: var(--muted); font-size: 22px; }
+.lj-progress-label { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.lj-note {
+  margin: 18px 0 0;
+  padding: 12px 16px;
+  background: rgba(201, 138, 27, 0.08);
+  border: 1px dashed var(--amber);
+  border-radius: 6px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.lj-steps { margin-top: 24px; }
+.lj-step { display: flex; gap: 16px; }
+.lj-step-rail { display: flex; flex-direction: column; align-items: center; flex: none; }
+.lj-node {
+  width: 34px; height: 34px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700;
+  border: 2px solid var(--line); background: var(--card); color: var(--muted);
+  flex: none;
+}
+.lj-node.ready { border-color: var(--red); color: var(--red); }
+.lj-node.running { border-color: var(--amber); color: var(--amber); }
+.lj-node.done { border-color: var(--green); background: var(--green); color: #fff; }
+.lj-node.reverted { border-color: var(--red); background: var(--red); color: #fff; }
+.lj-node.failed { border-color: var(--red-deep); background: var(--red-deep); color: #fff; }
+/* connector line */
+.lj-step:not(:last-child) .lj-step-rail::after {
+  content: ""; width: 2px; flex: 1; min-height: 20px; background: var(--line); margin: 4px 0;
+}
+.lj-step.done .lj-step-rail::after, .lj-step.reverted .lj-step-rail::after { background: var(--green); }
+
+.lj-step-body { flex: 1; padding-bottom: 26px; min-width: 0; }
+.lj-step.locked .lj-step-body { opacity: 0.5; }
+.lj-step.current .lj-step-body {
+  background: var(--card);
+  border: 1.5px solid var(--ink);
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin-top: -6px;
+  box-shadow: 4px 4px 0 rgba(23, 19, 13, 0.12);
+}
+.lj-step-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lj-step-n { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--muted); }
+.lj-step-actor { font-family: var(--mono); font-size: 10px; background: var(--ink); color: var(--paper); padding: 1px 6px; border-radius: 3px; }
+.lj-badge-chain { font-family: var(--mono); font-size: 10px; color: var(--red); border: 1px solid var(--red); border-radius: 3px; padding: 0 5px; }
+.lj-badge-instant { font-family: var(--mono); font-size: 10px; color: var(--green); border: 1px solid var(--green); border-radius: 3px; padding: 0 5px; }
+.lj-step-title { font-family: var(--serif); font-size: 19px; margin: 8px 0 6px; }
+.lj-step-what { font-size: 13.5px; color: var(--muted); line-height: 1.55; margin: 0; }
+.lj-step-result {
+  margin-top: 10px; padding: 10px 12px; border-radius: 5px; font-size: 14px; line-height: 1.5;
+  background: rgba(15, 138, 95, 0.1); border: 1px solid rgba(15, 138, 95, 0.3);
+}
+.lj-step-result.reverted { background: rgba(217, 45, 45, 0.09); border-color: rgba(217, 45, 45, 0.35); color: var(--red-deep); font-weight: 500; }
+.lj-step-tx { display: inline-block; margin-top: 8px; font-family: var(--mono); font-size: 12.5px; color: var(--blue); }
+
+.lj-step-run { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+.lj-run-btn {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--paper);
+  background: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  padding: 14px 28px;
+  cursor: pointer;
+  box-shadow: 5px 5px 0 var(--red);
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.lj-run-btn:hover:not(:disabled) { transform: translate(-1px, -1px); box-shadow: 7px 7px 0 var(--red); }
+.lj-run-btn:disabled { opacity: 0.75; cursor: wait; box-shadow: 3px 3px 0 var(--amber); }
+.lj-run-btn.ghost { color: var(--ink); background: none; box-shadow: 3px 3px 0 rgba(23,19,13,.14); margin-top: 8px; }
+.lj-run-hint { font-size: 12px; color: var(--muted); font-style: italic; }
+
+.lj-step-more { margin-top: 12px; font-size: 12.5px; color: var(--muted); }
+.lj-step-more summary { cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--red); }
+.lj-step-more div { margin-top: 6px; line-height: 1.5; }
+.lj-step-more b { color: var(--ink); font-family: var(--mono); font-size: 11px; margin-right: 6px; }
+
+.lj-err { max-width: 780px; margin: 16px auto 0; padding: 10px 14px; border: 1.5px solid var(--red); background: rgba(217,45,45,.07); border-radius: 6px; font-size: 13px; color: var(--red-deep); }
+.lj-finish { margin-top: 8px; padding: 20px; background: var(--card); border: 2px solid var(--ink); border-radius: 8px; }
+.lj-finish-head { font-size: 15px; font-weight: 600; line-height: 1.5; }
+.lj-finish-head.fail { color: var(--red-deep); }
+.lj-finish-pool { margin-top: 12px; font-family: var(--mono); font-size: 13px; }

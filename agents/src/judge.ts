@@ -1,22 +1,26 @@
 /**
- * Live Testnet Judge Mode — the finals-round orchestrator.
+ * Live Testnet Judge Mode — a guided, STEP-BY-STEP walkthrough.
  *
- * A judge opens the site, clicks one preset, and every step signs a REAL Casper
- * Testnet transaction with an explorer link. This is the answer to the finals
- * feedback ("complete and real workflow on Testnet instead of 'simulated'"):
- * it drives the SAME tested code paths as `npm run e2e` (processIntake +
- * chain.* + the x402 buyer), but productionised behind a controlled, rate-
- * limited, preset-only HTTP surface so a public host can sign real value safely.
+ * The finals judge asked for a real, clickable Casper Testnet workflow — but a
+ * single click that then blocks for 6–10 minutes is a poor experience. So this
+ * exposes the lifecycle as individual steps: the judge clicks one step, it signs
+ * exactly ONE transaction (~30–120 s, or instant for the off-chain AI step),
+ * shows the result + explorer link, and unlocks the next step. Short waits, real
+ * transactions, full control over the pace.
  *
- * Mounted only when FAKTURA_JUDGE=1 and NOT in showcase mode (real keys +
- * livenet binary required). The public showcase (:4030) is untouched.
+ * It drives the SAME tested code paths as `npm run e2e` (the LLM underwriter +
+ * chain.* + the x402 buyer) behind a controlled, preset-only surface. Mounted
+ * only when FAKTURA_JUDGE=1 and NOT in showcase mode. The public showcase (:4030)
+ * is untouched.
  */
-import { Router, type Request, type Response } from "express";
+import crypto from "node:crypto";
+import { Router, type Request } from "express";
 import { config } from "./config.js";
 import { chain } from "./chain.js";
-import { processIntake, type IntakeInput } from "./underwriter.js";
+import { underwrite as llmUnderwrite } from "./llm.js";
+import { db, upsertInvoice, type InvoiceRecord } from "./store.js";
+import { feed } from "./feed.js";
 import { nativeTransfer, queryBalance, personaPublicKeyHex } from "./native-transfer.js";
-import { feed, type FeedEvent } from "./feed.js";
 
 const CSPR = 1_000_000_000n;
 const toMotes = (c: number) => BigInt(Math.round(c * 1e9)).toString();
@@ -24,26 +28,60 @@ const cspr = (motes: string | bigint) => Number(BigInt(motes) / 1_000_000n) / 10
 const explorer = config.explorerBase;
 const deployUrl = (h?: string) => (h ? `${explorer}/deploy/${h}` : undefined);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sha256 = (s: string) => crypto.createHash("sha256").update(s).digest("hex");
+const day = 86_400_000;
 
-// ---- run / step model -------------------------------------------------------
+// ---- step / session model ---------------------------------------------------
 
-type StepStatus =
-  "pending" | "signing" | "submitted" | "confirmed" | "reverted" | "skipped" | "failed";
+type StepStatus = "locked" | "ready" | "running" | "done" | "reverted" | "failed";
 
 interface JudgeStep {
   key: string;
   actor: string;
   title: string;
+  /** one-line "what happens when you click this" */
+  action: string;
+  /** whether this step signs a Casper transaction (shows a wait hint) or is instant */
+  kind: "compute" | "chain";
   status: StepStatus;
   txHash?: string;
   explorerUrl?: string;
   result?: string;
-  /** Three-line annotation shown when a judge expands the row. */
   what?: string;
   who?: string;
   why?: string;
   startedTs?: number;
   endedTs?: number;
+}
+
+interface StepDef extends Omit<JudgeStep, "status"> {
+  run: (s: Session) => Promise<{ result: string; txHash?: string; reverted?: boolean }>;
+}
+
+interface Session {
+  id: string;
+  preset: string;
+  title: string;
+  subtitle: string;
+  steps: JudgeStep[];
+  defs: StepDef[];
+  cursor: number; // index of the next runnable step
+  status: "active" | "done" | "failed";
+  startedTs: number;
+  endedTs?: number;
+  ip: string;
+  note?: string;
+  poolBefore?: PoolSnap;
+  poolAfter?: PoolSnap;
+  ctx: {
+    record?: InvoiceRecord;
+    invoiceId?: number;
+    decisionHash?: string;
+    amountCspr?: number;
+    approved?: boolean;
+    x402Nonce?: string;
+    x402Proof?: string;
+  };
 }
 
 interface PoolSnap {
@@ -55,24 +93,11 @@ interface PoolSnap {
   invoiceCount: number;
 }
 
-interface JudgeRun {
-  runId: string;
-  preset: string;
-  status: "running" | "done" | "failed";
-  steps: JudgeStep[];
-  startedTs: number;
-  endedTs?: number;
-  error?: string;
-  note?: string;
-  poolBefore?: PoolSnap;
-  poolAfter?: PoolSnap;
-}
-
-const runs = new Map<string, JudgeRun>();
-const runOrder: string[] = [];
+const sessions = new Map<string, Session>();
+const order: string[] = [];
 let seq = 0;
 
-function newRunId(): string {
+function newId(): string {
   const d = new Date();
   const ymd = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(
     d.getUTCDate(),
@@ -81,28 +106,30 @@ function newRunId(): string {
   return `JUDGE-${ymd}-${String(seq).padStart(3, "0")}`;
 }
 
-function step(run: JudgeRun, key: string): JudgeStep {
-  const s = run.steps.find((x) => x.key === key);
-  if (!s) throw new Error(`unknown step ${key}`);
-  return s;
+function publicStep(d: StepDef, status: StepStatus): JudgeStep {
+  const { run, ...rest } = d;
+  return { ...rest, status };
 }
-function begin(run: JudgeRun, key: string, status: StepStatus = "signing") {
-  const s = step(run, key);
-  s.status = status;
-  s.startedTs = Date.now();
-  return s;
+
+function publicSession(s: Session) {
+  return {
+    id: s.id,
+    preset: s.preset,
+    title: s.title,
+    subtitle: s.subtitle,
+    steps: s.steps,
+    cursor: s.cursor,
+    status: s.status,
+    startedTs: s.startedTs,
+    endedTs: s.endedTs,
+    note: s.note,
+    poolBefore: s.poolBefore,
+    poolAfter: s.poolAfter,
+    nextStep: s.cursor < s.steps.length ? s.steps[s.cursor] : null,
+  };
 }
-function done(run: JudgeRun, key: string, status: StepStatus, result: string, txHash?: string) {
-  const s = step(run, key);
-  s.status = status;
-  s.result = result;
-  if (txHash) {
-    s.txHash = txHash;
-    s.explorerUrl = deployUrl(txHash);
-  }
-  s.endedTs = Date.now();
-  return s;
-}
+
+// ---- pool snapshot + health (cached: livenet reads are ~60 s cold) ----------
 
 async function snap(): Promise<PoolSnap> {
   const s = await chain.stats();
@@ -116,12 +143,6 @@ async function snap(): Promise<PoolSnap> {
   };
 }
 
-/**
- * The livenet `stats` read spawns the Rust CLI cold (~60–70 s on testnet), far
- * too slow for a health endpoint the UI polls and gates the Run button on. Cache
- * the pool snapshot with a TTL and warm it at boot so health returns in ~1–2 s
- * (just the fast RPC balance queries).
- */
 let poolCache: { ts: number; snap: PoolSnap | null; ok: boolean } = {
   ts: 0,
   snap: null,
@@ -143,14 +164,11 @@ async function cachedPool(ttlMs = 45_000): Promise<{ snap: PoolSnap | null; ok: 
         poolInflight = null;
       });
   }
-  // If we have any prior snapshot, return it immediately and let the refresh run
-  // in the background; only block when we have nothing at all (cold start).
   if (poolCache.snap) return { snap: poolCache.snap, ok: poolCache.ok };
   await poolInflight;
   return { snap: poolCache.snap, ok: poolCache.ok };
 }
 
-/** Balance query with a hard timeout so a slow RPC can never hang health. */
 async function balanceWithTimeout(pubHex: string, ms = 12_000): Promise<number | null> {
   return Promise.race([
     queryBalance(pubHex).then((b) => cspr(b.toString())),
@@ -158,514 +176,20 @@ async function balanceWithTimeout(pubHex: string, ms = 12_000): Promise<number |
   ]);
 }
 
-// ---- preset step templates --------------------------------------------------
+/** On-chain single-invoice cap (bps), cached — policy is effectively static. */
+let policyBpsCache: number | null = null;
+async function cachedPolicyBps(): Promise<number> {
+  if (policyBpsCache != null) return policyBpsCache;
+  try {
+    const p = await chain.policy();
+    policyBpsCache = p.maxSingleInvoiceBps ?? 5000;
+  } catch {
+    policyBpsCache = 5000;
+  }
+  return policyBpsCache;
+}
 
 const PERSONAS = ["agent", "collector", "supplier", "investor", "debtor"] as const;
-
-function happySteps(): JudgeStep[] {
-  return [
-    {
-      key: "liquidity",
-      actor: "investor",
-      title: "Ensure pool liquidity",
-      status: "pending",
-      what: "Top up the native-CSPR pool if it is low.",
-      who: "Investor (LP) key",
-      why: "Funding an advance needs liquid CSPR; LP shares mint at the current share price.",
-    },
-    {
-      key: "submit",
-      actor: "supplier",
-      title: "Submit a clean invoice",
-      status: "pending",
-      what: "A real receivable enters intake.",
-      who: "Demo supplier",
-      why: "This is the raw input the autonomous underwriter must judge.",
-    },
-    {
-      key: "underwrite",
-      actor: "underwriter",
-      title: "AI underwriter scores risk",
-      status: "pending",
-      what: "Deterministic pre-checks, then an LLM returns a risk score, price and rationale.",
-      who: "Autonomous underwriter agent",
-      why: "The model proposes; the chain disposes — every decision memo is hashed.",
-    },
-    {
-      key: "policy",
-      actor: "underwriter",
-      title: "Policy guardrails applied",
-      status: "pending",
-      what: "Risk ceiling and discount band clamp the model output.",
-      who: "Underwriter policy layer",
-      why: "The agent can never price outside the contract's hard caps.",
-    },
-    {
-      key: "register",
-      actor: "underwriter",
-      title: "Register invoice on-chain",
-      status: "pending",
-      what: "register_invoice writes the receivable with the decision hash.",
-      who: "Underwriter agent key",
-      why: "The receivable now exists on Casper Testnet, tamper-evident.",
-    },
-    {
-      key: "fund",
-      actor: "underwriter",
-      title: "Pool funds the supplier",
-      status: "pending",
-      what: "fund_invoice streams the advance from the pool to the supplier.",
-      who: "Underwriter agent key",
-      why: "Capital moves autonomously — to the supplier account, never the debtor.",
-    },
-    {
-      key: "attest",
-      actor: "underwriter",
-      title: "Anchor the AI decision",
-      status: "pending",
-      what: "The SHA-256 of the full decision memo is attested on-chain.",
-      who: "Underwriter agent key",
-      why: "Autonomous underwriting you can audit later against the memo.",
-    },
-    {
-      key: "x402",
-      actor: "oracle",
-      title: "Buyer purchases risk report (x402)",
-      status: "pending",
-      what: "Another agent pays over HTTP 402 with native CSPR and gets the verified report.",
-      who: "Buyer agent (debtor key)",
-      why: "Machine-payable data — the agent economy, settled on-chain.",
-    },
-    {
-      key: "settle",
-      actor: "debtor",
-      title: "Debtor settles the invoice",
-      status: "pending",
-      what: "settle_invoice repays face value; the pool realizes yield.",
-      who: "Debtor key",
-      why: "Closes the credit loop — the LP share price reflects the gain.",
-    },
-    {
-      key: "accounting",
-      actor: "system",
-      title: "Pool accounting updated",
-      status: "pending",
-      what: "TVL, deployed and settled totals move.",
-      who: "Contract state",
-      why: "The whole run is visible in one on-chain balance sheet.",
-    },
-  ];
-}
-
-function policyBlockSteps(): JudgeStep[] {
-  return [
-    {
-      key: "liquidity",
-      actor: "investor",
-      title: "Ensure pool liquidity",
-      status: "pending",
-      what: "Make sure the pool holds CSPR so the advance clears the liquidity prefilter.",
-      who: "Investor (LP) key",
-      why: "We WANT this invoice to reach the chain, so it must pass the off-chain liquidity sanity check first.",
-    },
-    {
-      key: "submit",
-      actor: "supplier",
-      title: "Submit an oversized invoice",
-      status: "pending",
-      what: "A clean but deliberately large receivable — sized above the on-chain single-invoice cap.",
-      who: "Demo supplier",
-      why: "The amount is computed from live pool value so the advance exceeds the concentration limit.",
-    },
-    {
-      key: "underwrite",
-      actor: "underwriter",
-      title: "AI underwriter APPROVES",
-      status: "pending",
-      what: "The model likes the counterparties and approves the invoice.",
-      who: "Autonomous underwriter agent",
-      why: "This is the whole point: a model-approved invoice about to hit a hard limit.",
-    },
-    {
-      key: "policy",
-      actor: "underwriter",
-      title: "Off-chain checks pass",
-      status: "pending",
-      what: "Risk/discount are in band and the advance is below total liquidity.",
-      who: "Underwriter policy layer",
-      why: "Concentration caps are deliberately NOT checked off-chain — they belong to the contract.",
-    },
-    {
-      key: "register",
-      actor: "underwriter",
-      title: "Register invoice on-chain",
-      status: "pending",
-      what: "register_invoice succeeds — the receivable is written.",
-      who: "Underwriter agent key",
-      why: "Registration is fine; the limit bites at funding.",
-    },
-    {
-      key: "fund",
-      actor: "underwriter",
-      title: "Contract REJECTS funding",
-      status: "pending",
-      what: "fund_invoice reverts with User error 15 (SingleInvoiceCapExceeded).",
-      who: "Underwriter agent key → contract",
-      why: "The ace: a valid agent key with an AI approval still cannot exceed the on-chain policy. LLM proposes, contract disposes.",
-    },
-  ];
-}
-
-function x402Steps(): JudgeStep[] {
-  return [
-    {
-      key: "prepare",
-      actor: "underwriter",
-      title: "Prepare a funded invoice",
-      status: "pending",
-      what: "Reuse the latest funded invoice, or fund a small one if none exists.",
-      who: "Underwriter agent key",
-      why: "A risk report only exists for an underwritten, funded receivable.",
-    },
-    {
-      key: "challenge",
-      actor: "oracle",
-      title: "Request report → HTTP 402",
-      status: "pending",
-      what: "The oracle answers 402 Payment Required with an x402 PaymentRequirements + nonce.",
-      who: "Faktura risk oracle",
-      why: "Standard x402 wire format on casper-test — machine-payable by construction.",
-    },
-    {
-      key: "pay",
-      actor: "oracle",
-      title: "Buyer settles on-chain",
-      status: "pending",
-      what: "The buyer signs a native CSPR transfer carrying the nonce as transfer id.",
-      who: "Buyer agent (debtor key)",
-      why: "Facilitator-less settlement — verifiable purely over RPC.",
-    },
-    {
-      key: "report",
-      actor: "oracle",
-      title: "Verified report delivered",
-      status: "pending",
-      what: "The oracle verifies the transfer and returns the report with the on-chain decision hash.",
-      who: "Faktura risk oracle",
-      why: "The buyer gets data whose provenance is anchored on Casper.",
-    },
-  ];
-}
-
-function stepsFor(preset: string): JudgeStep[] {
-  if (preset === "happy") return happySteps();
-  if (preset === "policy-block") return policyBlockSteps();
-  if (preset === "x402") return x402Steps();
-  throw new Error(`unknown preset ${preset}`);
-}
-
-// ---- feed → live step motion (liveliness only; record is authoritative) -----
-
-/**
- * While processIntake runs (one await that internally does register→fund→attest,
- * i.e. several testnet deploys), map its feed events onto step transitions so
- * the judge sees live motion. Tx hashes are reconciled from the returned record
- * afterwards, so a missed/renamed event never loses correctness.
- */
-function attachIntakeFeed(run: JudgeRun): () => void {
-  let onchainSeen = 0;
-  const onEvent = (e: FeedEvent) => {
-    try {
-      if (e.kind === "intake") done(run, "submit", "confirmed", "Invoice received into intake");
-      else if (e.kind === "llm") begin(run, "underwrite", "signing");
-      else if (e.kind === "decision") {
-        done(run, "underwrite", "confirmed", e.message.replace(/ —.*$/, ""));
-        done(run, "policy", "confirmed", "Risk/discount within policy band");
-      } else if (e.kind === "onchain") {
-        onchainSeen += 1;
-        if (/register/i.test(e.message) || onchainSeen === 1)
-          done(run, "register", "confirmed", "Invoice registered on Casper Testnet", e.deployHash);
-        else done(run, "fund", "confirmed", "Advance streamed to supplier", e.deployHash);
-      } else if (e.kind === "policy_block") {
-        // handled authoritatively from the record; mark motion here
-        begin(run, "fund", "submitted");
-      } else if (e.kind === "attest") {
-        done(run, "attest", "confirmed", "Decision memo hash anchored", e.deployHash);
-      }
-    } catch {
-      /* unknown step for this preset — ignore */
-    }
-  };
-  feed.on("event", onEvent);
-  return () => feed.off("event", onEvent);
-}
-
-// ---- the buyer flow (x402), in-process against our own risk route -----------
-
-async function x402Buy(
-  run: JudgeRun,
-  invoiceId: number,
-  keys: { challenge: string; pay: string; report: string },
-): Promise<void> {
-  const base = `http://127.0.0.1:${config.port}`;
-  begin(run, keys.challenge, "signing");
-  const first = await fetch(`${base}/api/risk/${invoiceId}`);
-  if (first.status !== 402) {
-    const t = await first.text();
-    throw new Error(`expected 402 challenge, got ${first.status}: ${t.slice(0, 160)}`);
-  }
-  const offer = ((await first.json()) as any).accepts[0];
-  const nonce: string = offer.extra.transferIdNonce;
-  done(run, keys.challenge, "confirmed", `402 — ${cspr(offer.maxAmountRequired)} CSPR to oracle`);
-
-  begin(run, keys.pay, "signing");
-  const proof = await nativeTransfer({
-    fromKeyPath: config.keys.debtor,
-    to: offer.payTo,
-    motes: offer.maxAmountRequired,
-    id: nonce,
-  });
-  done(run, keys.pay, "submitted", "Buyer transfer submitted; awaiting finality", proof);
-
-  begin(run, keys.report, "signing");
-  for (let i = 0; i < 30; i++) {
-    await sleep(5000);
-    const retry = await fetch(`${base}/api/risk/${invoiceId}`, {
-      headers: { "PAYMENT-SIGNATURE": proof, "PAYMENT-NONCE": nonce },
-    });
-    if (retry.status === 200) {
-      const rep = (await retry.json()) as any;
-      done(run, keys.pay, "confirmed", "Buyer payment settled on-chain", proof);
-      done(
-        run,
-        keys.report,
-        "confirmed",
-        `Report delivered — risk ${rep.riskScore}, decision ${String(rep.decisionHash).slice(0, 18)}…`,
-      );
-      return;
-    }
-  }
-  throw new Error("x402 payment did not settle within ~2.5 min");
-}
-
-// ---- preset orchestrations --------------------------------------------------
-
-const day = 86_400_000;
-
-async function runHappy(run: JudgeRun): Promise<void> {
-  // 1) liquidity
-  begin(run, "liquidity");
-  const before = await chain.stats();
-  if (cspr(before.liquid) >= 40) {
-    done(run, "liquidity", "confirmed", `Pool already liquid: ${cspr(before.liquid)} CSPR`);
-  } else {
-    const dep = await chain.deposit(toMotes(60));
-    done(run, "liquidity", "confirmed", "Deposited 60 CSPR into the pool", dep.deployHashes.at(-1));
-  }
-
-  // 2-7) submit → underwrite → policy → register → fund → attest (one pipeline)
-  begin(run, "submit", "signing");
-  begin(run, "underwrite", "pending");
-  const detach = attachIntakeFeed(run);
-  let rec;
-  try {
-    rec = await processIntake({
-      supplierName: "Nordwind Logistics GmbH",
-      debtorName: "Aurora Retail AG",
-      amountCspr: 12,
-      dueTs: Date.now() + 30 * day,
-      invoiceNumber: `JUDGE-${run.runId}`,
-      description: "Freight services, 14 pallet shipments Hamburg to Vienna",
-      history: "6 prior invoices, all paid within terms",
-    });
-  } finally {
-    detach();
-  }
-  // reconcile authoritative tx hashes from the record
-  if (rec.chain.registerHash)
-    done(
-      run,
-      "register",
-      "confirmed",
-      "Invoice registered on Casper Testnet",
-      rec.chain.registerHash,
-    );
-  if (rec.status === "funded") {
-    done(run, "fund", "confirmed", "Advance streamed to supplier", rec.chain.fundHash);
-    if (rec.chain.attestHashes.at(-1))
-      done(
-        run,
-        "attest",
-        "confirmed",
-        "Decision memo hash anchored",
-        rec.chain.attestHashes.at(-1),
-      );
-    else done(run, "attest", "submitted", "Attestation retrying (advance already on-chain)");
-  } else if (rec.status === "policy_blocked") {
-    done(run, "fund", "reverted", rec.chain.fundError ?? "Funding blocked by contract policy");
-    done(run, "attest", "skipped", "Skipped — invoice was not funded");
-  } else {
-    // AI rejected — unusual for this clean invoice, but keep it honest
-    done(run, "fund", "skipped", `Not funded (status ${rec.status})`);
-    done(run, "attest", "confirmed", "Rejection memo anchored", rec.chain.attestHashes.at(-1));
-    throw new Error(`clean invoice unexpectedly ${rec.status}`);
-  }
-
-  // 8) x402 purchase against the funded invoice
-  if (rec.status === "funded" && rec.id > 0) {
-    await x402Buy(run, rec.id, { challenge: "x402", pay: "x402", report: "x402" });
-  } else {
-    done(run, "x402", "skipped", "Skipped — no funded invoice to price");
-  }
-
-  // 9) settle
-  if (rec.status === "funded" && rec.id > 0) {
-    begin(run, "settle", "signing");
-    const st = await chain.settle(rec.id, toMotes(rec.intake.amountCspr));
-    done(
-      run,
-      "settle",
-      "confirmed",
-      `Debtor paid ${rec.intake.amountCspr} CSPR face value`,
-      st.deployHashes.at(-1),
-    );
-  } else {
-    done(run, "settle", "skipped", "Skipped — nothing to settle");
-  }
-
-  // 10) accounting
-  begin(run, "accounting", "signing");
-  const after = await snap();
-  run.poolAfter = after;
-  done(
-    run,
-    "accounting",
-    "confirmed",
-    `liquid ${after.liquid} · deployed ${after.deployed} · settled ${after.totalSettled} CSPR · ${after.invoiceCount} invoices`,
-  );
-}
-
-async function runPolicyBlock(run: JudgeRun): Promise<void> {
-  // 1) liquidity — need a known pool so the advance clears liquidity but exceeds the cap
-  begin(run, "liquidity");
-  let stats = await chain.stats();
-  if (cspr(stats.liquid) < 30) {
-    const dep = await chain.deposit(toMotes(60));
-    done(run, "liquidity", "confirmed", "Deposited 60 CSPR into the pool", dep.deployHashes.at(-1));
-    stats = await chain.stats();
-  } else {
-    done(run, "liquidity", "confirmed", `Pool liquid: ${cspr(stats.liquid)} CSPR`);
-  }
-
-  // Size the face from live pool value + the on-chain single-invoice cap so the
-  // advance lands above the cap (revert) yet below total liquidity (clears the
-  // off-chain prefilter). Robust across the AI's discount choice (<=25%).
-  const liquid = cspr(stats.liquid);
-  const policy = await chain.policy().catch(() => ({ maxSingleInvoiceBps: 5000 }) as any);
-  const capFrac = (policy.maxSingleInvoiceBps ?? 5000) / 10000; // e.g. 0.5
-  // face ≈ 0.9 * liquid → worst-case advance (25% discount) ≈ 0.675*face = 0.6*liquid > cap;
-  // best-case advance (~0.5% discount) ≈ 0.9*liquid < liquid (prefilter ok).
-  const faceCspr = Math.max(
-    Math.ceil(((capFrac + 0.12) * liquid) / 0.75) + 1, // guarantee > cap even at max discount
-    Math.round(0.9 * liquid),
-  );
-  run.note = `Pool ${liquid} CSPR · single-invoice cap ${(capFrac * 100).toFixed(0)}% → face ${faceCspr} CSPR (advance will exceed the cap on-chain).`;
-
-  begin(run, "submit", "signing");
-  begin(run, "underwrite", "pending");
-  const detach = attachIntakeFeed(run);
-  let rec;
-  try {
-    rec = await processIntake({
-      supplierName: "Baltic Freight Union",
-      debtorName: "Aurora Retail AG",
-      amountCspr: faceCspr,
-      dueTs: Date.now() + 45 * day,
-      invoiceNumber: `JUDGE-${run.runId}`,
-      description: "Bulk logistics settlement, consolidated quarterly receivable",
-      history: "8 prior invoices, all paid within terms, long-standing counterparty",
-    });
-  } finally {
-    detach();
-  }
-  if (rec.chain.registerHash)
-    done(
-      run,
-      "register",
-      "confirmed",
-      "Invoice registered on Casper Testnet",
-      rec.chain.registerHash,
-    );
-  if (rec.status === "policy_blocked") {
-    done(
-      run,
-      "fund",
-      "reverted",
-      rec.chain.fundError ?? "User error: 15 (SingleInvoiceCapExceeded)",
-    );
-  } else if (rec.status === "funded") {
-    // Pool was larger than expected and the advance fit — settle it back so we
-    // don't leave capital deployed, and report honestly that no revert occurred.
-    done(
-      run,
-      "fund",
-      "confirmed",
-      "Advance funded (pool was large enough — no revert this run)",
-      rec.chain.fundHash,
-    );
-    run.note =
-      (run.note ?? "") +
-      " NOTE: the pool exceeded the estimate so the advance fit under the cap; re-run to see the revert.";
-    if (rec.id > 0) await chain.settle(rec.id, toMotes(rec.intake.amountCspr)).catch(() => {});
-  } else {
-    done(run, "fund", "skipped", `Not funded (status ${rec.status}) — AI rejected before the cap`);
-    throw new Error(`policy-block invoice was ${rec.status}, expected approve→revert`);
-  }
-}
-
-async function runX402(run: JudgeRun): Promise<void> {
-  // 1) locate a funded invoice; if none, fund a small one first
-  begin(run, "prepare", "signing");
-  let invId = 0;
-  try {
-    const onchain = await chain.invoices(1, 200);
-    const funded = onchain.filter((i) => i.state === 1); // FUNDED
-    if (funded.length) invId = funded[funded.length - 1].id;
-  } catch {
-    /* fall through to fresh fund */
-  }
-  if (!invId) {
-    const before = await chain.stats();
-    if (cspr(before.liquid) < 20) await chain.deposit(toMotes(40));
-    const rec = await processIntake({
-      supplierName: "Helios Solar Kft",
-      debtorName: "Metro Utilities Zrt",
-      amountCspr: 10,
-      dueTs: Date.now() + 30 * day,
-      invoiceNumber: `JUDGE-${run.runId}`,
-      description: "Panel maintenance, Q1 service contract",
-      history: "3 prior invoices paid on time",
-    });
-    if (rec.status !== "funded")
-      throw new Error(`could not prepare a funded invoice (${rec.status})`);
-    invId = rec.id;
-  }
-  done(run, "prepare", "confirmed", `Using funded invoice #${invId}`);
-
-  // 2-4) challenge → pay → report
-  await x402Buy(run, invId, { challenge: "challenge", pay: "pay", report: "report" });
-}
-
-async function orchestrate(run: JudgeRun): Promise<void> {
-  run.poolBefore = await snap().catch(() => undefined);
-  if (run.preset === "happy") await runHappy(run);
-  else if (run.preset === "policy-block") await runPolicyBlock(run);
-  else if (run.preset === "x402") await runX402(run);
-  if (!run.poolAfter) run.poolAfter = await snap().catch(() => undefined);
-}
-
-// ---- health -----------------------------------------------------------------
-
 const FLOORS: Record<string, number> = {
   agent: 8,
   collector: 8,
@@ -683,7 +207,7 @@ async function health() {
       try {
         hex = personaPublicKeyHex(p);
       } catch {
-        balances[p] = null; // key missing on this host
+        balances[p] = null;
         return;
       }
       const bal = await balanceWithTimeout(hex);
@@ -694,7 +218,7 @@ async function health() {
   const { snap: pool, ok: contractOk } = await cachedPool();
   const low = PERSONAS.filter((p) => balances[p] != null && (balances[p] as number) < FLOORS[p]);
   const paused = !rpcOk || !contractOk || low.length > 0;
-  const last = runOrder.at(-1);
+  const activeId = order.filter((id) => sessions.get(id)?.status === "active").at(-1);
   return {
     mode: "live-testnet" as const,
     contract: config.contract,
@@ -709,28 +233,467 @@ async function health() {
     paused,
     pool,
     x402Price: config.x402.priceMotes,
-    lastRun: last ? (runs.get(last) ?? null) : null,
-    busy: RUNNING,
+    activeSession: activeId ? publicSession(sessions.get(activeId)!) : null,
   };
 }
 
-// ---- rate limiting / single-flight -----------------------------------------
+// ---- underwriting (shared by the first step of the invoice presets) ---------
 
-let RUNNING = false;
-const COOLDOWN_MS = 10 * 60_000;
-const lastByIp = new Map<string, number>();
+/** Fixed, preset-only demo invoices — no free-form input from the client. */
+function intakeFor(preset: string, faceCspr: number, runId: string) {
+  if (preset === "policy-block") {
+    return {
+      supplierName: "Baltic Freight Union",
+      debtorName: "Aurora Retail AG",
+      amountCspr: faceCspr,
+      dueTs: Date.now() + 45 * day,
+      invoiceNumber: runId,
+      description: "Bulk logistics settlement, consolidated quarterly receivable",
+      history: "8 prior invoices, all paid within terms, long-standing counterparty",
+    };
+  }
+  return {
+    supplierName: "Nordwind Logistics GmbH",
+    debtorName: "Aurora Retail AG",
+    amountCspr: faceCspr,
+    dueTs: Date.now() + 30 * day,
+    invoiceNumber: runId,
+    description: "Freight services, 14 pallet shipments Hamburg to Vienna",
+    history: "6 prior invoices, all paid within terms",
+  };
+}
+
+async function doUnderwrite(s: Session): Promise<{ result: string; reverted?: boolean }> {
+  // Size the face: happy path is small; policy-block is sized above the on-chain
+  // single-invoice cap (from live pool value) so funding will revert on-chain.
+  // Use the CACHED pool + policy (warmed at session creation) so this "instant"
+  // step never blocks on a cold ~60 s livenet read.
+  let faceCspr = 12;
+  if (s.preset === "policy-block") {
+    const liquid = (await cachedPool()).snap?.liquid ?? s.poolBefore?.liquid ?? 100;
+    const capFrac = (await cachedPolicyBps()) / 10000;
+    faceCspr = Math.max(
+      Math.ceil(((capFrac + 0.12) * liquid) / 0.75) + 1,
+      Math.round(0.9 * liquid),
+    );
+    s.note = `Pool ${liquid} CSPR · single-invoice cap ${(capFrac * 100).toFixed(0)}% → face ${faceCspr} CSPR. The advance will exceed the on-chain cap, so funding must revert.`;
+  }
+  const input = intakeFor(s.preset, faceCspr, s.id);
+  const docHash = `sha256:${sha256(JSON.stringify(input))}`;
+  const debtorTag = `debtor:${sha256(input.debtorName.toLowerCase()).slice(0, 16)}`;
+
+  const { opinion, provider, model } = await llmUnderwrite({
+    supplierName: input.supplierName,
+    debtorName: input.debtorName,
+    amountCspr: input.amountCspr,
+    dueTs: input.dueTs,
+    invoiceNumber: input.invoiceNumber,
+    description: input.description,
+    history: input.history,
+  });
+
+  // Policy clamp (tightest of TS prefilter + on-chain policy for discount/risk).
+  const p = config.policy;
+  let { approve, risk_score, discount_bps } = opinion;
+  discount_bps = Math.max(p.minDiscountBps, Math.min(p.maxDiscountBps, discount_bps));
+  if (risk_score > p.maxRiskScore) approve = false;
+
+  const decisionHash = `sha256:${sha256(
+    JSON.stringify({
+      id: s.id,
+      input,
+      applied: { approve, risk_score, discount_bps },
+      provider,
+      model,
+    }),
+  )}`;
+
+  const record: InvoiceRecord = {
+    id: 0,
+    intakeId: s.id,
+    status: approve ? "approved" : "rejected",
+    intake: {
+      supplierName: input.supplierName,
+      debtorName: input.debtorName,
+      debtorTag,
+      amountCspr: input.amountCspr,
+      dueTs: input.dueTs,
+      invoiceNumber: input.invoiceNumber,
+      description: input.description,
+      history: input.history,
+      docHash,
+      receivedTs: Date.now(),
+    },
+    decision: {
+      approve,
+      riskScore: risk_score,
+      discountBps: discount_bps,
+      rationale: opinion.rationale,
+      redFlags: opinion.red_flags,
+      policyNotes: [],
+      model: "autonomous-ai-underwriter",
+      decisionHash,
+      decidedTs: Date.now(),
+    },
+    chain: { attestHashes: [] },
+  };
+  upsertInvoice(record);
+  s.ctx.record = record;
+  s.ctx.decisionHash = decisionHash;
+  s.ctx.amountCspr = input.amountCspr;
+  s.ctx.approved = approve;
+
+  if (!approve) {
+    return {
+      result: `AI REJECTED — risk ${risk_score}/100 (${opinion.red_flags.join("; ") || "over policy"})`,
+      reverted: true,
+    };
+  }
+  return {
+    result: `AI APPROVED — risk ${risk_score}/100, discount ${(discount_bps / 100).toFixed(2)}%, face ${input.amountCspr} CSPR. Decision hash ${decisionHash.slice(0, 20)}…`,
+  };
+}
+
+// ---- step executors ---------------------------------------------------------
+
+async function stepRegister(s: Session) {
+  const r = s.ctx.record!;
+  const reg = await chain.register({
+    supplier: await chain.caller("supplier"),
+    debtorTag: r.intake.debtorTag,
+    docHash: r.intake.docHash,
+    faceMotes: toMotes(r.intake.amountCspr),
+    dueTs: r.intake.dueTs,
+    risk: r.decision!.riskScore,
+    discountBps: r.decision!.discountBps,
+    decisionHash: r.decision!.decisionHash,
+  });
+  const tx = reg.deployHashes.at(-1);
+  r.id = reg.result.invoiceId;
+  r.chain.registerHash = tx;
+  r.status = "approved";
+  upsertInvoice(r);
+  s.ctx.invoiceId = r.id;
+  return { result: `Invoice #${r.id} registered on Casper Testnet`, txHash: tx };
+}
+
+async function stepFund(s: Session) {
+  const r = s.ctx.record!;
+  try {
+    const funded = await chain.fund(r.id);
+    const tx = funded.deployHashes.at(-1);
+    r.chain.fundHash = tx;
+    r.status = "funded";
+    upsertInvoice(r);
+    return { result: `FUNDED — advance streamed from the pool to the supplier`, txHash: tx };
+  } catch (e) {
+    const err = normalizeRevert((e as Error).message);
+    r.status = "policy_blocked";
+    r.chain.fundError = err;
+    upsertInvoice(r);
+    return { result: `Contract REVERTED funding — ${err}`, reverted: true };
+  }
+}
+
+async function stepAttest(s: Session) {
+  const r = s.ctx.record!;
+  const att = await chain.attest(
+    "UNDERWRITE_APPROVE",
+    r.id,
+    r.decision!.decisionHash,
+    "autonomous-ai-underwriter",
+  );
+  const tx = att.deployHashes.at(-1);
+  r.chain.attestHashes.push(tx ?? "");
+  upsertInvoice(r);
+  return {
+    result: `Decision memo hash anchored on-chain (attestation #${att.result.attestationId})`,
+    txHash: tx,
+  };
+}
+
+async function stepX402(s: Session) {
+  const id = s.ctx.invoiceId!;
+  const base = `http://127.0.0.1:${config.port}`;
+  const first = await fetch(`${base}/api/risk/${id}`);
+  if (first.status !== 402) throw new Error(`expected 402, got ${first.status}`);
+  const offer = ((await first.json()) as any).accepts[0];
+  const nonce: string = offer.extra.transferIdNonce;
+  const proof = await nativeTransfer({
+    fromKeyPath: config.keys.debtor,
+    to: offer.payTo,
+    motes: offer.maxAmountRequired,
+    id: nonce,
+  });
+  for (let i = 0; i < 30; i++) {
+    await sleep(5000);
+    const retry = await fetch(`${base}/api/risk/${id}`, {
+      headers: { "PAYMENT-SIGNATURE": proof, "PAYMENT-NONCE": nonce },
+    });
+    if (retry.status === 200) {
+      const rep = (await retry.json()) as any;
+      return {
+        result: `Report delivered for ${cspr(offer.maxAmountRequired)} CSPR — risk ${rep.riskScore}, decision ${String(rep.decisionHash).slice(0, 18)}…`,
+        txHash: proof,
+      };
+    }
+  }
+  throw new Error("x402 payment did not settle in time");
+}
+
+async function stepSettle(s: Session) {
+  const r = s.ctx.record!;
+  const st = await chain.settle(r.id, toMotes(r.intake.amountCspr));
+  const tx = st.deployHashes.at(-1);
+  r.chain.settleHash = tx;
+  r.status = "settled";
+  upsertInvoice(r);
+  s.poolAfter = await snap().catch(() => undefined);
+  return {
+    result: `Debtor paid ${r.intake.amountCspr} CSPR face value — the pool realizes its yield`,
+    txHash: tx,
+  };
+}
+
+function normalizeRevert(msg: string): string {
+  const m = msg.match(/User error:\s*(\d+)/);
+  const names: Record<string, string> = {
+    "6": "InsufficientLiquidity",
+    "13": "RiskAbovePolicy",
+    "14": "DiscountOutOfPolicy",
+    "15": "SingleInvoiceCapExceeded",
+    "16": "DebtorExposureCapExceeded",
+  };
+  if (m) return `User error: ${m[1]} (${names[m[1]] ?? "see contracts/src/lib.rs"})`;
+  return msg.slice(0, 160);
+}
+
+// ---- preset step definitions ------------------------------------------------
+
+function happyDefs(): StepDef[] {
+  return [
+    {
+      key: "underwrite",
+      actor: "underwriter",
+      kind: "compute",
+      title: "AI underwrites the invoice",
+      action: "Score & price it",
+      what: "A clean receivable enters intake; the LLM returns a risk score, a price and a rationale, and the decision memo is hashed.",
+      who: "Autonomous underwriter agent",
+      why: "The model proposes; the contract will dispose. This step is instant — no gas.",
+      run: (s) => doUnderwrite(s),
+    },
+    {
+      key: "register",
+      actor: "underwriter",
+      kind: "chain",
+      title: "Register the invoice on-chain",
+      action: "Sign register_invoice",
+      what: "register_invoice writes the receivable and its decision hash to the contract.",
+      who: "Underwriter agent key",
+      why: "The receivable now exists on Casper Testnet, tamper-evident.",
+      run: stepRegister,
+    },
+    {
+      key: "fund",
+      actor: "underwriter",
+      kind: "chain",
+      title: "Pool funds the supplier",
+      action: "Sign fund_invoice",
+      what: "fund_invoice streams the advance from the native-CSPR pool to the supplier account.",
+      who: "Underwriter agent key",
+      why: "Capital moves autonomously — to the supplier, never the debtor.",
+      run: stepFund,
+    },
+    {
+      key: "attest",
+      actor: "underwriter",
+      kind: "chain",
+      title: "Anchor the AI decision",
+      action: "Sign attest",
+      what: "The SHA-256 of the full decision memo is anchored on-chain.",
+      who: "Underwriter agent key",
+      why: "Autonomous underwriting you can audit later against the memo.",
+      run: stepAttest,
+    },
+    {
+      key: "x402",
+      actor: "oracle",
+      kind: "chain",
+      title: "A buyer purchases the risk report (x402)",
+      action: "Pay over HTTP 402",
+      what: "A buyer agent hits the oracle, gets 402 Payment Required, settles with a native CSPR transfer carrying the nonce, and receives the verified report.",
+      who: "Buyer agent (debtor key)",
+      why: "Machine-payable data — the agent economy, settled on-chain.",
+      run: stepX402,
+    },
+    {
+      key: "settle",
+      actor: "debtor",
+      kind: "chain",
+      title: "Debtor settles the invoice",
+      action: "Sign settle_invoice",
+      what: "The debtor repays face value; the pool realizes its yield and the LP share price reflects the gain.",
+      who: "Debtor key",
+      why: "Closes the credit loop end-to-end.",
+      run: stepSettle,
+    },
+  ];
+}
+
+function policyBlockDefs(): StepDef[] {
+  return [
+    {
+      key: "underwrite",
+      actor: "underwriter",
+      kind: "compute",
+      title: "AI underwrites an oversized invoice",
+      action: "Score & price it",
+      what: "A clean but deliberately large receivable — sized above the on-chain single-invoice cap. The AI still approves it.",
+      who: "Autonomous underwriter agent",
+      why: "The whole point: a model-approved invoice about to hit a hard on-chain limit. Instant — no gas.",
+      run: (s) => doUnderwrite(s),
+    },
+    {
+      key: "register",
+      actor: "underwriter",
+      kind: "chain",
+      title: "Register the invoice on-chain",
+      action: "Sign register_invoice",
+      what: "register_invoice succeeds — risk and discount are within policy, so the receivable is written.",
+      who: "Underwriter agent key",
+      why: "Registration is fine; the concentration limit bites at funding.",
+      run: stepRegister,
+    },
+    {
+      key: "fund",
+      actor: "underwriter",
+      kind: "chain",
+      title: "Contract REJECTS the funding",
+      action: "Sign fund_invoice",
+      what: "fund_invoice reverts with User error 15 (SingleInvoiceCapExceeded).",
+      who: "Underwriter agent key → contract",
+      why: "The ace: a valid agent key with an AI approval STILL cannot exceed the on-chain policy. LLM proposes, contract disposes.",
+      run: stepFund,
+    },
+  ];
+}
+
+function x402Defs(): StepDef[] {
+  return [
+    {
+      key: "underwrite",
+      actor: "underwriter",
+      kind: "compute",
+      title: "AI underwrites the invoice",
+      action: "Score & price it",
+      what: "A clean receivable is scored and priced so there is a report to sell.",
+      who: "Autonomous underwriter agent",
+      why: "The risk report only exists for an underwritten invoice. Instant — no gas.",
+      run: (s) => doUnderwrite(s),
+    },
+    {
+      key: "register",
+      actor: "underwriter",
+      kind: "chain",
+      title: "Register the invoice on-chain",
+      action: "Sign register_invoice",
+      what: "register_invoice writes the receivable and decision hash.",
+      who: "Underwriter agent key",
+      why: "The report is anchored to a real on-chain invoice.",
+      run: stepRegister,
+    },
+    {
+      key: "fund",
+      actor: "underwriter",
+      kind: "chain",
+      title: "Pool funds the supplier",
+      action: "Sign fund_invoice",
+      what: "fund_invoice advances the discounted amount to the supplier.",
+      who: "Underwriter agent key",
+      why: "A funded invoice is a live position worth pricing.",
+      run: stepFund,
+    },
+    {
+      key: "x402",
+      actor: "oracle",
+      kind: "chain",
+      title: "Buyer purchases the risk report (x402)",
+      action: "Pay over HTTP 402",
+      what: "A buyer agent pays over HTTP 402 with native CSPR and gets the verified report with its on-chain decision hash.",
+      who: "Buyer agent (debtor key)",
+      why: "Machine-to-machine payment for verifiable data.",
+      run: stepX402,
+    },
+  ];
+}
+
+function defsFor(preset: string): StepDef[] {
+  if (preset === "happy") return happyDefs();
+  if (preset === "policy-block") return policyBlockDefs();
+  if (preset === "x402") return x402Defs();
+  throw new Error(`unknown preset ${preset}`);
+}
+
+const PRESETS = [
+  {
+    id: "happy",
+    title: "Full lifecycle",
+    subtitle: "Underwrite → register → fund → attest → x402 → settle",
+    steps: 6,
+    defs: happyDefs,
+  },
+  {
+    id: "policy-block",
+    title: "Policy firewall",
+    subtitle: "The AI approves; the contract rejects the funding",
+    steps: 3,
+    defs: policyBlockDefs,
+  },
+  {
+    id: "x402",
+    title: "x402 machine payment",
+    subtitle: "A buyer agent pays over HTTP 402 for the risk report",
+    steps: 4,
+    defs: x402Defs,
+  },
+];
+
+// ---- rate limiting ----------------------------------------------------------
+
+const NEW_SESSION_COOLDOWN_MS = 5 * 60_000;
+const SESSION_STALE_MS = 20 * 60_000;
+const lastNewByIp = new Map<string, number>();
+let STEPPING = false; // single in-flight chain step across all sessions
 
 function clientIp(req: Request): string {
   const xf = (req.headers["x-forwarded-for"] as string) ?? "";
   return xf.split(",")[0].trim() || req.ip || "unknown";
 }
 
+function activeSession(): Session | undefined {
+  const id = order.filter((i) => sessions.get(i)?.status === "active").at(-1);
+  const s = id ? sessions.get(id) : undefined;
+  if (
+    s &&
+    Date.now() - (s.steps[s.cursor]?.startedTs ?? s.startedTs) > SESSION_STALE_MS &&
+    !STEPPING
+  ) {
+    s.status = "failed";
+    s.note = (s.note ? s.note + " " : "") + "Session expired.";
+    return undefined;
+  }
+  return s;
+}
+
 // ---- router -----------------------------------------------------------------
 
 export function makeJudgeRouter(): Router {
   const r = Router();
-  // Warm the pool cache in the background so the first health call is fast.
+  // Warm the pool + policy caches so the "instant" underwrite step never blocks
+  // on a cold ~60 s livenet read.
   cachedPool().catch(() => {});
+  cachedPolicyBps().catch(() => {});
 
   r.get("/health", async (_req, res) => {
     try {
@@ -741,117 +704,152 @@ export function makeJudgeRouter(): Router {
   });
 
   r.get("/presets", (_req, res) => {
-    res.json([
-      {
-        id: "happy",
-        title: "Happy path — full lifecycle",
-        blurb: "Submit → AI underwrite → register → fund → attest → x402 purchase → settle.",
-        est: "6–10 min",
-        steps: happySteps().map((s) => ({ key: s.key, actor: s.actor, title: s.title })),
-      },
-      {
-        id: "policy-block",
-        title: "Policy firewall — AI approved, contract rejects",
-        blurb: "An oversized invoice: the AI approves, the contract reverts funding on-chain.",
-        est: "3–5 min",
-        steps: policyBlockSteps().map((s) => ({ key: s.key, actor: s.actor, title: s.title })),
-      },
-      {
-        id: "x402",
-        title: "x402 — machine-payable risk report",
-        blurb: "A buyer agent pays over HTTP 402 with native CSPR for the verified report.",
-        est: "2–4 min",
-        steps: x402Steps().map((s) => ({ key: s.key, actor: s.actor, title: s.title })),
-      },
-    ]);
-  });
-
-  r.get("/runs", (_req, res) => {
     res.json(
-      runOrder
-        .slice(-10)
-        .reverse()
-        .map((id) => runs.get(id)),
+      PRESETS.map((p) => ({
+        id: p.id,
+        title: p.title,
+        subtitle: p.subtitle,
+        steps: p.defs().map((d) => ({ key: d.key, actor: d.actor, title: d.title, kind: d.kind })),
+      })),
     );
   });
 
-  r.get("/run/:id", (req, res) => {
-    const run = runs.get(req.params.id);
-    if (!run) {
-      res.status(404).json({ error: "run not found" });
+  r.get("/session/:id", (req, res) => {
+    const s = sessions.get(req.params.id);
+    if (!s) {
+      res.status(404).json({ error: "session not found" });
       return;
     }
-    res.json(run);
+    res.json(publicSession(s));
   });
 
-  r.post("/run", async (req, res) => {
+  // Create a guided session (does not sign anything yet).
+  r.post("/session", async (req, res) => {
     const preset = String(req.body?.preset ?? "").trim();
-    if (!["happy", "policy-block", "x402"].includes(preset)) {
+    const def = PRESETS.find((p) => p.id === preset);
+    if (!def) {
       res.status(400).json({ error: "preset must be happy | policy-block | x402" });
       return;
     }
-    if (RUNNING) {
+    const existing = activeSession();
+    if (existing) {
+      res.status(429).json({
+        error: "A guided session is already in progress — finish or wait for it to expire.",
+        activeSession: publicSession(existing),
+      });
+      return;
+    }
+    const h = await health().catch(() => null);
+    if (!h || h.paused) {
       res
-        .status(429)
+        .status(503)
         .json({
-          error: "A live run is already in progress — please wait for it to finish.",
-          busy: true,
+          error:
+            "Live judge mode is temporarily paused — a key needs a top-up or the node is unreachable.",
+          paused: true,
         });
       return;
     }
-    // health gate: never start a run we can't finish
-    const h = await health().catch(() => null);
-    if (!h || h.paused) {
-      res.status(503).json({
-        error:
-          "Live judge mode is temporarily paused — testnet keys need a top-up or the node is unreachable.",
-        paused: true,
-        health: h,
-      });
-      return;
-    }
     const ip = clientIp(req);
-    const last = lastByIp.get(ip) ?? 0;
-    const waitMs = COOLDOWN_MS - (Date.now() - last);
-    if (waitMs > 0) {
-      res.status(429).json({
-        error: `Rate limited — one live run per 10 minutes. Try again in ${Math.ceil(waitMs / 60000)} min.`,
-        retryAfterMs: waitMs,
-      });
+    const wait = NEW_SESSION_COOLDOWN_MS - (Date.now() - (lastNewByIp.get(ip) ?? 0));
+    if (wait > 0) {
+      res
+        .status(429)
+        .json({
+          error: `Please wait ${Math.ceil(wait / 60000)} min before starting another guided run.`,
+          retryAfterMs: wait,
+        });
+      return;
+    }
+    lastNewByIp.set(ip, Date.now());
+
+    const defs = def.defs();
+    const steps = defs.map((d, i) => publicStep(d, i === 0 ? "ready" : "locked"));
+    const s: Session = {
+      id: newId(),
+      preset,
+      title: def.title,
+      subtitle: def.subtitle,
+      steps,
+      defs,
+      cursor: 0,
+      status: "active",
+      startedTs: Date.now(),
+      ip,
+      poolBefore: (await cachedPool()).snap ?? undefined,
+      ctx: {},
+    };
+    sessions.set(s.id, s);
+    order.push(s.id);
+    if (order.length > 60) sessions.delete(order.shift() as string);
+    res.status(201).json(publicSession(s));
+  });
+
+  // Run the next step of a session — signs exactly one transaction.
+  r.post("/session/:id/next", async (req, res) => {
+    const s = sessions.get(req.params.id);
+    if (!s) {
+      res.status(404).json({ error: "session not found" });
+      return;
+    }
+    if (s.status !== "active") {
+      res.status(409).json({ error: `session is ${s.status}`, session: publicSession(s) });
+      return;
+    }
+    if (STEPPING) {
+      res
+        .status(429)
+        .json({ error: "Another step is signing right now — one transaction at a time." });
+      return;
+    }
+    const i = s.cursor;
+    const def = s.defs[i];
+    const step = s.steps[i];
+    if (!def || step.status !== "ready") {
+      res.status(409).json({ error: "no step ready to run", session: publicSession(s) });
       return;
     }
 
-    // start
-    RUNNING = true;
-    lastByIp.set(ip, Date.now());
-    const run: JudgeRun = {
-      runId: newRunId(),
-      preset,
-      status: "running",
-      steps: stepsFor(preset),
-      startedTs: Date.now(),
-    };
-    runs.set(run.runId, run);
-    runOrder.push(run.runId);
-    if (runOrder.length > 50) runs.delete(runOrder.shift() as string);
+    STEPPING = true;
+    step.status = "running";
+    step.startedTs = Date.now();
+    try {
+      const out = await def.run(s);
+      step.result = out.result;
+      if (out.txHash) {
+        step.txHash = out.txHash;
+        step.explorerUrl = deployUrl(out.txHash);
+      }
+      step.status = out.reverted ? "reverted" : "done";
+      step.endedTs = Date.now();
+      s.cursor = i + 1;
 
-    // fire-and-forget; the client polls /run/:id
-    orchestrate(run)
-      .then(() => {
-        run.status = "done";
-      })
-      .catch((e) => {
-        run.status = "failed";
-        run.error = (e as Error).message.slice(0, 400);
-        const active = run.steps.find((s) => s.status === "signing" || s.status === "submitted");
-        if (active) done(run, active.key, "failed", (e as Error).message.slice(0, 160));
-      })
-      .finally(() => {
-        run.endedTs = Date.now();
-        RUNNING = false;
+      // A revert on the fund step of policy-block is the intended finale.
+      const intendedEnd = out.reverted && (s.preset === "policy-block" || !s.ctx.approved);
+      if (s.cursor >= s.steps.length || intendedEnd) {
+        s.status = "done";
+        s.endedTs = Date.now();
+        if (!s.poolAfter)
+          s.poolAfter = (await cachedPool(1).catch(() => ({ snap: null }))).snap ?? undefined;
+      } else {
+        s.steps[s.cursor].status = "ready";
+      }
+      res.json(publicSession(s));
+    } catch (e) {
+      step.status = "failed";
+      step.result = (e as Error).message.slice(0, 200);
+      step.endedTs = Date.now();
+      s.status = "failed";
+      s.endedTs = Date.now();
+      feed.publish({
+        actor: "system",
+        kind: "error",
+        message: `judge step ${step.key} failed: ${step.result}`,
       });
-
-    res.status(202).json({ runId: run.runId, preset });
+      res.status(500).json({ error: step.result, session: publicSession(s) });
+    } finally {
+      STEPPING = false;
+    }
   });
 
   return r;
