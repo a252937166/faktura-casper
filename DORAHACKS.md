@@ -4,6 +4,31 @@ Everything below is verifiable on [testnet.cspr.live](https://testnet.cspr.live)
 file exists so a judge can check every claim in the README in under five
 minutes, without running anything.
 
+## ▶ Run it live yourself — Live Testnet Judge Mode
+
+You don't have to take the transactions below on faith. On
+[faktura.axiqo.xyz](https://faktura.axiqo.xyz), click **Run Real Testnet
+Workflow** and pick a preset — each step signs a **real Casper Testnet
+transaction** and shows you its CSPR.live link as it confirms:
+
+- **Happy path** — submit → AI underwrite → `register_invoice` → `fund_invoice`
+  → `attest` → x402 report purchase → `settle_invoice`, end to end.
+- **Policy firewall** (the one to watch) — the AI *approves* an invoice sized
+  above the on-chain single-invoice cap, and the **contract reverts funding**
+  with `User error 15 (SingleInvoiceCapExceeded)`. A valid agent key with a
+  model approval still cannot exceed the on-chain policy.
+- **x402** — a buyer agent pays over HTTP 402 with native CSPR for the verified
+  risk report.
+
+Runs are preset-only, small-capped and rate-limited (one run / 10 min), signed
+by pre-funded testnet-only demo keys, so anyone can trigger real value safely.
+Expect ~30–120 s per deploy; a full run takes several minutes. The panel shows a
+live health check (key balances, RPC/contract reachability) and auto-pauses to
+the safe showcase if a key needs a faucet top-up — a judge never hits a dead
+button. Design notes: [docs/judge-mode-design.md](docs/judge-mode-design.md).
+
+The transactions in this file were produced by exactly these code paths.
+
 ## The deployment
 
 | | |
