@@ -500,7 +500,7 @@ export default function App() {
         >
           <img
             className="site-logo"
-            src="/faktura-logo.png"
+            src="/faktura-logo-compact.png"
             alt="Faktura — autonomous invoice financing protocol on chain"
           />
         </a>
@@ -626,7 +626,7 @@ export default function App() {
           </div>
           {liveJudge && (
             <p className="hero-cost">
-              6 guided steps · 5 real on-chain transactions · about 4–8 minutes
+              5 guided steps · 4 real on-chain transactions · about 3–6 minutes
             </p>
           )}
           <p className="hero-links">
@@ -665,7 +665,7 @@ export default function App() {
           {/* Trust facts, not business metrics — TVL & share price live on the desk below. */}
           <div className="hero-metrics">
             <div className="hm-red">
-              <b>5</b>
+              <b>4</b>
               <span>real on-chain txs per full run</span>
             </div>
             <div>
@@ -681,33 +681,42 @@ export default function App() {
         <HeroInvoice />
       </section>
 
-      {/* ---- One invoice, two endings — the whole product in one story ---- */}
+      {/* ---- One invoice, two gates, two credit outcomes — the whole system ---- */}
       <section className="story">
-        <h2 className="section-title">One invoice. Two possible endings.</h2>
+        <h2 className="section-title">One invoice. Two gates. Two credit outcomes.</h2>
         <p className="story-lede">
-          Nordwind shipped the freight; Aurora pays in 30 days. Nordwind needs the cash <i>now</i>,
-          so the desk's AI reads the invoice, prices the risk and approves it. Then{" "}
-          <span className="casper-word">Casper</span> decides what an approval is worth:
+          Nordwind shipped the freight; Aurora pays in 30 days. Nordwind needs the cash <i>now</i>.
+          Before any money moves, the invoice passes two gates — and once funded, credit resolves
+          one of two ways. Every arrow below runs live on{" "}
+          <span className="casper-word">Casper</span>.
         </p>
-        <div className="story-acts endings">
+        <div className="story-acts gates">
           <div className="story-act">
-            <div className="story-stamp green">ENDING A · FUNDED</div>
-            <h3>The policy checks pass</h3>
+            <div className="story-stamp green">GATE 1 · AI UNDERWRITING</div>
+            <h3>The model forms a credit opinion</h3>
             <p>
-              Risk ceiling, discount band, concentration caps — all within limits. The pool streams
-              the advance to the supplier in one transaction, the AI memo is hash-anchored, and the
-              debtor settles at maturity. The credit loop closes.
+              Risk score, price, rationale, red flags — a full memo, hash-anchored. The AI can{" "}
+              <b>REJECT</b> outright, or <b>APPROVE</b> and hand the file to the chain. Either way
+              the opinion is auditable.
             </p>
+            <div className="gate-verdicts">
+              <span className="gv no">REJECT ✕</span>
+              <span className="gv ok">APPROVE →</span>
+            </div>
           </div>
           <div className="story-act blocked">
-            <div className="story-stamp red">ENDING B · BLOCKED</div>
-            <h3>The AI approved it. Casper still said no.</h3>
+            <div className="story-stamp red">GATE 2 · CASPER POLICY</div>
+            <h3>The contract decides if money moves</h3>
             <p>
-              The same valid agent key submits an invoice above the single-invoice cap — and the
-              contract reverts the funding with{" "}
-              <span className="mono-sm">User error: 15 (SingleInvoiceCapExceeded)</span>.
-              Autonomous, but never unbounded.
+              Risk ceiling, discount band, concentration caps — enforced inside{" "}
+              <span className="mono-sm">fund_invoice</span>. An AI-approved invoice above the cap
+              reverts with <span className="mono-sm">User error: 15</span>. Autonomous, never
+              unbounded.
             </p>
+            <div className="gate-verdicts">
+              <span className="gv no">BLOCK ⛔</span>
+              <span className="gv ok">FUND →</span>
+            </div>
             <div className="story-links">
               <a target="_blank" rel="noreferrer" href={EVIDENCE.policyRevertTxUrl}>
                 Open a real reverted transaction ↗
@@ -719,7 +728,33 @@ export default function App() {
               )}
             </div>
           </div>
+          <div className="story-act">
+            <div className="story-stamp ink">AFTER FUNDING · TWO ENDINGS</div>
+            <h3>Credit resolves — either way</h3>
+            <p>
+              <b>SETTLE</b>: the debtor repays face value and the pool earns yield. <b>DEFAULT</b>:
+              the collector key writes it off and LPs absorb the loss through the share price. Both
+              endings run live, and both move real numbers.
+            </p>
+            <div className="gate-verdicts">
+              <span className="gv ok">SETTLE ↗ yield</span>
+              <span className="gv no">DEFAULT ↘ loss</span>
+            </div>
+          </div>
         </div>
+        {liveJudge && (
+          <div className="side-quest">
+            <span className="sq-kicker">AGENT ECONOMY · SIDE QUEST</span>
+            <span className="sq-text">
+              produce → sell → verify → <b>act</b>: another agent buys the risk report over{" "}
+              <b>HTTP 402</b>, verifies the memo hash three ways (report · memo · on-chain anchor)
+              and anchors its own acceptance.
+            </span>
+            <button className="linklike" onClick={() => openRunner("x402")}>
+              Run it →
+            </button>
+          </div>
+        )}
       </section>
 
       {/* ---- Latest real run — a receipt, not a metric ---- */}
@@ -2354,6 +2389,9 @@ function GuidedStep({
   onReconnect,
   onAbandon,
   onOpenMcp,
+  predict,
+  predicted,
+  onPredict,
 }: {
   step: JudgeStep;
   index: number;
@@ -2368,6 +2406,15 @@ function GuidedStep({
   onReconnect: () => void;
   onAbandon: () => void;
   onOpenMcp: () => void;
+  /** Predict-then-verify config for THIS step, when it has one. */
+  predict?: {
+    question: string;
+    options: { id: string; label: string }[];
+    answer: string;
+    reveal: string;
+  };
+  predicted?: string;
+  onPredict?: (choice: string) => void;
 }) {
   const done = step.status === "done" || step.status === "reverted";
   const isAi = step.kind === "compute";
@@ -2384,6 +2431,13 @@ function GuidedStep({
             {step.title}
           </div>
           {done && step.result && <div className="lj-row-result">{step.result}</div>}
+          {done && predict && predicted && (
+            <div className={`lj-predict-reveal ${predicted === predict.answer ? "hit" : "miss"}`}>
+              Your prediction:{" "}
+              <b>{predict.options.find((o) => o.id === predicted)?.label ?? predicted}</b> ·{" "}
+              {predicted === predict.answer ? "correct ✓" : "not this time ✗"} — {predict.reveal}
+            </div>
+          )}
           {done && step.decision && <AiDecisionCard d={step.decision} />}
         </div>
         {done && step.txHash && (
@@ -2497,8 +2551,29 @@ function GuidedStep({
             </div>
           </div>
         )}
-        {step.status === "ready" && !running && !walletLock && (
+        {step.status === "ready" && !running && !walletLock && predict && !predicted && (
+          /* Predict-then-verify: make the judge commit to a call BEFORE the
+             chain answers — the wait becomes a reveal, not dead time. */
+          <div className="lj-predict">
+            <div className="lj-predict-q">{predict.question}</div>
+            <div className="lj-predict-opts">
+              {predict.options.map((o) => (
+                <button key={o.id} className="lj-predict-btn" onClick={() => onPredict?.(o.id)}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {step.status === "ready" && !running && !walletLock && (!predict || predicted) && (
           <div className="lj-step-run">
+            {predict && predicted && (
+              <span className="lj-predict-locked">
+                Your call:{" "}
+                <b>{predict.options.find((o) => o.id === predicted)?.label ?? predicted}</b> — now
+                ask Casper.
+              </span>
+            )}
             <button className={`lj-run-btn ${isAi ? "ai" : ""}`} onClick={onRun}>
               {isAi ? "✦" : "▶"} {step.action}
             </button>
@@ -2580,6 +2655,56 @@ function PoolEconomics({
   );
 }
 
+/** Picker metadata: group, promised time, one-line hook — main quest first. */
+const PRESET_META: Record<string, { group: "main" | "challenge"; time: string; hook: string }> = {
+  happy: {
+    group: "main",
+    time: "3–6 min",
+    hook: "Supplier gets paid; debtor settles. The whole credit loop.",
+  },
+  "policy-block": {
+    group: "challenge",
+    time: "1–3 min",
+    hook: "Fastest proof — watch the contract refuse an AI-approved invoice.",
+  },
+  x402: {
+    group: "challenge",
+    time: "1–3 min",
+    hook: "Agent economy — buy a report, verify it three ways, act on it.",
+  },
+  default: {
+    group: "challenge",
+    time: "1–2 min",
+    hook: "Credit loss — the collector writes off an overdue invoice.",
+  },
+};
+
+/** Predict-then-verify moments: cheap interactivity with a real answer. */
+const PREDICTIONS: Record<
+  string,
+  { question: string; options: { id: string; label: string }[]; answer: string; reveal: string }
+> = {
+  "policy-block:fund": {
+    question: "What do you think Casper will do with this AI-approved invoice?",
+    options: [
+      { id: "allow", label: "ALLOW funding" },
+      { id: "block", label: "BLOCK funding" },
+    ],
+    answer: "block",
+    reveal: "Casper BLOCKED it — the single-invoice cap is enforced by the contract itself.",
+  },
+  "default:default": {
+    question: "After this write-off, what happens to the LP share value?",
+    options: [
+      { id: "up", label: "UP" },
+      { id: "down", label: "DOWN" },
+      { id: "same", label: "UNCHANGED" },
+    ],
+    answer: "down",
+    reveal: "DOWN — the loss is absorbed by LPs through the share price. Real credit, real losses.",
+  },
+};
+
 function JudgeGuided({
   health,
   onHealth,
@@ -2601,6 +2726,11 @@ function JudgeGuided({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [runStartTs, setRunStartTs] = useState(0);
+  /** Predict-then-verify answers, keyed by "preset:stepKey". */
+  const [predictions, setPredictions] = useState<Record<string, string>>({});
+  /** Wallet balance snapshots for the payout delta card. */
+  const [walletBefore, setWalletBefore] = useState<number | null>(null);
+  const [walletAfter, setWalletAfter] = useState<number | null>(null);
   /** Preset chosen while no wallet was connected — held at the wallet gate. */
   const [pendingPreset, setPendingPreset] = useState<string | null>(null);
   /** An active server-side walkthrough offered for resume (never auto-entered). */
@@ -2631,6 +2761,16 @@ function JudgeGuided({
     setErr(null);
     setBusy(true);
     setPendingPreset(null);
+    // Snapshot the payout wallet BEFORE anything moves — the delta card is
+    // the reward moment ("your balance actually changed on a real chain").
+    if (supplierAddress && attempt === 0) {
+      setWalletBefore(null);
+      setWalletAfter(null);
+      judge
+        .balance(supplierAddress)
+        .then((b) => setWalletBefore(b.cspr ?? 0))
+        .catch(() => setWalletBefore(0));
+    }
     try {
       // With a wallet connected, the desk pays the advance to THEIR address.
       setSession(await judge.createSession(preset, supplierAddress));
@@ -2698,6 +2838,18 @@ function JudgeGuided({
   const walletMismatch =
     !!session?.wallet && (!wallet.connected || wallet.publicKey !== session.wallet);
 
+  // The reward moment: as soon as the fund step confirms, fetch the wallet's
+  // NEW balance automatically — no manual refresh to see your money arrive.
+  const fundDone = !!session?.steps.some((st) => st.key === "fund" && st.status === "done");
+  useEffect(() => {
+    if (!session?.wallet || !fundDone || walletAfter != null) return;
+    judge
+      .balance(session.wallet)
+      .then((b) => setWalletAfter(b.cspr ?? null))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fundDone, session?.wallet]);
+
   const runNext = async () => {
     if (!session || walletMismatch) return;
     setErr(null);
@@ -2726,6 +2878,9 @@ function JudgeGuided({
   const reset = () => {
     setSession(null);
     setErr(null);
+    setPredictions({});
+    setWalletBefore(null);
+    setWalletAfter(null);
     judge
       .health()
       .then(onHealth)
@@ -2864,40 +3019,50 @@ function JudgeGuided({
                   <span className="lj-spinner" /> Starting your walkthrough…
                 </div>
               )}
-              <div className="lj-presets">
-                {presets.map((p, idx) => (
-                  <button
-                    key={p.id}
-                    className={`lj-preset ${p.id === "policy-block" ? "ace" : ""}`}
-                    disabled={
-                      paused ||
-                      busy ||
-                      health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.ok === false
-                    }
-                    title={
-                      health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.reason ??
-                      undefined
-                    }
-                    onClick={() => start(p.id)}
-                  >
-                    <div className="lj-preset-title">{p.title}</div>
-                    <div className="lj-preset-sub">
-                      {health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.ok ===
-                      false
-                        ? health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.reason
-                        : p.subtitle}
+              {(["main", "challenge"] as const).map((group) => {
+                const cards = presets.filter((p) => PRESET_META[p.id]?.group === group);
+                if (!cards.length) return null;
+                return (
+                  <div key={group}>
+                    <div className="lj-group-lbl">
+                      {group === "main" ? "MAIN STORY" : "CHALLENGES"}
                     </div>
-                    <div className="lj-preset-meta">
-                      {p.steps.length} steps · {p.steps.filter((s) => s.kind === "chain").length}{" "}
-                      real transactions
-                      {p.id === "policy-block" && (
-                        <span className="lj-ace-tag">the one to watch</span>
-                      )}
+                    <div className={`lj-presets ${group}`}>
+                      {cards.map((p) => {
+                        const key = p.id === "policy-block" ? "policyBlock" : p.id;
+                        const cr = health?.canRun?.[key];
+                        const meta = PRESET_META[p.id];
+                        return (
+                          <button
+                            key={p.id}
+                            className={`lj-preset ${p.id === "policy-block" ? "ace" : ""} ${group}`}
+                            disabled={paused || busy || cr?.ok === false}
+                            title={cr?.reason ?? undefined}
+                            onClick={() => start(p.id)}
+                          >
+                            <div className="lj-preset-head">
+                              <div className="lj-preset-title">{p.title}</div>
+                              {meta && <span className="lj-preset-time">{meta.time}</span>}
+                            </div>
+                            <div className="lj-preset-sub">
+                              {cr?.ok === false ? cr?.reason : (meta?.hook ?? p.subtitle)}
+                            </div>
+                            <div className="lj-preset-meta">
+                              {p.steps.length} steps ·{" "}
+                              {p.steps.filter((s) => s.kind === "chain").length} real transaction
+                              {p.steps.filter((s) => s.kind === "chain").length === 1 ? "" : "s"}
+                              {p.id === "policy-block" && (
+                                <span className="lj-ace-tag">the one to watch</span>
+                              )}
+                            </div>
+                            <span className="lj-preset-go">Begin →</span>
+                          </button>
+                        );
+                      })}
                     </div>
-                    <span className="lj-preset-go">Begin →</span>
-                  </button>
-                ))}
-              </div>
+                  </div>
+                );
+              })}
             </>
           )}
           {err && <div className="lj-err">{err}</div>}
@@ -2945,24 +3110,46 @@ function JudgeGuided({
           {session.note && <div className="lj-note">{session.note}</div>}
 
           <div className="lj-steps">
-            {session.steps.map((s, i) => (
-              <GuidedStep
-                key={s.key}
-                step={s}
-                index={i}
-                total={session.steps.length}
-                isCurrent={i === session.cursor && session.status === "active"}
-                onRun={runNext}
-                running={busy && i === session.cursor}
-                runStartTs={runStartTs}
-                nextTitle={session.steps[i + 1]?.title}
-                walletLock={walletMismatch ? session.wallet : null}
-                onReconnect={() => void connectWallet()}
-                onAbandon={reset}
-                onOpenMcp={onOpenMcp}
-              />
-            ))}
+            {session.steps.map((s, i) => {
+              const predKey = `${session.preset}:${s.key}`;
+              return (
+                <GuidedStep
+                  key={s.key}
+                  step={s}
+                  index={i}
+                  total={session.steps.length}
+                  isCurrent={i === session.cursor && session.status === "active"}
+                  onRun={runNext}
+                  running={busy && i === session.cursor}
+                  runStartTs={runStartTs}
+                  nextTitle={session.steps[i + 1]?.title}
+                  walletLock={walletMismatch ? session.wallet : null}
+                  onReconnect={() => void connectWallet()}
+                  onAbandon={reset}
+                  onOpenMcp={onOpenMcp}
+                  predict={PREDICTIONS[predKey]}
+                  predicted={predictions[predKey]}
+                  onPredict={(choice) => setPredictions((p) => ({ ...p, [predKey]: choice }))}
+                />
+              );
+            })}
           </div>
+
+          {session.wallet && walletBefore != null && walletAfter != null && (
+            <div className="lj-wallet-delta">
+              <div className="lj-pe-kicker">YOUR WALLET · REAL BALANCE MOVE</div>
+              <div className="lj-wd-rows">
+                <span>before funding</span>
+                <b className="mono">{walletBefore.toFixed(2)} CSPR</b>
+                <span>advance received</span>
+                <b className="mono good">
+                  +{Math.max(0, walletAfter - walletBefore).toFixed(2)} CSPR
+                </b>
+                <span>after funding</span>
+                <b className="mono">{walletAfter.toFixed(2)} CSPR</b>
+              </div>
+            </div>
+          )}
 
           {err && <div className="lj-err">{err}</div>}
 
@@ -2987,9 +3174,20 @@ function JudgeGuided({
               {session.poolAfter && (
                 <PoolEconomics before={session.poolBefore} after={session.poolAfter} />
               )}
-              <button className="lj-run-btn ghost" onClick={reset}>
-                Run another walkthrough →
-              </button>
+              <div className="lj-finish-actions">
+                {session.displayId && (
+                  <a
+                    className="linklike"
+                    href={`/api/judge/recent/${session.displayId}`}
+                    download={`${session.displayId}.json`}
+                  >
+                    ⬇ Download run receipt (JSON)
+                  </a>
+                )}
+                <button className="lj-run-btn ghost" onClick={reset}>
+                  Run another walkthrough →
+                </button>
+              </div>
             </div>
           )}
           {session.status === "failed" && (

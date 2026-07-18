@@ -7,22 +7,30 @@ minutes, without running anything.
 ## ▶ Run it live yourself — Live Testnet Judge Mode
 
 You don't have to take the transactions below on faith. On
-[faktura.axiqo.xyz](https://faktura.axiqo.xyz), click **Run Real Testnet
-Workflow** and pick a guided walkthrough. You trigger each step yourself: the
-AI decision is instant, and every on-chain step signs exactly **one real Casper
-Testnet transaction** (~30–120 s to finality, with a live timer), then shows its
-CSPR.live link and unlocks the next step — short, bounded waits instead of one
-long run, and every screen tells you what just happened, why it matters, and
-what comes next:
+[faktura.axiqo.xyz](https://faktura.axiqo.xyz), click **▶ Use the real AI
+desk** and pick a guided walkthrough. You trigger each step yourself: the
+AI decision is instant (and shows its rationale + red flags), and every
+on-chain step signs exactly **one real Casper Testnet transaction** (~30–120 s
+to finality, with a live timer), then shows its CSPR.live link and unlocks the
+next step — short, bounded waits instead of one long run, and every screen
+tells you what just happened, why it matters, and what comes next. One main
+story, three challenges:
 
-- **Full lifecycle** — AI underwrite → `register_invoice` → `fund_invoice`
-  → `attest` → x402 report purchase → `settle_invoice` (6 steps, 5 transactions).
-- **Policy firewall** (the one to watch) — the AI *approves* an invoice sized
+- **Full lifecycle** (main story) — AI underwrite → `register_invoice` →
+  `fund_invoice` → `attest` → `settle_invoice` (5 steps, 4 transactions,
+  ~3–6 min). Supplier gets paid; debtor settles; the pool earns yield.
+- **Policy firewall** (fastest proof) — the AI *approves* an invoice sized
   above the on-chain single-invoice cap, and the **contract reverts funding**
-  with `User error 15 (SingleInvoiceCapExceeded)`. A valid agent key with a
-  model approval still cannot exceed the on-chain policy.
-- **x402** — a buyer agent pays over HTTP 402 with native CSPR for the verified
-  risk report.
+  with `User error 15 (SingleInvoiceCapExceeded)` — and the revert **you**
+  trigger links itself on CSPR.live. A valid agent key with a model approval
+  still cannot exceed the on-chain policy.
+- **x402 consumer loop** (agent economy) — a consumer agent pays over HTTP 402
+  with native CSPR, verifies the report hash **three ways** (report · local
+  memo · on-chain anchor), applies its own acceptance policy, and anchors
+  `CREDIT_REPORT_ACCEPTED` — produce → sell → verify → act.
+- **Default workout** (credit loss) — the COLLECTOR key writes off an overdue
+  funded invoice; LPs absorb the loss through the share price. The desk keeps
+  this inventory stocked automatically.
 
 **Connect your Casper Wallet and the desk pays the advance to YOUR testnet
 address** — read-only (public key only, never a signature), verified with both

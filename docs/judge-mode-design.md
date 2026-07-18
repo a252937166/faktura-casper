@@ -39,21 +39,27 @@ nginx routes to it.
 
 Presets:
 
-1. **`happy`** — full lifecycle (6 steps): AI underwrite → `register_invoice` →
-   `fund_invoice` → `attest` → x402 report purchase → `settle_invoice`.
-   Face is fixed at **2 CSPR** so visitor payouts stay ≈1.9 CSPR.
+1. **`happy`** — the main story (5 steps): AI underwrite → `register_invoice` →
+   `fund_invoice` → `attest` → `settle_invoice`. Face is fixed at **2 CSPR**
+   so visitor payouts stay ≈1.9 CSPR. (The x402 sale is its own preset —
+   settlement never depends on someone buying a report.)
 2. **`policy-block`** — the ace (3 steps): the AI approves an oversized invoice,
    registration succeeds, and `fund_invoice` **reverts with `User error: 15`
    (SingleInvoiceCapExceeded)**.
-3. **`x402`** — 3 steps: pick an already-funded invoice (zero new exposure),
-   buy its risk report over HTTP 402 with a real native-CSPR transfer, then the
-   consumer agent VERIFIES the memo hash, applies its own acceptance policy
-   (risk ≤ 35) and anchors `CREDIT_REPORT_ACCEPTED` on-chain — the buyer acts
-   on what it bought.
+3. **`x402`** — 3 steps: pick any on-chain invoice with a decision memo
+   (funded, settled or defaulted — reports price the UNDERWRITING, zero new
+   exposure), buy its report over HTTP 402 with a real native-CSPR transfer,
+   then the consumer agent verifies the hash THREE ways (report · local memo ·
+   on-chain anchor), applies its own acceptance policy (risk ≤ 35) and the
+   attestation relay anchors `CREDIT_REPORT_ACCEPTED` — the buyer acts on what
+   it bought.
 4. **`default`** — 2 steps: the collector finds a funded invoice past due +
    grace and signs `mark_default` — the loss half of the credit lifecycle,
    absorbed by LPs through the share price. Overdue positions are exempt from
-   the auto-settle cleanup precisely so this inventory exists.
+   the auto-settle cleanup, and the cleanup worker AUTO-SEEDS a tiny 60s-due
+   invoice whenever the inventory runs dry (rate-limited, gas-budgeted), so
+   this preset is always playable; `canRun` reports "ripening — ready in ~Ns"
+   while the next one matures.
 
 Sessions: unguessable UUID id + human `JUDGE-YYYYMMDD-XXXX` display id + a
 32-byte bearer token required on every mutation. The active session (with its
