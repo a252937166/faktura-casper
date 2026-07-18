@@ -7,6 +7,7 @@ import {
   motesToCspr,
   rememberJudgeToken,
   stateName,
+  type ApiError,
   type ChainStats,
   type FeedEvent,
   type InvoiceRecord,
@@ -19,8 +20,73 @@ import {
   type RecentRun,
   type RiskReport,
 } from "./api";
-import { connectWallet, disconnectWallet, initWallet, shortKey, type WalletState } from "./wallet";
+import {
+  clickAccount,
+  connectWallet,
+  disconnectWallet,
+  initWallet,
+  registerClickBridge,
+  shortKey,
+  type WalletState,
+} from "./wallet";
+import { ClickUI, CsprClickThemes, ThemeModeType, useClickRef } from "@make-software/csprclick-ui";
+import { ThemeProvider as ClickThemeProvider } from "styled-components";
 import { EVIDENCE } from "./evidence";
+
+/**
+ * Bridges CSPR.click into the wallet module: account events feed the shared
+ * WalletState, and connect/disconnect route through the SDK while it's alive.
+ * ClickUI must be MOUNTED for the sign-in dialog to exist (it hosts the
+ * modal), but we don't want its top bar — so it renders off-screen while the
+ * modal portals to <body>. Unmount deregisters; the extension fallback stays.
+ */
+function ClickBridge() {
+  const clickRef = useClickRef();
+  useEffect(() => {
+    if (!clickRef) return;
+    const onIn = (evt: { account?: { public_key?: string } }) =>
+      clickAccount(evt?.account?.public_key ?? null);
+    const onOut = () => clickAccount(null);
+    clickRef.on("csprclick:signed_in", onIn);
+    clickRef.on("csprclick:switched_account", onIn);
+    clickRef.on("csprclick:signed_out", onOut);
+    clickRef.on("csprclick:disconnected", onOut);
+    // An unregistered appId 401s and the SDK never injects its iframe. Only
+    // hand connect/disconnect over once the SDK PROVES alive (iframe present
+    // or the loaded event fires) — otherwise the extension fallback keeps
+    // the connect button working instead of dying silently.
+    let registered = false;
+    const register = () => {
+      if (registered) return;
+      registered = true;
+      registerClickBridge({
+        signIn: () => clickRef.signIn(),
+        signOut: () => clickRef.signOut(),
+      });
+      clickRef
+        .getActiveAccountAsync?.()
+        .then((a) => a?.public_key && clickAccount(a.public_key))
+        .catch(() => {});
+    };
+    if (document.querySelector("iframe[src*='cspr.click']")) register();
+    else clickRef.on("csprclick:loaded", register);
+    return () => {
+      if (registered) registerClickBridge(null);
+      clickRef.off("csprclick:loaded", register);
+      clickRef.off("csprclick:signed_in", onIn);
+      clickRef.off("csprclick:switched_account", onIn);
+      clickRef.off("csprclick:signed_out", onOut);
+      clickRef.off("csprclick:disconnected", onOut);
+    };
+  }, [clickRef]);
+  return (
+    <div className="csprclick-host" aria-hidden>
+      <ClickThemeProvider theme={CsprClickThemes.light}>
+        <ClickUI themeMode={ThemeModeType.light} rootAppElement="#root" />
+      </ClickThemeProvider>
+    </div>
+  );
+}
 
 /**
  * The only way a hash is ever rendered: real deploys link to the explorer,
@@ -1028,6 +1094,7 @@ export default function App() {
           }}
         />
       )}
+      <ClickBridge />
       {mcpOpen && <McpDrawer meta={meta} notify={notify} onClose={() => setMcpOpen(false)} />}
       {toast && <div className="toast">{toast}</div>}
     </div>
@@ -2443,21 +2510,29 @@ function JudgeGuided({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const doStart = async (preset: string, supplierAddress?: string) => {
+  const doStart = async (preset: string, supplierAddress?: string, attempt = 0) => {
     setErr(null);
     setBusy(true);
     setPendingPreset(null);
     try {
       // With a wallet connected, the desk pays the advance to THEIR address.
       setSession(await judge.createSession(preset, supplierAddress));
+      setBusy(false);
     } catch (e) {
+      // The server debounces rapid session creation (double-click / deep-link
+      // followed by a manual click). That is a WAIT, not a failure — keep the
+      // button in its busy state and retry automatically when the window opens.
+      const retryAfterMs = Number((e as ApiError).body?.retryAfterMs ?? 0);
+      if (retryAfterMs > 0 && attempt < 3) {
+        setTimeout(() => void doStart(preset, supplierAddress, attempt + 1), retryAfterMs + 400);
+        return; // busy stays true — the UI shows "starting…"
+      }
       setErr((e as Error).message);
+      setBusy(false);
       judge
         .health()
         .then(onHealth)
         .catch(() => {});
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -2495,7 +2570,7 @@ function JudgeGuided({
 
   // Wallet connected while waiting at the gate — continue automatically.
   useEffect(() => {
-    if (pendingPreset && wallet.connected && wallet.publicKey) {
+    if (pendingPreset && wallet.connected && wallet.publicKey && !busy) {
       void doStart(pendingPreset, wallet.publicKey);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2666,39 +2741,47 @@ function JudgeGuided({
               </button>
             </div>
           ) : (
-            <div className="lj-presets">
-              {presets.map((p, idx) => (
-                <button
-                  key={p.id}
-                  className={`lj-preset ${p.id === "policy-block" ? "ace" : ""}`}
-                  disabled={
-                    paused ||
-                    busy ||
-                    health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.ok === false
-                  }
-                  title={
-                    health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.reason ??
-                    undefined
-                  }
-                  onClick={() => start(p.id)}
-                >
-                  <div className="lj-preset-title">{p.title}</div>
-                  <div className="lj-preset-sub">
-                    {health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.ok === false
-                      ? health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.reason
-                      : p.subtitle}
-                  </div>
-                  <div className="lj-preset-meta">
-                    {p.steps.length} steps · {p.steps.filter((s) => s.kind === "chain").length} real
-                    transactions
-                    {p.id === "policy-block" && (
-                      <span className="lj-ace-tag">the one to watch</span>
-                    )}
-                  </div>
-                  <span className="lj-preset-go">Begin →</span>
-                </button>
-              ))}
-            </div>
+            <>
+              {busy && (
+                <div className="lj-starting">
+                  <span className="lj-spinner" /> Starting your walkthrough…
+                </div>
+              )}
+              <div className="lj-presets">
+                {presets.map((p, idx) => (
+                  <button
+                    key={p.id}
+                    className={`lj-preset ${p.id === "policy-block" ? "ace" : ""}`}
+                    disabled={
+                      paused ||
+                      busy ||
+                      health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.ok === false
+                    }
+                    title={
+                      health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.reason ??
+                      undefined
+                    }
+                    onClick={() => start(p.id)}
+                  >
+                    <div className="lj-preset-title">{p.title}</div>
+                    <div className="lj-preset-sub">
+                      {health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.ok ===
+                      false
+                        ? health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.reason
+                        : p.subtitle}
+                    </div>
+                    <div className="lj-preset-meta">
+                      {p.steps.length} steps · {p.steps.filter((s) => s.kind === "chain").length}{" "}
+                      real transactions
+                      {p.id === "policy-block" && (
+                        <span className="lj-ace-tag">the one to watch</span>
+                      )}
+                    </div>
+                    <span className="lj-preset-go">Begin →</span>
+                  </button>
+                ))}
+              </div>
+            </>
           )}
           {err && <div className="lj-err">{err}</div>}
         </div>

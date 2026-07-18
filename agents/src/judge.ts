@@ -1023,7 +1023,7 @@ const PRESETS = [
 
 // ---- rate limiting ----------------------------------------------------------
 
-const NEW_SESSION_COOLDOWN_MS = 8_000; // just debounces accidental double-submits
+const NEW_SESSION_COOLDOWN_MS = 4_000; // just debounces accidental double-submits
 /** Hard expiry on INACTIVITY — a judge reading explorer pages between steps
  * must never lose their run (5 chain txs × up to 2 min each, plus reading). */
 const SESSION_STALE_MS = 40 * 60_000;
