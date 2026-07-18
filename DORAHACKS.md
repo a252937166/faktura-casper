@@ -71,6 +71,15 @@ Running build during the matrix: `v0.2.4-final @ d75c5d6c` (surfaced on
 run: payouts 3.93 / 10 CSPR, signed steps 42 / 60 — the desk stayed inside its
 own rails while re-proving all five stories.
 
+**Post-freeze audit-surface hardening (`@ 9bfc6d79`, deployed):** the consumer
+now REJECTS any report without a canonical memo and binds the report's
+risk/discount to `memo.applied`; the MCP verifier re-hashes the full memo
+document instead of comparing stored strings; receipts persist per-run and
+`npm run verify-receipt -- file.json --online` confirms every transaction
+directly against the node RPC. Re-proven live after deployment:
+x402 `JUDGE-20260718-64CBD358` (payment [`06d27dc0…`](https://testnet.cspr.live/deploy/06d27dc0bbc1ca98adbae21407eafc96eb885b6a93b1c21dd8f65ca6eb5f1816) · strict-checks ACCEPT verdict #23 [`48395fd3…`](https://testnet.cspr.live/deploy/48395fd34f5a3eeda5e6211db206da1e2520a45d257909b8c5399c28eeb66eb3), its receipt passes `--online`: 2 tx finalized + anchor match) and
+AI declines `JUDGE-20260718-CE53F596` (risk 85/100, `UNDERWRITE_REJECT` #24 [`74161bc1…`](https://testnet.cspr.live/deploy/74161bc10b572ff57b0fb62c14cb3d8d118976857e8a9c2e61f4a08a9414029a)).
+
 ### Legacy matrix (v0.2.1 evidence) — the guided walkthrough, verified end to end (2026-07-18)
 
 Every preset was driven through the PUBLIC guided API against the production
