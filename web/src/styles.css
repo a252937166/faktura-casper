@@ -3901,3 +3901,20 @@ button.field-wallet {
   border-radius: 999px;
   padding: 2px 8px;
 }
+
+/* ---------- site logo (header) ---------- */
+.site-logo-link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+.site-logo {
+  height: 58px;
+  width: auto;
+  display: block;
+}
+@media (max-width: 720px) {
+  .site-logo {
+    height: 44px;
+  }
+}
