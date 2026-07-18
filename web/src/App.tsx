@@ -623,6 +623,9 @@ export default function App() {
                 ▶ RUN JUDGE DEMO
               </button>
             )}
+            <button className="btn-agent" onClick={() => setMcpOpen(true)}>
+              🤖 Plug in your agent · MCP
+            </button>
           </div>
           {liveJudge && (
             <p className="hero-cost">
@@ -799,6 +802,62 @@ export default function App() {
           </div>
         </div>
       </section>
+
+      {/* ---- Built FOR agents — MCP front and center ---- */}
+      {meta?.mcp && (
+        <section className="mcp-band">
+          <div className="mcp-band-head">
+            <span className="mcp-band-kicker">🤖 BUILT FOR AGENTS · MCP SERVER</span>
+            <h2>Don't just watch the desk. Plug YOUR agent in.</h2>
+            <p>
+              Faktura is itself a service <i>for</i> agents: six MCP tools expose the whole credit
+              desk over stdio — against this very host. Every walkthrough step above advertises the
+              tool that drives or audits it.
+            </p>
+          </div>
+          <div className="mcp-band-tools">
+            {[
+              ["pool_stats", "read the pool — TVL, share price, exposure"],
+              ["submit_invoice", "drive the underwriting pipeline end to end"],
+              ["get_risk_report", "negotiate the x402 paywall, machine-to-machine"],
+              ["verify_decision_hash", "audit our AI against the on-chain anchor"],
+              ["list_funded_invoices", "read the live book"],
+              ["list_verified_invoices", "every priceable credit history"],
+            ].map(([name, what]) => (
+              <button
+                key={name}
+                className="mcp-band-tool"
+                title="Open the MCP interface"
+                onClick={() => setMcpOpen(true)}
+              >
+                <b className="mono">{name}</b>
+                <span>{what}</span>
+              </button>
+            ))}
+          </div>
+          <div className="mcp-band-cta">
+            <code className="mcp-band-cmd">
+              claude mcp add faktura -e FAKTURA_API=https://faktura.axiqo.xyz -- npx tsx src/mcp.ts
+            </code>
+            <button
+              className="btn ghost sm"
+              onClick={() => {
+                navigator.clipboard
+                  ?.writeText(
+                    "claude mcp add faktura -e FAKTURA_API=https://faktura.axiqo.xyz -- npx tsx src/mcp.ts",
+                  )
+                  .then(() => notify("MCP command copied"))
+                  .catch(() => {});
+              }}
+            >
+              Copy
+            </button>
+            <button className="btn-agent solid" onClick={() => setMcpOpen(true)}>
+              Open the MCP interface →
+            </button>
+          </div>
+        </section>
+      )}
 
       {/* ---- Run it yourself ---- */}
       {liveJudge && (
@@ -1259,6 +1318,25 @@ function LatestRunReceipt({ runs, onOpen }: { runs: RecentRun[]; onOpen: () => v
           <span className="lr-count">
             {txs.length} real transaction{txs.length === 1 ? "" : "s"} on CSPR.live
           </span>
+          <a
+            className="linklike"
+            href={`/api/judge/recent/${run.displayId}`}
+            download={`${run.displayId}.json`}
+            title="Signed-run receipt (faktura.credit-receipt.v1) — verify offline with npm run verify-receipt"
+          >
+            ⬇ Receipt
+          </a>
+          <button
+            className="linklike"
+            onClick={() => {
+              void navigator.clipboard
+                ?.writeText(`${location.origin}/api/judge/recent/${run.displayId}`)
+                .catch(() => {});
+            }}
+            title="Copy a curl-able proof link to this run"
+          >
+            ⧉ Copy proof link
+          </button>
           <button className="linklike" onClick={onOpen}>
             Run the next one yourself →
           </button>
@@ -1338,6 +1416,17 @@ function ProofStrip({
           )}
         </span>
       ))}
+      {meta?.release && meta.release.release !== "dev" && (
+        <span
+          className="ps-item ps-release"
+          title={`This exact build: ${meta.release.release} @ ${meta.release.gitSha} (built ${meta.release.builtAt}) — pin any behavior you observe to this commit.`}
+        >
+          <span className="ps-label">Build</span>
+          <span className="mono">
+            {meta.release.release} · {meta.release.gitSha.slice(0, 7)}
+          </span>
+        </span>
+      )}
     </div>
   );
 }
@@ -2018,71 +2107,66 @@ function X402Panel({
   );
 }
 
-/** Judge Demo: a guided, self-driving walkthrough of the whole lifecycle. */
+/** Judge Demo: the two-gates story in slides. `inset` is DATA, not an index —
+ * each slide declares which extra panel it wants (policy caps / x402 pricing). */
 const JUDGE_STEPS: {
   actor: string;
   title: string;
   detail: string;
   /** Honest variant shown when the host runs in showcase mode. */
   showcaseDetail?: string;
+  /** Optional data panel rendered under the detail text. */
+  inset?: "policy" | "x402";
 }[] = [
   {
     actor: "investor",
-    title: "LP deposits CSPR",
+    title: "LPs fund the pool",
     detail:
-      "Liquidity is added to the native-CSPR pool; LP shares mint at the current share price.",
-  },
-  {
-    actor: "supplier",
-    title: "Supplier submits an invoice",
-    detail: "A receivable enters intake and goes straight to the autonomous underwriter.",
+      "Liquidity providers deposit native CSPR; LP shares mint at the current share price. This pool is the capital every invoice draws on — and the book that absorbs every loss.",
   },
   {
     actor: "underwriter",
-    title: "AI underwriter scores risk",
-    detail: "Deterministic pre-checks, then an LLM returns a risk score, a price and a rationale.",
-  },
-  {
-    actor: "underwriter",
-    title: "Casper policy checks the limits",
+    title: "Gate 1 — the AI underwrites",
     detail:
-      "The contract enforces risk ceiling, discount band and concentration caps — the agent cannot exceed them.",
+      "A receivable enters intake; the model reads it and returns a risk score, a discount and a written rationale with red flags. Gate 1 has two exits: an APPROVE moves on to the contract, and a REJECT is anchored on-chain too — an auditable desk proves what it declined.",
   },
   {
     actor: "underwriter",
-    title: "Contract registers the invoice",
-    detail: "register_invoice writes the receivable on-chain with the decision hash.",
+    title: "Gate 2 — the contract enforces policy",
+    detail:
+      "The model proposes; Casper disposes. Risk ceiling, discount band and concentration caps live in the contract itself, so even a valid agent key with an AI approval cannot fund past them — fund_invoice simply reverts.",
+    inset: "policy",
+  },
+  {
+    actor: "underwriter",
+    title: "Register, then fund the supplier",
+    detail:
+      "register_invoice writes the receivable and its decision hash; fund_invoice streams the advance from the pool to the supplier's account (never the debtor's). Connect a wallet in the live walkthrough and the advance lands in YOURS.",
     showcaseDetail:
-      "register_invoice semantics replayed in memory here — the seeded records link to the real testnet registrations.",
+      "On this showcase host the writes replay in memory — the seeded records link to the real Testnet register and fund deploys.",
   },
   {
     actor: "underwriter",
-    title: "Pool funds the supplier",
+    title: "The decision memo is anchored",
     detail:
-      "fund_invoice streams the advance from the pool to the supplier account (never the debtor).",
-    showcaseDetail:
-      "In this showcase the advance moves in memory only; the seeded FUNDED invoices carry the real fund_invoice deploys.",
-  },
-  {
-    actor: "underwriter",
-    title: "AI decision is attested on-chain",
-    detail:
-      "The SHA-256 of the full decision memo is anchored — autonomous underwriting you can audit.",
+      "The SHA-256 of the FULL memo — rationale, red flags, applied numbers — is attested on-chain. Change one character of the story afterwards and the hash no longer matches the anchor.",
     showcaseDetail:
       "Anchoring is simulated for new showcase writes; the seeded attestations are real, explorer-linkable deploys.",
   },
   {
-    actor: "oracle",
-    title: "Buyer purchases the risk report via x402",
-    detail: "Another agent pays over HTTP 402 with native CSPR and gets the verified report.",
-  },
-  {
     actor: "debtor",
-    title: "Debtor settles / collector writes off",
+    title: "Settle — or default",
     detail:
-      "On payment the pool realizes yield; past due + grace, the collector key defaults it and the loss hits the share price.",
+      "On payment the pool realizes its yield through the share price. Past due + grace, only the collector key can write the invoice off — separation of duties the contract enforces — and LPs absorb the loss the same way. Both endings are part of the demo.",
     showcaseDetail:
       "Settlement and write-off are simulated here; the seeded SETTLED and DEFAULTED invoices link to the real transactions.",
+  },
+  {
+    actor: "oracle",
+    title: "Side quest — agents trade the risk data (x402)",
+    detail:
+      "Any underwritten invoice's report is machine-payable: a consumer agent hits HTTP 402, pays with a native CSPR transfer carrying a one-time nonce, re-hashes the shipped memo against the on-chain anchor, applies its own policy and anchors its own verdict. The same surface ships as MCP tools.",
+    inset: "x402",
   },
 ];
 
@@ -2129,7 +2213,7 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
             </div>
             <h3>{step.title}</h3>
             <p>{!live && step.showcaseDetail ? step.showcaseDetail : step.detail}</p>
-            {i === 3 && meta?.policy && (
+            {step.inset === "policy" && meta?.policy && (
               <div className="jd-policy">
                 On-chain hard caps — risk ≤ {meta.policy.maxRiskScore} · discount{" "}
                 {(meta.policy.minDiscountBps / 100).toFixed(1)}–
@@ -2138,11 +2222,11 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
                 {meta.policy.maxDebtorExposureBps / 100}%.
               </div>
             )}
-            {i === 7 && (
+            {step.inset === "x402" && (
               <div className="jd-policy">
                 Price {meta ? (Number(meta.x402Price) / 1e9).toFixed(2) : "2.50"} CSPR · settled
-                with a native transfer carrying a one-time nonce · the report carries the
-                on-chain-anchored decision hash. The same surface is exposed as MCP tools.
+                with a native transfer carrying a one-time nonce · the report ships the full
+                canonical decision memo, and the buyer re-hashes it against the on-chain anchor.
               </div>
             )}
             <div className="jd-nav">
@@ -2679,6 +2763,11 @@ const PRESET_META: Record<string, { group: "main" | "challenge"; time: string; h
     time: "1–2 min",
     hook: "Credit loss — the collector writes off an overdue invoice.",
   },
+  "ai-reject": {
+    group: "challenge",
+    time: "1–2 min",
+    hook: "The AI says no to bad paper — and even the no is anchored.",
+  },
 };
 
 /** Predict-then-verify moments: cheap interactivity with a real answer. */
@@ -2704,6 +2793,16 @@ const PREDICTIONS: Record<
     ],
     answer: "down",
     reveal: "DOWN — the loss is absorbed by LPs through the share price. Real credit, real losses.",
+  },
+  "ai-reject:underwrite": {
+    question: "Shell-company debtor, one disputed invoice, vague scope — what will the AI do?",
+    options: [
+      { id: "approve", label: "APPROVE anyway" },
+      { id: "reject", label: "REJECT it" },
+    ],
+    answer: "reject",
+    reveal:
+      "REJECTED — and the memo with every red flag is about to be anchored on-chain, hash and all.",
   },
 };
 
@@ -2767,13 +2866,17 @@ function JudgeGuided({
     setPendingPreset(null);
     // Snapshot the payout wallet BEFORE anything moves — the delta card is
     // the reward moment ("your balance actually changed on a real chain").
+    // AWAITED on purpose: if this raced the walkthrough, a slow read could
+    // land after funding and report the post-payout balance as "before".
     if (supplierAddress && attempt === 0) {
       setWalletBefore(null);
       setWalletAfter(null);
-      judge
-        .balance(supplierAddress)
-        .then((b) => setWalletBefore(b.cspr ?? 0))
-        .catch(() => setWalletBefore(0));
+      try {
+        const b = await judge.balance(supplierAddress);
+        setWalletBefore(b.cspr ?? 0);
+      } catch {
+        setWalletBefore(0);
+      }
     }
     try {
       // With a wallet connected, the desk pays the advance to THEIR address.
@@ -2853,13 +2956,32 @@ function JudgeGuided({
 
   // The reward moment: as soon as the fund step confirms, fetch the wallet's
   // NEW balance automatically — no manual refresh to see your money arrive.
+  // Balance indexing can lag finality by a few seconds, so poll (3 s × 5)
+  // until the increase is actually visible instead of freezing a stale read.
   const fundDone = !!session?.steps.some((st) => st.key === "fund" && st.status === "done");
   useEffect(() => {
     if (!session?.wallet || !fundDone || walletAfter != null) return;
-    judge
-      .balance(session.wallet)
-      .then((b) => setWalletAfter(b.cspr ?? null))
-      .catch(() => {});
+    const wallet = session.wallet;
+    let cancelled = false;
+    const read = async (tries: number) => {
+      let v: number | null = null;
+      try {
+        v = (await judge.balance(wallet)).cspr ?? null;
+      } catch {
+        /* transient RPC blip — the retry below covers it */
+      }
+      if (cancelled) return;
+      const grew = v != null && (walletBefore == null || v > walletBefore);
+      if (grew || tries >= 5) {
+        if (v != null) setWalletAfter(v);
+        return;
+      }
+      setTimeout(() => void read(tries + 1), 3000);
+    };
+    void read(0);
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fundDone, session?.wallet]);
 
@@ -3253,35 +3375,170 @@ function AgentRoles() {
 }
 
 /**
- * The MCP agent interface, productized: the 5 tools, quick-start commands,
- * and LIVE previews that call the same REST endpoints the MCP server wraps —
- * the JSON shown is exactly what an MCP-connected agent receives.
+ * The MCP agent interface, productized: six tool cards with signature, params,
+ * an agent prompt, and a terminal-style demo output. pool_stats and
+ * verify_decision_hash can swap their sample for a LIVE call against this very
+ * host (same REST endpoints the MCP server wraps) — the JSON shown is exactly
+ * what an MCP-connected agent receives.
  */
-const MCP_TOOLS = [
+type McpToolSpec = {
+  name: string;
+  badge: string;
+  badgeKind: "read" | "write" | "pay" | "audit";
+  headline: string;
+  detail: string;
+  params: { k: string; d: string }[];
+  ask: string;
+  sample: string;
+  live?: "pool" | "verify";
+};
+
+const MCP_TOOLS: McpToolSpec[] = [
   {
     name: "pool_stats",
-    what: "TVL, LP share price, funded/settled/defaulted totals, attestation count",
-    ask: '"What\'s the state of the Faktura pool?"',
-  },
-  {
-    name: "list_funded_invoices",
-    what: "every invoice the pool is currently financing, with risk and due date",
-    ask: '"Which invoices are we exposed to right now?"',
+    badge: "READ · LIVE CHAIN",
+    badgeKind: "read",
+    headline: "One call: the whole balance sheet.",
+    detail:
+      "TVL, LP share price, funded/settled/defaulted totals and the attestation count — read straight from the Casper Testnet contract. Identical output hosted or local.",
+    params: [{ k: "—", d: "no arguments" }],
+    ask: "What's the state of the Faktura pool right now?",
+    live: "pool",
+    sample: `{
+  "contract": "hash-fb209bb1d3a1d5e6…",
+  "tvlCspr": 151.73,
+  "liquidCspr": 96.77,
+  "deployedCspr": 54.96,
+  "lpSharePrice": 0.7586,
+  "totalFundedCspr": 233.23,
+  "totalSettledCspr": 130.0,
+  "totalDefaultedCspr": 51.46,
+  "invoiceCount": 27,
+  "aiAttestationsOnChain": 14
+}`,
   },
   {
     name: "submit_invoice",
-    what: "runs the underwriting pipeline (live AI + policy checks). Hosted here: writes are simulated; a local live-mode stack signs the real register/fund/attest deploys",
-    ask: '"Sell this €40k receivable from Aurora Retail, due in 30 days."',
+    badge: "AI PIPELINE · MODE-AWARE",
+    badgeKind: "write",
+    headline: "Feed the underwriter a receivable.",
+    detail:
+      "Runs the REAL pipeline: deterministic pre-checks, live LLM risk scoring, policy clamps. On this hosted showcase the chain writes are simulated ('showcase:'-tagged hashes); a local live-mode stack signs the actual register / fund / attest deploys with your keys.",
+    params: [
+      { k: "supplierName · debtorName", d: "who sells, who owes" },
+      { k: "amountCspr · dueInDays", d: "face value and tenor" },
+      { k: "invoiceNumber · description · history?", d: "the paper the model reads" },
+      { k: "supplierAddress?", d: "account-hash that receives the advance" },
+    ],
+    ask: "Sell this 40k receivable from Aurora Retail, due in 30 days — what does the desk say?",
+    sample: `{
+  "status": "approved",
+  "riskScore": 24,
+  "discountBps": 260,
+  "redFlags": [],
+  "rationale": "Established counterparty, 6/6 prior
+    invoices paid within terms; 30-day tenor
+    supports a sub-3% discount.",
+  "decisionHash": "sha256:c9b1e7d40a52f688…",
+  "chainTxs": { "registerHash": "showcase:sim…" }
+}
+// hosted: writes simulated ("showcase:" tag).
+// local live mode → real Testnet deploy hashes.`,
   },
   {
     name: "get_risk_report",
-    what: "buys the verified report via x402 (returns the 402 challenge, then the paid report)",
-    ask: '"Buy the risk report for invoice #4."',
+    badge: "x402 · MACHINE-PAYABLE",
+    badgeKind: "pay",
+    headline: "Negotiate an HTTP 402 paywall, agent-to-agent.",
+    detail:
+      "This tool never spends your money: call once and it returns the 402 PaymentRequirements; YOU pay from any wallet or agent (native CSPR transfer, nonce as transfer-id), call again with the proof, and the verified report unlocks — full canonical decision memo included, ready to re-hash.",
+    params: [
+      { k: "invoiceId", d: "which credit history to buy" },
+      { k: "paymentDeployHash?", d: "your settlement transfer" },
+      { k: "nonce?", d: "from the 402 challenge you are settling" },
+    ],
+    ask: "Buy the risk report for invoice #12 — here's my payment deploy hash.",
+    sample: `// call 1 — no proof → the machine-readable paywall
+{
+  "httpStatus": 402,
+  "accepts": [{
+    "maxAmountRequired": "2500000000",
+    "payTo": "0202bc7169…",
+    "extra": { "transferIdNonce": "784551" }
+  }]
+}
+// you pay: 2.5 CSPR native transfer, id = nonce
+// call 2 — with deployHash + nonce → unlocked
+{
+  "httpStatus": 200,
+  "riskScore": 24,
+  "discountBps": 260,
+  "decisionHash": "sha256:c9b1e7d40a52f688…",
+  "memo": { "schema": "faktura.decision.v1", "…": "…" }
+}`,
   },
   {
     name: "verify_decision_hash",
-    what: "audits the AI: compares the off-chain memo hash with the on-chain anchor",
-    ask: '"Prove the AI decision on invoice #4 wasn\'t rewritten."',
+    badge: "AUDIT · TRUSTLESS",
+    badgeKind: "audit",
+    headline: "Audit our AI. Don't take our word.",
+    detail:
+      "Re-reads the off-chain decision memo hash AND the anchor stored in the on-chain invoice record, and compares them. If anyone rewrote the rationale after the fact, this is where it shows.",
+    params: [{ k: "invoiceId", d: "on-chain invoice id" }],
+    ask: "Prove the AI decision on invoice #12 wasn't rewritten after the fact.",
+    live: "verify",
+    sample: `{
+  "invoiceId": 12,
+  "offchainMemoHash": "sha256:c9b1e7d40a52f688…",
+  "onchainAnchoredHash": "sha256:c9b1e7d40a52f688…",
+  "match": true,
+  "verdict": "MATCH — the memo the AI produced is
+    exactly what was anchored on-chain",
+  "registerTx": "https://testnet.cspr.live/deploy/…"
+}`,
+  },
+  {
+    name: "list_funded_invoices",
+    badge: "READ · LIVE BOOK",
+    badgeKind: "read",
+    headline: "What is the pool exposed to right now?",
+    detail:
+      "Every invoice currently financed (on-chain state FUNDED) with face, advance, risk score and due date — the live credit book, as an agent sees it.",
+    params: [{ k: "—", d: "no arguments" }],
+    ask: "Which invoices are we exposed to right now, and when are they due?",
+    sample: `{
+  "count": 2,
+  "funded": [{
+    "id": 27,
+    "faceCspr": 6.9,
+    "advanceCspr": 6.76,
+    "riskScore": 18,
+    "discountBps": 200,
+    "dueIso": "2026-08-17T09:41:22.000Z",
+    "decisionHash": "sha256:3e1f0a92c45b8d67…"
+  }, …]
+}`,
+  },
+  {
+    name: "list_verified_invoices",
+    badge: "READ · PRICEABLE UNIVERSE",
+    badgeKind: "read",
+    headline: "Every credit history you can buy.",
+    detail:
+      "All on-chain invoices whose decision memo is anchored — LISTED, FUNDED, SETTLED or DEFAULTED. A settled or even defaulted receivable still has a verifiable history worth pricing; this is the buyable universe for get_risk_report.",
+    params: [{ k: "—", d: "no arguments" }],
+    ask: "List every invoice with a verifiable decision memo I could buy a report on.",
+    sample: `{
+  "count": 27,
+  "verified": [
+    { "id": 27, "state": "FUNDED",
+      "riskScore": 18, "decisionHash": "sha256:3e1f…" },
+    { "id": 26, "state": "SETTLED",
+      "riskScore": 22, "decisionHash": "sha256:91d4…" },
+    { "id": 25, "state": "DEFAULTED",
+      "riskScore": 20, "decisionHash": "sha256:5a88…" }
+  ]
+}`,
   },
 ];
 
@@ -3294,8 +3551,9 @@ function McpDrawer({
   notify: (m: string) => void;
   onClose: () => void;
 }) {
-  const [preview, setPreview] = useState<{ tool: string; body: string } | null>(null);
-  const [busy, setBusy] = useState(false);
+  /** Per-tool LIVE output (replaces the recorded sample once fetched). */
+  const [liveOut, setLiveOut] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
   // Every command below is verified end-to-end from a fresh clone.
   const setupCmd =
     "git clone https://github.com/a252937166/faktura-casper && cd faktura-casper/agents && npm install";
@@ -3312,160 +3570,204 @@ function McpDrawer({
   };
 
   // Real previews: same REST calls the MCP server wraps (read-only).
-  const previewPool = async () => {
-    setBusy(true);
+  const runLive = async (t: McpToolSpec) => {
+    setBusy(t.name);
     try {
-      const p = await api.pool();
-      const s = p.stats;
-      const cspr = (m: string) => Number(BigInt(m) / 1_000_000n) / 1000;
-      // Field-for-field identical to the pool_stats tool in agents/src/mcp.ts.
-      const body = {
-        contract: p.contract,
-        explorer: `${p.explorer}/contract-package/${p.contract.replace("hash-", "")}`,
-        tvlCspr: cspr(s.liquid) + cspr(s.deployed),
-        liquidCspr: cspr(s.liquid),
-        deployedCspr: cspr(s.deployed),
-        lpSharePrice:
-          BigInt(s.totalShares) > 0n
-            ? Number(((BigInt(s.liquid) + BigInt(s.deployed)) * 10_000n) / BigInt(s.totalShares)) /
-              10_000
-            : 1,
-        totalFundedCspr: cspr(s.totalFunded),
-        totalSettledCspr: cspr(s.totalSettled),
-        totalDefaultedCspr: cspr(s.totalDefaulted),
-        invoiceCount: s.invoiceCount,
-        aiAttestationsOnChain: s.attestationCount,
-      };
-      setPreview({ tool: "pool_stats", body: JSON.stringify(body, null, 2) });
-    } finally {
-      setBusy(false);
-    }
-  };
-  const previewVerify = async () => {
-    setBusy(true);
-    try {
-      const [inv, p] = await Promise.all([api.invoices(), api.pool()]);
-      const withDecision = inv.filter((r) => r.decision && r.id > 0);
-      const onchainById = new Map(p.onchain.map((o: { id: number }) => [o.id, o]));
-      const target = withDecision.find((r) => onchainById.has(r.id));
-      if (!target) {
-        setPreview({ tool: "verify_decision_hash", body: '{ "error": "no verifiable invoice" }' });
-        return;
+      if (t.live === "pool") {
+        const p = await api.pool();
+        const s = p.stats;
+        const cspr = (m: string) => Number(BigInt(m) / 1_000_000n) / 1000;
+        // Field-for-field identical to the pool_stats tool in agents/src/mcp.ts.
+        const body = {
+          contract: p.contract,
+          explorer: `${p.explorer}/contract-package/${p.contract.replace("hash-", "")}`,
+          tvlCspr: cspr(s.liquid) + cspr(s.deployed),
+          liquidCspr: cspr(s.liquid),
+          deployedCspr: cspr(s.deployed),
+          lpSharePrice:
+            BigInt(s.totalShares) > 0n
+              ? Number(
+                  ((BigInt(s.liquid) + BigInt(s.deployed)) * 10_000n) / BigInt(s.totalShares),
+                ) / 10_000
+              : 1,
+          totalFundedCspr: cspr(s.totalFunded),
+          totalSettledCspr: cspr(s.totalSettled),
+          totalDefaultedCspr: cspr(s.totalDefaulted),
+          invoiceCount: s.invoiceCount,
+          aiAttestationsOnChain: s.attestationCount,
+        };
+        setLiveOut((o) => ({ ...o, [t.name]: JSON.stringify(body, null, 2) }));
+      } else if (t.live === "verify") {
+        const [inv, p] = await Promise.all([api.invoices(), api.pool()]);
+        const withDecision = inv.filter((r) => r.decision && r.id > 0);
+        const onchainById = new Map(p.onchain.map((o: { id: number }) => [o.id, o]));
+        const target = withDecision.find((r) => onchainById.has(r.id));
+        if (!target) {
+          setLiveOut((o) => ({ ...o, [t.name]: '{ "error": "no verifiable invoice yet" }' }));
+          return;
+        }
+        const onchain = onchainById.get(target.id) as unknown as { decisionHash: string };
+        const match = target.decision!.decisionHash === onchain.decisionHash;
+        const body = {
+          invoiceId: target.id,
+          offchainMemoHash: target.decision!.decisionHash,
+          onchainAnchoredHash: onchain.decisionHash,
+          match,
+          verdict: match
+            ? "MATCH — the memo the AI produced is exactly what was anchored on-chain"
+            : "MISMATCH",
+          registerTx:
+            target.chain.registerHash && !isSimulatedHash(target.chain.registerHash)
+              ? `${p.explorer}/deploy/${target.chain.registerHash}`
+              : undefined,
+        };
+        setLiveOut((o) => ({ ...o, [t.name]: JSON.stringify(body, null, 2) }));
       }
-      const onchain = onchainById.get(target.id) as unknown as { decisionHash: string };
-      const match = target.decision!.decisionHash === onchain.decisionHash;
-      setPreview({
-        tool: `verify_decision_hash (#${target.id})`,
-        body: JSON.stringify(
-          {
-            invoiceId: target.id,
-            offchainMemoHash: target.decision!.decisionHash,
-            onchainAnchoredHash: onchain.decisionHash,
-            match,
-            verdict: match
-              ? "MATCH — the memo the AI produced is exactly what was anchored on-chain"
-              : "MISMATCH",
-            registerTx:
-              target.chain.registerHash && !isSimulatedHash(target.chain.registerHash)
-                ? `${p.explorer}/deploy/${target.chain.registerHash}`
-                : undefined,
-          },
-          null,
-          2,
-        ),
-      });
+    } catch {
+      notify("Live preview failed — node hiccup, try again");
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
   return (
     <>
       <div className="drawer-backdrop mcp-top-bd" onClick={onClose} />
-      <div className="drawer mcp-drawer mcp-top">
-        <h2>
-          MCP Agent Interface{" "}
-          <span className={`badge ${meta?.mode === "live-testnet" ? "FUNDED" : "LISTED"}`}>
-            {meta?.mode === "live-testnet" ? "LIVE TESTNET" : "SHOWCASE"}
-          </span>
-        </h2>
-        <div className="muted" style={{ fontSize: 13 }}>
-          Faktura exposes the whole credit desk as 5 MCP tools over stdio — any MCP-capable agent
-          can inspect the pool, submit invoices, buy x402 risk reports, and verify AI decisions
-          against Casper.
+      <div className="drawer mcp-drawer mcp-top mcp2">
+        {/* ---- hero ---- */}
+        <div className="mcp2-hero">
+          <div className="mcp2-kicker">🤖 AGENT-NATIVE INTERFACE · MODEL CONTEXT PROTOCOL</div>
+          <h2>
+            Your agent talks to this desk directly{" "}
+            <span className={`badge ${meta?.mode === "live-testnet" ? "FUNDED" : "LISTED"}`}>
+              {meta?.mode === "live-testnet" ? "LIVE TESTNET" : "SHOWCASE"}
+            </span>
+          </h2>
+          <p>
+            The whole credit desk — pool, book, underwriter, x402 oracle, audit trail — ships as{" "}
+            <b>six MCP tools over stdio</b>, defined in{" "}
+            <span className="mono">agents/src/mcp.ts</span>. Point any MCP-capable agent at this
+            very host and it can read the chain, drive the pipeline and audit the AI without a
+            browser.
+          </p>
+          <div className="mcp2-modes">
+            <div className="mcp2-mode">
+              <b>◉ HOSTED — this site</b>
+              <span>
+                Live AI underwriting + live chain reads. Chain <i>writes</i> are simulated
+                (&lsquo;showcase:&rsquo; tags) — the guided walkthrough stays the only public
+                signing surface.
+              </span>
+            </div>
+            <div className="mcp2-mode">
+              <b>◈ LOCAL LIVE — your keys</b>
+              <span>
+                Clone the repo, add funded testnet keys, and the same six tools sign real Casper
+                deploys: register, fund, attest.
+              </span>
+            </div>
+          </div>
         </div>
 
+        {/* ---- quick start ---- */}
         <div className="section">
-          <h3>Quick start</h3>
-          <div className="mcp-step">1 · one-time setup</div>
-          <div className="mcp-cmd">
-            <code>{setupCmd}</code>
-            <button className="btn ghost sm" onClick={() => copy(setupCmd)}>
-              Copy
-            </button>
-          </div>
-          <div className="mcp-step">2 · speak MCP to this host (from agents/)</div>
-          <div className="mcp-cmd">
-            <code>{quick}</code>
-            <button className="btn ghost sm" onClick={() => copy(quick)}>
-              Copy
-            </button>
-          </div>
-          <div className="mcp-step">3 · or register it with Claude Code (from agents/)</div>
-          <div className="mcp-cmd">
-            <code>{claudeCmd}</code>
-            <button className="btn ghost sm" onClick={() => copy(claudeCmd)}>
-              Copy
-            </button>
+          <h3>Quick start — three commands</h3>
+          <div className="mcp2-qs">
+            {[
+              { n: "1", label: "one-time setup", cmd: setupCmd },
+              { n: "2", label: "speak MCP to this host (from agents/)", cmd: quick },
+              { n: "3", label: "or register with Claude Code (from agents/)", cmd: claudeCmd },
+            ].map((s) => (
+              <div className="mcp2-term mcp2-term-cmd" key={s.n}>
+                <div className="mcp2-term-bar">
+                  <span className="mcp2-dot r" />
+                  <span className="mcp2-dot y" />
+                  <span className="mcp2-dot g" />
+                  <span className="mcp2-term-title">
+                    {s.n} · {s.label}
+                  </span>
+                  <button className="mcp2-copy" onClick={() => copy(s.cmd)}>
+                    ⧉ copy
+                  </button>
+                </div>
+                <pre>
+                  <span className="mcp2-prompt">$ </span>
+                  {s.cmd}
+                </pre>
+              </div>
+            ))}
           </div>
           <div className="note" style={{ marginTop: 6 }}>
-            POSIX shell (macOS / Linux / WSL) · defined in{" "}
-            <span className="mono">agents/src/mcp.ts</span>. <b>Hosted MCP</b> (this host): live AI
-            + read-only chain data, writes simulated — the guided walkthrough stays the only public
-            signing surface. <b>Local live mode</b> with your own funded testnet keys signs real
-            deploys.
+            POSIX shell (macOS / Linux / WSL) · Node 20+. Works with Claude Code, Claude Desktop and
+            any MCP client that speaks stdio.
           </div>
         </div>
 
+        {/* ---- the six tools ---- */}
         <div className="section">
-          <h3>The 5 tools</h3>
-          {MCP_TOOLS.map((t, i) => (
-            <div className="mcp-tool" key={t.name}>
-              <div className="mcp-tool-head">
-                <b className="mono">
-                  {i + 1}. {t.name}
-                </b>
+          <h3>The six tools — with real output</h3>
+          {MCP_TOOLS.map((t, i) => {
+            const live = liveOut[t.name];
+            return (
+              <div className={`mcp2-tool k-${t.badgeKind}`} key={t.name}>
+                <div className="mcp2-tool-head">
+                  <span className="mcp2-tool-num mono">{String(i + 1).padStart(2, "0")}</span>
+                  <b className="mono">{t.name}</b>
+                  <span className={`mcp2-badge k-${t.badgeKind}`}>{t.badge}</span>
+                </div>
+                <div className="mcp2-tool-headline">{t.headline}</div>
+                <div className="mcp2-tool-detail">{t.detail}</div>
+                <div className="mcp2-params">
+                  {t.params.map((p) => (
+                    <div className="mcp2-param" key={p.k}>
+                      <code>{p.k}</code>
+                      <span>{p.d}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mcp2-ask">
+                  <span className="mcp2-ask-label">you say</span>
+                  <span className="mcp2-ask-text">“{t.ask}”</span>
+                </div>
+                <div className="mcp2-term">
+                  <div className="mcp2-term-bar">
+                    <span className="mcp2-dot r" />
+                    <span className="mcp2-dot y" />
+                    <span className="mcp2-dot g" />
+                    <span className="mcp2-term-title">faktura-mcp · {t.name}</span>
+                    <span className={`mcp2-term-tag ${live ? "live" : ""}`}>
+                      {live ? "● LIVE OUTPUT" : "SAMPLE OUTPUT"}
+                    </span>
+                    {t.live && (
+                      <button
+                        className="mcp2-copy"
+                        disabled={busy === t.name}
+                        onClick={() => void runLive(t)}
+                        title="Call this host's real REST endpoint — the same one the MCP tool wraps"
+                      >
+                        {busy === t.name ? "running…" : live ? "↻ re-run live" : "▸ run live"}
+                      </button>
+                    )}
+                  </div>
+                  <pre>{live ?? t.sample}</pre>
+                </div>
               </div>
-              <div className="mcp-tool-what">{t.what}</div>
-              <div className="mcp-tool-ask">agent prompt: {t.ask}</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        <div className="section">
-          <h3>Tool output preview (read-only)</h3>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button className="btn ghost sm" disabled={busy} onClick={previewPool}>
-              ▸ pool_stats
-            </button>
-            <button className="btn ghost sm" disabled={busy} onClick={previewVerify}>
-              ▸ verify_decision_hash
-            </button>
+        {/* ---- footer ---- */}
+        <div className="mcp2-foot">
+          <div className="mcp2-foot-works">
+            works with <b>Claude Code</b> · <b>Claude Desktop</b> · any stdio MCP client
           </div>
-          {preview && (
-            <div className="mcp-preview">
-              <div className="mcp-preview-head">
-                {preview.tool} → the same fields the MCP tool returns:
-              </div>
-              <pre>{preview.body}</pre>
-            </div>
-          )}
-          {!preview && (
-            <div className="note" style={{ marginTop: 8 }}>
-              These previews call the same REST endpoints the MCP server wraps
-              {meta?.mode !== "live-testnet" ? " (seeded showcase data)" : ""}.
-            </div>
-          )}
+          <button className="btn-agent solid" onClick={() => copy(claudeCmd)}>
+            ⧉ Copy the install command
+          </button>
+          <span className="mcp2-foot-note">
+            Every guided-walkthrough step also advertises the tool that drives or audits it — run
+            one, then let your agent redo it.
+          </span>
         </div>
       </div>
     </>

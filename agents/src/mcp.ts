@@ -1,7 +1,11 @@
 /**
  * Faktura MCP server — plugs the autonomous credit desk into any MCP-capable
- * agent (Claude Code/Desktop, etc.) as five tools over stdio. Tools talk to a
+ * agent (Claude Code/Desktop, etc.) as six tools over stdio. Tools talk to a
  * running Faktura service via its REST API.
+ *
+ * Two modes, stated per tool: against the HOSTED showcase, reads are live but
+ * chain writes are simulated ('showcase:'-tagged hashes); against a LOCAL
+ * stack in live mode (docs/casper-live.md) every write is a real Testnet deploy.
  *
  *   FAKTURA_API=https://faktura.axiqo.xyz npx tsx src/mcp.ts
  *   # or register it:  claude mcp add faktura -- npx tsx src/mcp.ts
@@ -24,7 +28,7 @@ async function get(path: string): Promise<any> {
   return { status: r.status, body };
 }
 
-const server = new McpServer({ name: "faktura", version: "0.1.0" });
+const server = new McpServer({ name: "faktura", version: "0.2.4" });
 
 server.tool(
   "pool_stats",
@@ -58,7 +62,7 @@ server.tool(
 
 server.tool(
   "list_funded_invoices",
-  "Invoices currently financed by the pool (on-chain state FUNDED), with face value, advance, risk score and due date.",
+  "Invoices currently financed by the pool (on-chain state FUNDED), with face value, advance, risk score and due date. See also list_verified_invoices — ANY invoice with an anchored decision memo can be priced via x402, not only live positions.",
   {},
   async () => {
     const { body } = await get("/api/pool");
@@ -77,9 +81,33 @@ server.tool(
   },
 );
 
+const STATE_NAMES = ["LISTED", "FUNDED", "SETTLED", "DEFAULTED"];
+
+server.tool(
+  "list_verified_invoices",
+  "Every on-chain invoice whose AI decision memo is anchored (LISTED, FUNDED, SETTLED or DEFAULTED) — the buyable universe for get_risk_report. A settled or defaulted receivable still has a verifiable credit history worth pricing.",
+  {},
+  async () => {
+    const [inv, pool] = await Promise.all([get("/api/invoices"), get("/api/pool")]);
+    const locals = (inv.body as any[]) ?? [];
+    const verified = ((pool.body.onchain as any[]) ?? [])
+      .filter((i) => locals.some((r) => r.id === i.id && r.decision))
+      .map((i) => ({
+        id: i.id,
+        state: STATE_NAMES[i.state] ?? `#${i.state}`,
+        faceCspr: Number(BigInt(i.faceValue) / 1_000_000n) / 1000,
+        riskScore: i.riskScore,
+        discountBps: i.discountBps,
+        dueIso: new Date(i.dueTs).toISOString(),
+        decisionHash: i.decisionHash,
+      }));
+    return text({ count: verified.length, verified });
+  },
+);
+
 server.tool(
   "submit_invoice",
-  "Submit a receivable to the autonomous AI underwriter. It runs pre-checks + LLM risk scoring, and the on-chain policy decides; approved invoices are registered, funded to the supplier and attested on Casper. Against a showcase host the AI runs live but writes are simulated — their hashes carry a 'showcase:' tag instead of being real deploys.",
+  "Submit a receivable to the autonomous AI underwriter. It runs pre-checks + LLM risk scoring, and the on-chain policy decides; approved invoices are registered, funded to the supplier and attested on Casper. MODE MATTERS: against the hosted showcase the AI underwriting is live but chain writes are SIMULATED ('showcase:'-tagged hashes, no real deploys); run the stack locally in live mode (docs/casper-live.md) to sign real Testnet transactions.",
   {
     supplierName: z.string().describe("Legal name of the supplier selling the invoice"),
     debtorName: z.string().describe("Company that owes the invoice"),
@@ -128,7 +156,7 @@ server.tool(
 
 server.tool(
   "get_risk_report",
-  "Buy the verified AI risk report for an invoice via the x402 machine-payable oracle. Without payment proof this returns the HTTP 402 PaymentRequirements (price, payTo, nonce); pay with a native CSPR transfer using the nonce as transfer id, then call again with paymentDeployHash + nonce.",
+  "Negotiate the x402 machine-payable oracle for an invoice's verified AI risk report. This tool never spends money itself: without payment proof it returns the HTTP 402 PaymentRequirements (price, payTo, nonce); YOU pay from any wallet or agent with a native CSPR transfer carrying the nonce as transfer id, then call again with paymentDeployHash + nonce to unlock the report (which ships the full canonical decision memo — re-hash it yourself against the on-chain anchor).",
   {
     invoiceId: z.number().describe("On-chain invoice id"),
     paymentDeployHash: z.string().optional().describe("Deploy hash of your settlement transfer"),

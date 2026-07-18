@@ -32,6 +32,9 @@ export interface InvoiceRecord {
     docHash: string;
     receivedTs: number;
   };
+  /** The canonical decision memo (faktura.decision.v1) — the exact document
+   * whose SHA-256 is anchored on-chain. Verifiers re-hash THIS. */
+  memo?: import("./decision-memo.js").CanonicalDecisionMemo;
   decision?: {
     approve: boolean;
     riskScore: number;

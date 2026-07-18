@@ -66,9 +66,15 @@ test("payout budget: reservation counts against the cap immediately", () => {
   assert.equal(limits.spentLast24h(), before + 2);
 });
 
-test("payout budget: same wallet or same IP cannot reserve twice", () => {
-  assert.equal(limits.reservePayout("s2", "wallet-a", "ip-zz", 2).ok, false);
-  assert.equal(limits.reservePayout("s3", "wallet-zz", "ip-a", 2).ok, false);
+test("payout budget: a retry by the same visitor REPLACES their hold (never dead-locks them)", () => {
+  // Same wallet re-reserving from a new session: the old hold is replaced,
+  // not stacked and not denied — total held budget stays 2, owner moves to s2.
+  const spentBefore = limits.spentLast24h();
+  assert.equal(limits.reservePayout("s2", "wallet-a", "ip-a", 2).ok, true);
+  assert.equal(limits.spentLast24h(), spentBefore);
+  // Rebind the hold back to s1 so the commit test below finds it there.
+  assert.equal(limits.reservePayout("s1", "wallet-a", "ip-a", 2).ok, true);
+  assert.equal(limits.spentLast24h(), spentBefore);
 });
 
 test("payout budget: commit converts the reservation into a payout exactly once", () => {

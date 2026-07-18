@@ -30,11 +30,12 @@ nginx routes to it.
 | Method | Path                          | Purpose |
 |--------|-------------------------------|---------|
 | GET    | `/api/judge/health`           | balances, pool, per-preset `canRun`, budgets, active session (owner only) |
-| GET    | `/api/judge/presets`          | the 4 preset descriptors with step lists |
+| GET    | `/api/judge/presets`          | the 5 preset descriptors with step lists |
 | POST   | `/api/judge/session`          | `{preset, supplierAddress?}` → `{id, displayId, token, steps…}` (signs nothing) |
 | POST   | `/api/judge/session/:id/next` | header `X-Judge-Token` — runs the next step: **exactly one transaction** |
 | GET    | `/api/judge/session/:id`      | session state (resume); owner requests refresh `lastActivityTs` |
 | GET    | `/api/judge/recent`           | last 5 completed walkthroughs — public receipts (no tokens/IPs) |
+| GET    | `/api/judge/recent/:displayId` | one run as a canonical `faktura.credit-receipt.v1` (memo + receiptHash; verify offline with `npm run verify-receipt`) |
 | GET    | `/api/judge/balance/:pubkey`  | testnet balance of any public key (wallet chip) |
 
 Presets:
@@ -60,11 +61,21 @@ Presets:
    invoice whenever the inventory runs dry (rate-limited, gas-budgeted), so
    this preset is always playable; `canRun` reports "ripening — ready in ~Ns"
    while the next one matures.
+5. **`ai-reject`** — 2 steps: the other exit of Gate 1. A deliberately bad
+   intake (shell-company debtor, disputed history, vague deliverables) is
+   underwritten, the model REJECTS it, and the rejection memo hash is anchored
+   with `attest UNDERWRITE_REJECT` (subject id 0 — nothing was ever registered
+   or funded). Every preset has an EXPECTED verdict; an off-script LLM verdict
+   gets one silent same-input retry and then fails the step retryable — a
+   walkthrough can never end as a false "done".
 
-Sessions: unguessable UUID id + human `JUDGE-YYYYMMDD-XXXX` display id + a
+Sessions: unguessable UUID id + human `JUDGE-YYYYMMDD-XXXXXXXX` display id + a
 32-byte bearer token required on every mutation. The active session (with its
-token) is revealed only to its creator's IP; everyone else sees a `deskBusy`
-flag. Failed steps stay **retryable**; refresh-resume is offered, never forced.
+token) is revealed only to its creator — matched by an HttpOnly `fj_cid`
+cookie set at creation (IP is a fallback for cookie-less curls and otherwise
+used for rate-limits only); everyone else sees a `deskBusy` flag. A same-owner
+restart supersedes the old run — but NOT while a transaction is still
+settling (409: resume instead), so an in-flight payout can never be orphaned. Failed steps stay **retryable**; refresh-resume is offered, never forced.
 
 ### Policy-block feasibility — why the math lives server-side
 
@@ -102,12 +113,13 @@ reservation. The ledger write is atomic (temp + rename) and the reserve path
 | Global payout CSPR per 24 h | 10 | `JUDGE_DAILY_PAYOUT_CSPR` |
 | Walkthroughs per IP per hour | 4 | `JUDGE_RUNS_PER_IP_HOUR` |
 | Walkthroughs per 24 h (all) | 24 | `JUDGE_RUNS_PER_DAY` |
-| Per-preset per 24 h | 12 / 10 / 15 / 8 | `JUDGE_HAPPY_PER_DAY` / `JUDGE_POLICY_PER_DAY` / `JUDGE_X402_PER_DAY` / `JUDGE_DEFAULT_PER_DAY` |
+| Per-preset per 24 h | 12 / 10 / 15 / 8 / 8 | `JUDGE_HAPPY_PER_DAY` / `JUDGE_POLICY_PER_DAY` / `JUDGE_X402_PER_DAY` / `JUDGE_DEFAULT_PER_DAY` / `JUDGE_AI_REJECT_PER_DAY` |
 | Signed steps (gas) per 24 h | 60 | `JUDGE_DEPLOYS_PER_DAY` |
 
-Plus: one active session globally (same-IP restart supersedes instantly; a
-*different* visitor can take the desk only after 5 min of inactivity), an 8 s
-double-submit debounce, a CORS allow-list, `trust proxy` IP handling, and
+Plus: one active session globally (a same-owner restart supersedes unless a
+transaction is in flight; a *different* visitor can take the desk only after
+5 min of inactivity), a 4 s double-submit debounce (the UI auto-retries with
+`retryAfterMs`), a CORS allow-list, `trust proxy` IP handling, and
 `JUDGE_SMOKE_SECRET` (header `X-Judge-Smoke`) for our own pre-freeze self-tests
 — it bypasses rate limits, never the signing or recording.
 
@@ -150,4 +162,4 @@ double-submit debounce, a CORS allow-list, `trust proxy` IP handling, and
 - [x] server: keys (600), `faktura-live` systemd unit on :4034, nginx route
 - [x] balances funded via faucet; health green; canRun feasibility verified
 - [x] self-tests: happy (+wallet 01/02), policy-block (exact error 15), x402
-- [x] release `v0.2.0-final-live-testnet`; evidence pack in DORAHACKS.md
+- [x] releases `v0.2.0` → `v0.2.4-final` (current); evidence pack in DORAHACKS.md
