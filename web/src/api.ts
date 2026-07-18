@@ -207,6 +207,8 @@ export interface JudgeSession {
   note?: string;
   poolBefore?: Record<string, number>;
   poolAfter?: Record<string, number>;
+  /** Visitor wallet the advance is paid to, when one was connected. */
+  wallet?: string | null;
   nextStep: JudgeStep | null;
 }
 
@@ -240,15 +242,19 @@ const JUDGE_BASE = `${import.meta.env.BASE_URL}api/judge`.replace(/\/\/api\/judg
 export const judge = {
   health: () => fetch(`${JUDGE_BASE}/health`).then((r) => j<JudgeHealth>(r)),
   presets: () => fetch(`${JUDGE_BASE}/presets`).then((r) => j<JudgePreset[]>(r)),
-  createSession: (preset: string) =>
+  createSession: (preset: string, supplierAddress?: string) =>
     fetch(`${JUDGE_BASE}/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ preset }),
+      body: JSON.stringify(supplierAddress ? { preset, supplierAddress } : { preset }),
     }).then((r) => j<JudgeSession>(r)),
   nextStep: (id: string) =>
     fetch(`${JUDGE_BASE}/session/${id}/next`, { method: "POST" }).then((r) => j<JudgeSession>(r)),
   getSession: (id: string) => fetch(`${JUDGE_BASE}/session/${id}`).then((r) => j<JudgeSession>(r)),
+  balance: (pubkey: string) =>
+    fetch(`${JUDGE_BASE}/balance/${pubkey}`).then((r) =>
+      j<{ pubkey: string; cspr: number | null }>(r),
+    ),
 };
 
 export const motesToCspr = (m: string | undefined) =>
