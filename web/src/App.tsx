@@ -2281,9 +2281,13 @@ function JudgeGuided({
                 {session.displayId ?? session.id.slice(0, 8)} · {session.subtitle}
               </div>
               <div className={`lj-payout ${session.wallet ? "own" : ""}`}>
-                {session.wallet
-                  ? `◈ advance pays YOUR wallet ${shortKey(session.wallet)}`
-                  : "advance pays the demo supplier"}
+                {session.preset === "policy-block"
+                  ? "no advance will move — the contract is about to reject this one"
+                  : session.preset === "x402"
+                    ? "no new advance — reuses an already-funded invoice"
+                    : session.wallet
+                      ? `◈ advance pays YOUR wallet ${shortKey(session.wallet)}`
+                      : "advance pays the demo supplier"}
               </div>
               <h1>{session.title}</h1>
             </div>
