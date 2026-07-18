@@ -261,6 +261,7 @@ export interface JudgeHealth {
   x402Price: string;
   canRun?: Record<string, { ok: boolean; reason?: string }>;
   budget?: { capCspr: number; spentCspr: number; deploysToday?: number; deployCap?: number };
+  uptimeSec?: number;
   deskBusy?: boolean;
   activeSession: JudgeSession | null;
 }

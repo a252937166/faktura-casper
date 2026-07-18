@@ -641,7 +641,9 @@ export default function App() {
             <div className="hero-live">
               <span className={`live-dot ${jhealth?.paused ? "amber" : "green"}`} />
               {jhealth?.paused
-                ? "Live workflow paused — the Casper node is unreachable right now; the desk preview below still works."
+                ? (jhealth?.uptimeSec ?? 999) < 150
+                  ? "The live desk just restarted and is warming up — ready in under a minute."
+                  : "Live workflow paused — the Casper node is unreachable right now; the desk preview below still works."
                 : "Guided workflow: real on-chain transactions. Desk preview below: safe showcase data."}
             </div>
           ) : (
