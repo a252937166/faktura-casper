@@ -15,7 +15,27 @@ import type { FeedEvent } from "./feed.js";
 import type { InvoiceRecord } from "./store.js";
 
 const app = express();
+// Behind nginx: derive req.ip from the proxy hop, not client-forgeable headers.
+app.set("trust proxy", 1);
 app.use(cors());
+
+/**
+ * On the live judge backend the ONLY sanctioned write surface is the guided
+ * walkthrough (/api/judge/*): its steps are preset-only, budgeted and token-
+ * guarded. The free-form demo write routes stay showcase-only.
+ */
+const JUDGE_ONLY = process.env.FAKTURA_JUDGE === "1";
+const walkthroughOnly = (_req: express.Request, res: express.Response) => {
+  res.status(403).json({
+    error: "This live desk signs only through the guided walkthrough — open /api/judge.",
+  });
+};
+if (JUDGE_ONLY) {
+  app.post("/api/invoices", walkthroughOnly);
+  app.post("/api/demo/deposit", walkthroughOnly);
+  app.post("/api/demo/settle/:id", walkthroughOnly);
+  app.post("/api/demo/x402-pay", walkthroughOnly);
+}
 app.use(express.json({ limit: "2mb" }));
 
 // ---- Intake / underwriting ------------------------------------------------

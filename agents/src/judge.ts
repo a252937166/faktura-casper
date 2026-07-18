@@ -14,13 +14,20 @@
  * is untouched.
  */
 import crypto from "node:crypto";
+import cors from "cors";
 import { Router, type Request } from "express";
+import { DAILY_PAYOUT_CAP_CSPR, canPayout, recordPayout, spentLast24h } from "./judge-limits.js";
 import { config } from "./config.js";
 import { chain } from "./chain.js";
 import { underwrite as llmUnderwrite } from "./llm.js";
 import { db, upsertInvoice, type InvoiceRecord } from "./store.js";
 import { feed } from "./feed.js";
-import { nativeTransfer, queryBalance, personaPublicKeyHex } from "./native-transfer.js";
+import {
+  nativeTransfer,
+  pubKeyToAccountHashStr,
+  queryBalance,
+  personaPublicKeyHex,
+} from "./native-transfer.js";
 
 const CSPR = 1_000_000_000n;
 const toMotes = (c: number) => BigInt(Math.round(c * 1e9)).toString();
@@ -59,7 +66,13 @@ interface StepDef extends Omit<JudgeStep, "status"> {
 }
 
 interface Session {
+  /** Unguessable id (uuid) — knowing it is required to read the session. */
   id: string;
+  /** Human-friendly label for the UI (JUDGE-YYYYMMDD-XXXX). */
+  displayId: string;
+  /** Secret bearer for mutations; returned once at creation (and to the
+   * creator's IP on resume). */
+  token: string;
   preset: string;
   title: string;
   subtitle: string;
@@ -99,13 +112,13 @@ const sessions = new Map<string, Session>();
 const order: string[] = [];
 let seq = 0;
 
-function newId(): string {
+function newDisplayId(id: string): string {
   const d = new Date();
   const ymd = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(
     d.getUTCDate(),
   ).padStart(2, "0")}`;
   seq += 1;
-  return `JUDGE-${ymd}-${String(seq).padStart(3, "0")}`;
+  return `JUDGE-${ymd}-${id.slice(0, 4).toUpperCase()}`;
 }
 
 function publicStep(d: StepDef, status: StepStatus): JudgeStep {
@@ -116,6 +129,7 @@ function publicStep(d: StepDef, status: StepStatus): JudgeStep {
 function publicSession(s: Session) {
   return {
     id: s.id,
+    displayId: s.displayId,
     preset: s.preset,
     title: s.title,
     subtitle: s.subtitle,
@@ -179,6 +193,30 @@ async function balanceWithTimeout(pubHex: string, ms = 12_000): Promise<number |
   ]);
 }
 
+/** Funded-invoice ids, cached like the pool (livenet reads are slow). */
+let fundedCache: { ts: number; ids: number[] } = { ts: 0, ids: [] };
+let fundedInflight: Promise<void> | null = null;
+async function cachedFundedIds(ttlMs = 90_000): Promise<number[]> {
+  const freshEnough = Date.now() - fundedCache.ts < ttlMs;
+  if (freshEnough) return fundedCache.ids;
+  if (!fundedInflight) {
+    fundedInflight = chain
+      .invoices(1, 200)
+      .then((list) => {
+        fundedCache = { ts: Date.now(), ids: list.filter((i) => i.state === 1).map((i) => i.id) };
+      })
+      .catch(() => {
+        fundedCache = { ...fundedCache, ts: Date.now() };
+      })
+      .finally(() => {
+        fundedInflight = null;
+      });
+  }
+  if (fundedCache.ts > 0) return fundedCache.ids;
+  await fundedInflight;
+  return fundedCache.ids;
+}
+
 /** On-chain single-invoice cap (bps), cached — policy is effectively static. */
 let policyBpsCache: number | null = null;
 async function cachedPolicyBps(): Promise<number> {
@@ -219,8 +257,23 @@ async function health() {
     }),
   );
   const { snap: pool, ok: contractOk } = await cachedPool();
+  const fundedIds = await cachedFundedIds().catch(() => [] as number[]);
   const low = PERSONAS.filter((p) => balances[p] != null && (balances[p] as number) < FLOORS[p]);
   const paused = !rpcOk || !contractOk || low.length > 0;
+  const liquid = pool?.liquid ?? 0;
+  const canRun = {
+    happy:
+      liquid >= 5
+        ? { ok: true }
+        : { ok: false, reason: "pool liquidity too low for a funded lifecycle" },
+    policyBlock:
+      liquid >= 20
+        ? { ok: true }
+        : { ok: false, reason: "pool too shallow to demonstrate the cap" },
+    x402: fundedIds.length
+      ? { ok: true }
+      : { ok: false, reason: "no funded invoice on the book — run the Full lifecycle first" },
+  };
   const activeId = order.filter((id) => sessions.get(id)?.status === "active").at(-1);
   return {
     mode: "live-testnet" as const,
@@ -236,6 +289,7 @@ async function health() {
     paused,
     pool,
     x402Price: config.x402.priceMotes,
+    canRun,
     activeSession: activeId ? publicSession(sessions.get(activeId)!) : null,
   };
 }
@@ -302,7 +356,7 @@ async function doUnderwrite(s: Session): Promise<{ result: string; reverted?: bo
   // single-invoice cap (from live pool value) so funding will revert on-chain.
   // Use the CACHED pool + policy (warmed at session creation) so this "instant"
   // step never blocks on a cold ~60 s livenet read.
-  let faceCspr = 12;
+  let faceCspr = 2; // small on purpose: visitor payouts stay ~1.9 CSPR
   if (s.preset === "policy-block") {
     const liquid = (await cachedPool()).snap?.liquid ?? s.poolBefore?.liquid ?? 100;
     const capFrac = (await cachedPolicyBps()) / 10000;
@@ -394,7 +448,9 @@ async function stepRegister(s: Session) {
   const r = s.ctx.record!;
   // If the visitor connected their Casper wallet, THEY are the supplier — the
   // advance lands in their own wallet. Otherwise the demo supplier receives it.
-  const supplier = s.ctx.supplierOverride ?? (await chain.caller("supplier"));
+  const supplier = s.ctx.supplierOverride
+    ? pubKeyToAccountHashStr(s.ctx.supplierOverride)
+    : await chain.caller("supplier");
   const reg = await chain.register({
     supplier,
     debtorTag: r.intake.debtorTag,
@@ -425,9 +481,14 @@ async function stepFund(s: Session) {
     r.chain.fundHash = tx;
     r.status = "funded";
     upsertInvoice(r);
-    const dest = s.ctx.supplierOverride
-      ? `FUNDED — the advance just landed in YOUR wallet (${s.ctx.supplierOverride.slice(0, 10)}…). Check your balance.`
-      : `FUNDED — advance streamed from the pool to the supplier`;
+    fundedCache.ts = 0; // the book just changed
+    let dest = `FUNDED — advance streamed from the pool to the supplier`;
+    if (s.ctx.supplierOverride) {
+      dest = `FUNDED — the advance just landed in YOUR wallet (${s.ctx.supplierOverride.slice(0, 10)}…). Check your balance.`;
+      const advanceCspr =
+        (r.intake.amountCspr * (10_000 - (r.decision?.discountBps ?? 0))) / 10_000;
+      recordPayout(s.ctx.supplierOverride, s.ip, advanceCspr);
+    }
     return { result: dest, txHash: tx };
   } catch (e) {
     const err = normalizeRevert((e as Error).message);
@@ -452,6 +513,29 @@ async function stepAttest(s: Session) {
   return {
     result: `Decision memo hash anchored on-chain (attestation #${att.result.attestationId})`,
     txHash: tx,
+  };
+}
+
+async function stepPickFunded(s: Session) {
+  const ids = await cachedFundedIds();
+  if (!ids.length) {
+    throw new Error(
+      "No funded invoice is on the book right now — run the Full lifecycle walkthrough first, then come back to buy its report.",
+    );
+  }
+  const id = ids[ids.length - 1];
+  s.ctx.invoiceId = id;
+  // the oracle needs an off-chain decision record for this invoice
+  if (!db.invoices.some((r) => r.id === id && r.decision)) {
+    const seeded = db.invoices.find((r) => r.decision && r.id > 0 && ids.includes(r.id));
+    if (seeded) s.ctx.invoiceId = seeded.id;
+    else
+      throw new Error(
+        "The desk has no decision memo for the funded invoices on this host yet — run the Full lifecycle walkthrough once, then retry.",
+      );
+  }
+  return {
+    result: `Reusing funded invoice #${s.ctx.invoiceId} — no new exposure is created for this purchase`,
   };
 }
 
@@ -491,6 +575,7 @@ async function stepSettle(s: Session) {
   r.chain.settleHash = tx;
   r.status = "settled";
   upsertInvoice(r);
+  fundedCache.ts = 0; // the book just changed
   s.poolAfter = await snap().catch(() => undefined);
   return {
     result: `Debtor paid ${r.intake.amountCspr} CSPR face value — the pool realizes its yield`,
@@ -625,37 +710,15 @@ function policyBlockDefs(): StepDef[] {
 function x402Defs(): StepDef[] {
   return [
     {
-      key: "underwrite",
-      actor: "underwriter",
+      key: "pick",
+      actor: "oracle",
       kind: "compute",
-      title: "AI underwrites the invoice",
-      action: "Score & price it",
-      what: "A clean receivable is scored and priced so there is a report to sell.",
-      who: "Autonomous underwriter agent",
-      why: "The risk report only exists for an underwritten invoice. Instant — no gas.",
-      run: (s) => doUnderwrite(s),
-    },
-    {
-      key: "register",
-      actor: "underwriter",
-      kind: "chain",
-      title: "Register the invoice on-chain",
-      action: "Sign register_invoice",
-      what: "register_invoice writes the receivable and decision hash.",
-      who: "Underwriter agent key",
-      why: "The report is anchored to a real on-chain invoice.",
-      run: stepRegister,
-    },
-    {
-      key: "fund",
-      actor: "underwriter",
-      kind: "chain",
-      title: "Pool funds the supplier",
-      action: "Sign fund_invoice",
-      what: "fund_invoice advances the discounted amount to the supplier.",
-      who: "Underwriter agent key",
-      why: "A funded invoice is a live position worth pricing.",
-      run: stepFund,
+      title: "Pick a funded invoice from the book",
+      action: "Scan the book",
+      what: "The oracle reuses an invoice the pool has already funded — buying a report never creates new exposure.",
+      who: "Faktura risk oracle",
+      why: "Reports are priced per invoice; the book already has live positions to price. Instant — no gas.",
+      run: stepPickFunded,
     },
     {
       key: "x402",
@@ -663,9 +726,9 @@ function x402Defs(): StepDef[] {
       kind: "chain",
       title: "Buyer purchases the risk report (x402)",
       action: "Pay over HTTP 402",
-      what: "A buyer agent pays over HTTP 402 with native CSPR and gets the verified report with its on-chain decision hash.",
+      what: "A buyer agent hits the oracle, gets 402 Payment Required, settles with a native CSPR transfer carrying the nonce, and receives the verified report.",
       who: "Buyer agent (debtor key)",
-      why: "Machine-to-machine payment for verifiable data.",
+      why: "Machine-to-machine payment for verifiable data — the report carries the on-chain decision hash.",
       run: stepX402,
     },
   ];
@@ -710,8 +773,9 @@ const lastNewByIp = new Map<string, number>();
 let STEPPING = false; // single in-flight chain step across all sessions
 
 function clientIp(req: Request): string {
-  const xf = (req.headers["x-forwarded-for"] as string) ?? "";
-  return xf.split(",")[0].trim() || req.ip || "unknown";
+  // With app.set("trust proxy", 1) express derives this from the rightmost
+  // proxy hop — not from a client-forgeable header we parse ourselves.
+  return req.ip || "unknown";
 }
 
 function activeSession(): Session | undefined {
@@ -731,16 +795,44 @@ function activeSession(): Session | undefined {
 
 // ---- router -----------------------------------------------------------------
 
+const ALLOWED_ORIGINS = [
+  "https://faktura.axiqo.xyz",
+  "http://localhost:4034",
+  "http://127.0.0.1:4034",
+];
+
 export function makeJudgeRouter(): Router {
   const r = Router();
+  // These endpoints trigger real signatures — only the desk's own pages may
+  // call them from a browser.
+  r.use(
+    cors({
+      origin: (origin, cb) =>
+        !origin || ALLOWED_ORIGINS.includes(origin)
+          ? cb(null, true)
+          : cb(new Error("origin not allowed")),
+      methods: ["GET", "POST"],
+    }),
+  );
   // Warm the pool + policy caches so the "instant" underwrite step never blocks
   // on a cold ~60 s livenet read.
   cachedPool().catch(() => {});
   cachedPolicyBps().catch(() => {});
+  cachedFundedIds().catch(() => {});
 
-  r.get("/health", async (_req, res) => {
+  r.get("/health", async (req, res) => {
     try {
-      res.json(await cachedHealth());
+      const h = await cachedHealth();
+      // The active walkthrough (with its resume token) is only shown to the IP
+      // that created it — strangers see a busy flag, not someone else's run.
+      const mine = h.activeSession && sessions.get(h.activeSession.id)?.ip === clientIp(req);
+      const active = mine ? sessions.get(h.activeSession!.id)! : null;
+      res.json({
+        ...h,
+        activeSession: active ? { ...publicSession(active), token: active.token } : null,
+        deskBusy: !!h.activeSession && !mine,
+        budget: { capCspr: DAILY_PAYOUT_CAP_CSPR, spentCspr: spentLast24h() },
+      });
     } catch (e) {
       res.status(500).json({ error: (e as Error).message, mode: "live-testnet", paused: true });
     }
@@ -790,9 +882,10 @@ export function makeJudgeRouter(): Router {
       res.status(400).json({ error: "preset must be happy | policy-block | x402" });
       return;
     }
-    // Optional: the visitor's connected Casper wallet public key. When present,
-    // the advance is paid to THEIR wallet instead of the demo supplier. Only a
-    // recipient address — we never ask the visitor to sign anything.
+    // Optional: the visitor's connected Casper wallet public key. Only the
+    // happy-path walkthrough pays out; other presets ignore it (policy-block
+    // reverts by design, x402 reuses an existing invoice). Only a recipient
+    // address — we never ask the visitor to sign anything.
     const rawWallet = String(req.body?.supplierAddress ?? "").trim();
     let supplierOverride: string | undefined;
     if (rawWallet) {
@@ -802,7 +895,7 @@ export function makeJudgeRouter(): Router {
         });
         return;
       }
-      supplierOverride = rawWallet.toLowerCase();
+      if (preset === "happy") supplierOverride = rawWallet.toLowerCase();
     }
     const ip = clientIp(req);
     const existing = activeSession();
@@ -837,10 +930,22 @@ export function makeJudgeRouter(): Router {
     }
     lastNewByIp.set(ip, Date.now());
 
+    // Wallet payouts burn the daily budget — check BEFORE any signing starts.
+    if (supplierOverride && preset === "happy") {
+      const gate = canPayout(supplierOverride, ip, 2);
+      if (!gate.ok) {
+        res.status(403).json({ error: gate.reason, payoutBlocked: true });
+        return;
+      }
+    }
+
     const defs = def.defs();
     const steps = defs.map((d, i) => publicStep(d, i === 0 ? "ready" : "locked"));
+    const uuid = crypto.randomUUID();
     const s: Session = {
-      id: newId(),
+      id: uuid,
+      displayId: newDisplayId(uuid),
+      token: crypto.randomBytes(32).toString("hex"),
       preset,
       title: def.title,
       subtitle: def.subtitle,
@@ -856,7 +961,7 @@ export function makeJudgeRouter(): Router {
     sessions.set(s.id, s);
     order.push(s.id);
     if (order.length > 60) sessions.delete(order.shift() as string);
-    res.status(201).json(publicSession(s));
+    res.status(201).json({ ...publicSession(s), token: s.token });
   });
 
   // Run the next step of a session — signs exactly one transaction.
@@ -864,6 +969,13 @@ export function makeJudgeRouter(): Router {
     const s = sessions.get(req.params.id);
     if (!s) {
       res.status(404).json({ error: "session not found" });
+      return;
+    }
+    // Mutations require the bearer issued at creation — a guessable URL alone
+    // must never advance (or sabotage) someone's walkthrough.
+    const token = String(req.headers["x-judge-token"] ?? "");
+    if (token !== s.token) {
+      res.status(403).json({ error: "invalid session token" });
       return;
     }
     if (s.status !== "active") {
@@ -879,12 +991,16 @@ export function makeJudgeRouter(): Router {
     const i = s.cursor;
     const def = s.defs[i];
     const step = s.steps[i];
-    if (!def || step.status !== "ready") {
+    if (!def || (step.status !== "ready" && step.status !== "failed")) {
       res.status(409).json({ error: "no step ready to run", session: publicSession(s) });
       return;
     }
 
     STEPPING = true;
+    // Retrying a failed step: clear the previous attempt's outcome.
+    step.result = undefined;
+    step.txHash = undefined;
+    step.explorerUrl = undefined;
     step.status = "running";
     step.startedTs = Date.now();
     try {
@@ -910,17 +1026,19 @@ export function makeJudgeRouter(): Router {
       }
       res.json(publicSession(s));
     } catch (e) {
+      // Testnet hiccups happen — a failed step stays RETRYABLE and the
+      // walkthrough stays active. The judge decides: retry or abandon.
+      const msg = (e as Error).message;
+      const tail = msg.length > 320 ? `…${msg.slice(-320)}` : msg;
       step.status = "failed";
-      step.result = (e as Error).message.slice(0, 200);
+      step.result = tail;
       step.endedTs = Date.now();
-      s.status = "failed";
-      s.endedTs = Date.now();
       feed.publish({
         actor: "system",
         kind: "error",
-        message: `judge step ${step.key} failed: ${step.result}`,
+        message: `judge step ${step.key} failed (retryable): ${tail.slice(0, 200)}`,
       });
-      res.status(500).json({ error: step.result, session: publicSession(s) });
+      res.json(publicSession(s));
     } finally {
       STEPPING = false;
     }

@@ -24,6 +24,15 @@ export function personaPublicKeyHex(name: string): string {
   return fs.readFileSync(path.join(ROOT, "keys", name, "public_key_hex"), "utf8").trim();
 }
 
+/**
+ * Public key hex (01 ed25519 / 02 secp256k1) → "account-hash-…". The livenet
+ * CLI's Address parser accepts account-hash for both schemes, while a raw 02
+ * public key is rejected — so visitor wallets are normalized here.
+ */
+export function pubKeyToAccountHashStr(hex: string): string {
+  return CLPublicKey.fromHex(hex).toAccountHashStr();
+}
+
 /** Signs + submits a native transfer; returns the deploy hash. */
 export async function nativeTransfer(opts: {
   fromKeyPath: string;
