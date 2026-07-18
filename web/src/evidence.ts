@@ -33,7 +33,7 @@ export const EVIDENCE = {
   // Pinned to the release TAG (not a moving branch) so the evidence a judge
   // opens is exactly what was frozen at submission time.
   evidencePackUrl: "https://github.com/a252937166/faktura-casper/blob/v0.2.4-final/DORAHACKS.md",
-  releaseTag: "v0.2.3-final",
-  releaseUrl: "https://github.com/a252937166/faktura-casper/releases/tag/v0.2.3-final",
+  releaseTag: "v0.2.4-final",
+  releaseUrl: "https://github.com/a252937166/faktura-casper/releases/tag/v0.2.4-final",
   videoUrl: "https://youtu.be/47ZNPZlRXVA",
 } as const;

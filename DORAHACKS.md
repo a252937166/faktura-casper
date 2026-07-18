@@ -14,7 +14,7 @@ on-chain step signs exactly **one real Casper Testnet transaction** (~30–120 s
 to finality, with a live timer), then shows its CSPR.live link and unlocks the
 next step — short, bounded waits instead of one long run, and every screen
 tells you what just happened, why it matters, and what comes next. One main
-story, three challenges:
+story, four challenges:
 
 - **Full lifecycle** (main story) — AI underwrite → `register_invoice` →
   `fund_invoice` → `attest` → `settle_invoice` (5 steps, 4 transactions,
@@ -24,6 +24,11 @@ story, three challenges:
   with `User error 15 (SingleInvoiceCapExceeded)` — and the revert **you**
   trigger links itself on CSPR.live. A valid agent key with a model approval
   still cannot exceed the on-chain policy.
+- **AI declines** (the other exit of Gate 1) — a deliberately bad intake
+  (shell-company debtor, disputed history, vague deliverables) is REJECTED by
+  the model with reasons, and the rejection memo hash is anchored with
+  `attest UNDERWRITE_REJECT` — an auditable desk proves what it declined,
+  not only what it funded.
 - **x402 consumer loop** (agent economy) — a consumer agent pays over HTTP 402
   with native CSPR, verifies the report hash **three ways** (report · local
   memo · on-chain anchor), applies its own acceptance policy, and anchors
