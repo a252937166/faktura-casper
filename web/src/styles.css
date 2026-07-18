@@ -2817,8 +2817,15 @@ td:first-child {
   line-height: 1.5;
   color: var(--ink);
 }
+.ds-tools {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex: none;
+}
 .ds-more {
   flex: none;
+  position: relative;
 }
 .ds-more summary {
   font-family: var(--mono);
@@ -2836,8 +2843,8 @@ td:first-child {
 }
 .ds-more-body {
   position: absolute;
-  right: 34px;
-  margin-top: 8px;
+  right: 0;
+  top: calc(100% + 10px);
   max-width: 520px;
   padding: 12px 14px;
   background: var(--card);
@@ -2992,4 +2999,33 @@ td:first-child {
 .lj-finish-wallet a {
   color: var(--green);
   font-weight: 600;
+}
+
+/* proof strip inside the status popover - compact vertical list */
+.ds-more-body .proof-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  background: none;
+}
+.ds-more-body .proof-strip .ps-title {
+  display: none;
+}
+.ds-more-body .proof-strip .ps-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  white-space: nowrap;
+}
+
+/* keep the masthead tagline on one line */
+.tagline {
+  white-space: nowrap;
+}
+.hero h1 {
+  margin-top: 10px;
 }
