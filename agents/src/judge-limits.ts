@@ -197,13 +197,13 @@ export function canPayout(
     return {
       ok: false,
       reason:
-        "This wallet already received a payout in the last 24 h — run with the demo supplier instead.",
+        "This wallet already received a payout in the last 24 h — one payout per wallet per day keeps the desk fair. Run with the demo supplier instead; every transaction is just as real.",
     };
   if (taken.some((p) => p.ip === ip))
     return {
       ok: false,
       reason:
-        "This connection already received a payout in the last 24 h — run with the demo supplier instead.",
+        "This network connection already received a payout in the last 24 h — the cap is per person, not per wallet, so switching wallets doesn't reset it. Run with the demo supplier instead; every transaction is just as real.",
     };
   if (spentLast24h() + cspr > CAPS.dailyPayoutCspr)
     return {
@@ -228,6 +228,11 @@ export function reservePayout(
   bypass = false,
 ): { ok: boolean; reason?: string } {
   prune();
+  // A retry by the SAME visitor replaces their previous hold. Reservations
+  // exist to stop CONCURRENT sessions overshooting the budget — they must
+  // never dead-lock the very person who made them (e.g. after an abandoned
+  // run or a backend restart).
+  state.reservations = state.reservations.filter((r) => r.wallet !== wallet && r.ip !== ip);
   if (!bypass) {
     const gate = canPayout(wallet, ip, cspr);
     if (!gate.ok) return gate;
@@ -237,6 +242,19 @@ export function reservePayout(
   state.reservations.push({ sessionId, wallet, ip, cspr, ts: Date.now() });
   save(); // throws on failure — fail closed, caller surfaces 503
   return { ok: true };
+}
+
+/**
+ * Sessions live in memory, so after a restart every persisted reservation is
+ * an orphan — its owner can never commit or release it. Drop them at boot,
+ * or a visitor who abandoned a run right before a redeploy stays locked out
+ * of wallet payouts for hours.
+ */
+export function clearOrphanReservations() {
+  if (state.reservations.length) {
+    state.reservations = [];
+    saveBestEffort();
+  }
 }
 
 /** Convert the session's reservation into a committed payout (fund confirmed). */
