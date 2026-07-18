@@ -145,8 +145,8 @@ banner):
 - **🟢 Live Testnet Judge Mode** — on [faktura.axiqo.xyz](https://faktura.axiqo.xyz)
   click **▶ Use the real AI desk**. Each preset drives the *full* lifecycle as
   **real Casper Testnet transactions** with a CSPR.live link on every step —
-  no simulation. Four presets: the happy path (submit → AI underwrite →
-  register → fund → attest → x402 purchase → settle), the **policy firewall**
+  no simulation. Four presets: the main story (AI underwrite →
+  register → fund → attest → settle — supplier paid, debtor settles), the **policy firewall**
   (the AI approves an oversized invoice and the *contract* reverts funding with
   `SingleInvoiceCapExceeded` — the failed transaction links right there), an
   x402 story where the buyer agent pays, **verifies and acts** on the report

@@ -451,24 +451,43 @@ async function health() {
     ),
     x402: gate(
       "x402",
-      fundedIds.length &&
-        db.invoices.some((r) => r.decision && r.id > 0 && fundedIds.includes(r.id))
+      book.some((i) => db.invoices.some((r) => r.id === i.id && r.decision))
         ? { ok: true }
         : {
             ok: false,
-            reason:
-              "no funded invoice with a decision memo on the book — run the Full lifecycle first",
+            reason: "no on-chain invoice with a decision memo yet — run the Full lifecycle first",
           },
     ),
     default: gate(
       "default",
       overdueCount
         ? { ok: true }
-        : {
-            ok: false,
-            reason:
-              "no overdue funded invoice on the book — the desk seeds one periodically; check back soon",
-          },
+        : (() => {
+            // Inventory ripening: a funded invoice already exists whose due
+            // date is imminent — tell the visitor WHEN, not "check back soon".
+            const ripening = book
+              .filter(
+                (i) =>
+                  i.state === 1 &&
+                  i.dueTs + GRACE_MS + 5_000 >= Date.now() &&
+                  i.dueTs < Date.now() + 5 * 60_000, // only short-dated seeds count
+              )
+              .sort((a, b) => a.dueTs - b.dueTs)[0];
+            if (ripening) {
+              const readyIn = Math.max(
+                5,
+                Math.ceil((ripening.dueTs + GRACE_MS + 5_000 - Date.now()) / 1000),
+              );
+              return {
+                ok: false,
+                reason: `the next overdue invoice is ripening — ready in ~${readyIn}s`,
+              };
+            }
+            return {
+              ok: false,
+              reason: "no overdue funded invoice yet — the desk is preparing one",
+            };
+          })(),
     ),
   };
   const activeId = order.filter((id) => sessions.get(id)?.status === "active").at(-1);
@@ -866,26 +885,26 @@ async function stepAttest(s: Session) {
   };
 }
 
-async function stepPickFunded(s: Session) {
-  const ids = await cachedFundedIds();
-  if (!ids.length) {
+/**
+ * Risk reports are priced per UNDERWRITTEN invoice, not per funded one — a
+ * settled or even defaulted receivable still has a verifiable decision memo
+ * worth buying (that's what a credit-history oracle is). So the pick is any
+ * on-chain invoice with a decision memo, newest first, preferring live
+ * positions for the nicer story.
+ */
+async function stepPickVerified(s: Session) {
+  const book = await cachedBook();
+  const withMemo = book.filter((i) => db.invoices.some((r) => r.id === i.id && r.decision));
+  if (!withMemo.length) {
     throw new Error(
-      "No funded invoice is on the book right now — run the Full lifecycle walkthrough first, then come back to buy its report.",
+      "No on-chain invoice with a decision memo is on the book yet — run the Full lifecycle walkthrough once, then come back to buy its report.",
     );
   }
-  const id = ids[ids.length - 1];
-  s.ctx.invoiceId = id;
-  // the oracle needs an off-chain decision record for this invoice
-  if (!db.invoices.some((r) => r.id === id && r.decision)) {
-    const seeded = db.invoices.find((r) => r.decision && r.id > 0 && ids.includes(r.id));
-    if (seeded) s.ctx.invoiceId = seeded.id;
-    else
-      throw new Error(
-        "The desk has no decision memo for the funded invoices on this host yet — run the Full lifecycle walkthrough once, then retry.",
-      );
-  }
+  const pick = [...withMemo].reverse().find((i) => i.state === 1) ?? withMemo[withMemo.length - 1];
+  s.ctx.invoiceId = pick.id;
+  const stateName = ["LISTED", "FUNDED", "SETTLED", "DEFAULTED"][pick.state] ?? `#${pick.state}`;
   return {
-    result: `Reusing funded invoice #${s.ctx.invoiceId} — no new exposure is created for this purchase`,
+    result: `Picked verified invoice #${pick.id} (${stateName}) — its decision memo is anchored on-chain; buying the report creates zero new exposure`,
   };
 }
 
@@ -947,10 +966,16 @@ async function stepX402(s: Session) {
 async function stepConsumerVerdict(s: Session) {
   const rep = s.ctx.report;
   if (!rep) throw new Error("no purchased report in this session — run the x402 step first");
+  // THREE-WAY verification — the whole point of an auditable oracle:
+  //   1. the hash inside the purchased report
+  //   2. the desk's local decision memo
+  //   3. the anchor the CONTRACT stores for this invoice (read on-chain now)
   const local = db.invoices.find((r) => r.id === rep.invoiceId && r.decision);
-  const hashMatch = !!local && local.decision!.decisionHash === rep.decisionHash;
+  const localMatch = !!local && local.decision!.decisionHash === rep.decisionHash;
+  const onchainInv = await chain.invoice(rep.invoiceId).catch(() => null);
+  const chainMatch = !!onchainInv && onchainInv.decisionHash === rep.decisionHash;
   const riskOk = rep.riskScore <= 35;
-  const accepted = hashMatch && riskOk;
+  const accepted = localMatch && chainMatch && riskOk;
   const verdict = accepted ? "ACCEPT" : "REJECT";
   let tx: string | undefined;
   let anchored = "";
@@ -962,19 +987,23 @@ async function stepConsumerVerdict(s: Session) {
       "consumer-agent",
     );
     tx = att.deployHashes.at(-1);
-    anchored = ` — verdict anchored on-chain (attestation #${att.result.attestationId})`;
+    anchored = ` — acceptance anchored by the desk's attestation relay (attestation #${att.result.attestationId})`;
   }
+  const checks = `report↔memo ${localMatch ? "MATCH" : "MISMATCH"} · report↔on-chain ${chainMatch ? "MATCH" : "MISMATCH"} · risk ${rep.riskScore} ${riskOk ? "≤" : ">"} 35`;
   return {
-    result: `Consumer verdict: ${verdict} — memo hash ${hashMatch ? "MATCH" : "MISMATCH"}, risk ${rep.riskScore} ${riskOk ? "≤" : ">"} 35${anchored}`,
+    result: `Consumer verdict: ${verdict} — ${checks}${anchored}`,
     txHash: tx,
     decision: {
       verdict: (accepted ? "APPROVE" : "REJECT") as DecisionCard["verdict"],
       riskScore: rep.riskScore,
       discountBps: 0,
       rationale: accepted
-        ? "The purchased memo hash matches the on-chain anchor and the risk score clears the consumer's own policy (≤ 35) — the buyer agent accepts the report and records its acceptance."
-        : "The purchased report failed the consumer agent's checks — no acceptance is recorded.",
-      redFlags: hashMatch ? [] : ["decision hash mismatch"],
+        ? "The purchased report's hash matches BOTH the desk's local memo and the anchor stored by the Casper contract, and the risk score clears the consumer's own policy (≤ 35). The consumer agent decides; the desk's attestation relay records the acceptance on-chain."
+        : `The purchased report failed the consumer agent's checks (${checks}) — no acceptance is recorded.`,
+      redFlags: [
+        ...(localMatch ? [] : ["local memo hash mismatch"]),
+        ...(chainMatch ? [] : ["on-chain anchor mismatch"]),
+      ],
       model: "consumer-agent",
       decisionHash: rep.decisionHash,
     },
@@ -1150,17 +1179,6 @@ function happyDefs(): StepDef[] {
       run: stepAttest,
     },
     {
-      key: "x402",
-      actor: "oracle",
-      kind: "chain",
-      title: "A buyer purchases the risk report (x402)",
-      action: "Pay over HTTP 402",
-      what: "A buyer agent hits the oracle, gets 402 Payment Required, settles with a native CSPR transfer carrying the nonce, and receives the verified report.",
-      who: "Buyer agent (debtor key)",
-      why: "Machine-payable data — the agent economy, settled on-chain.",
-      run: stepX402,
-    },
-    {
       key: "settle",
       actor: "debtor",
       kind: "chain",
@@ -1168,7 +1186,7 @@ function happyDefs(): StepDef[] {
       action: "Sign settle_invoice",
       what: "The debtor repays face value; the pool realizes its yield and the LP share price reflects the gain.",
       who: "Debtor key",
-      why: "Closes the credit loop end-to-end.",
+      why: "Closes the credit loop end-to-end. (The x402 report sale is its own side quest — settlement never depends on it.)",
       run: stepSettle,
     },
   ];
@@ -1218,21 +1236,21 @@ function x402Defs(): StepDef[] {
       key: "pick",
       actor: "oracle",
       kind: "compute",
-      title: "Pick a funded invoice from the book",
+      title: "Pick a verified invoice from the book",
       action: "Scan the book",
-      what: "The oracle reuses an invoice the pool has already funded — buying a report never creates new exposure.",
+      what: "The oracle picks an invoice whose decision memo is anchored on-chain — funded, settled or defaulted, its credit history is verifiable and worth buying.",
       who: "Faktura risk oracle",
-      why: "Reports are priced per invoice; the book already has live positions to price. Instant — no gas.",
-      run: stepPickFunded,
+      why: "Reports are priced per underwriting, not per live position — buying one never creates new exposure. Instant — no gas.",
+      run: stepPickVerified,
     },
     {
       key: "x402",
       actor: "oracle",
       kind: "chain",
-      title: "Buyer purchases the risk report (x402)",
+      title: "Consumer agent buys the risk report (x402)",
       action: "Pay over HTTP 402",
-      what: "A buyer agent hits the oracle, gets 402 Payment Required, settles with a native CSPR transfer carrying the nonce, and receives the verified report.",
-      who: "Buyer agent (debtor key)",
+      what: "The consumer agent hits the oracle, gets 402 Payment Required, settles with a native CSPR transfer carrying the nonce, and receives the verified report.",
+      who: "Consumer agent — pays with the desk's buyer key (debtor persona)",
       why: "Machine-to-machine payment for verifiable data — the report carries the on-chain decision hash.",
       run: stepX402,
     },
@@ -1240,10 +1258,10 @@ function x402Defs(): StepDef[] {
       key: "consumer",
       actor: "oracle",
       kind: "chain",
-      title: "Buyer agent verifies & ACTS on the report",
+      title: "Consumer agent verifies & ACTS on the report",
       action: "Audit + anchor the verdict",
-      what: "The consumer agent recomputes the memo-hash match, applies its OWN acceptance policy (risk ≤ 35), and anchors CREDIT_REPORT_ACCEPTED on-chain.",
-      who: "Consumer agent (underwriter key anchors the verdict)",
+      what: "The consumer agent checks the report hash against BOTH the desk's memo and the on-chain anchor, applies its OWN acceptance policy (risk ≤ 35), and has the verdict anchored.",
+      who: "Consumer agent decides; the desk's attestation relay anchors the verdict",
       why: "The other half of the agent economy: the buyer doesn't just pay — it verifies and takes its own on-chain action based on what it bought.",
       run: stepConsumerVerdict,
     },
@@ -1289,8 +1307,8 @@ const PRESETS = [
   {
     id: "happy",
     title: "Full lifecycle",
-    subtitle: "Underwrite → register → fund → attest → x402 → settle",
-    steps: 6,
+    subtitle: "Underwrite → register → fund → attest → settle",
+    steps: 5,
     defs: happyDefs,
   },
   {
@@ -1453,6 +1471,23 @@ export function makeJudgeRouter(): Router {
   // The last few completed walkthroughs — public receipts (no tokens, no IPs).
   r.get("/recent", (_req, res) => {
     res.json({ runs: recentRuns(5) });
+  });
+
+  // One receipt as a downloadable proof document (curl-able by a judge).
+  r.get("/recent/:displayId", (req, res) => {
+    const run = recentRuns(10).find((x) => x.displayId === req.params.displayId);
+    if (!run) {
+      res.status(404).json({ error: "no receipt with that id in the recent window" });
+      return;
+    }
+    res.setHeader("Content-Disposition", `attachment; filename="${run.displayId}.json"`);
+    res.json({
+      ...run,
+      contract: config.contract,
+      chain: config.chainName,
+      explorer,
+      generatedAt: new Date().toISOString(),
+    });
   });
 
   // Create a guided session (does not sign anything yet).
@@ -1732,7 +1767,69 @@ function startCleanupWorker() {
   cleanupTimer.unref?.();
 }
 
+/**
+ * Keep the default-workout preset ALWAYS playable: when neither an overdue
+ * funded invoice nor a ripening short-dated seed exists, register + fund a
+ * tiny 2 CSPR invoice due in 60 s. Rate-limited (one seed per 10 min) and it
+ * spends the same daily gas budget as everything else.
+ */
+let lastSeedTs = 0;
+const SEED_COOLDOWN_MS = 10 * 60_000;
+
+async function replenishDefaultInventory(): Promise<boolean> {
+  if (Date.now() - lastSeedTs < SEED_COOLDOWN_MS) return false;
+  if (!canSignDeploy().ok) return false;
+  const book = await cachedBook().catch(() => [] as BookInvoice[]);
+  const hasOverdue = overdueFunded(book).length > 0;
+  const hasRipening = book.some(
+    (i) =>
+      i.state === 1 &&
+      i.dueTs + GRACE_MS + 5_000 >= Date.now() &&
+      i.dueTs < Date.now() + 5 * 60_000,
+  );
+  if (hasOverdue || hasRipening) return false;
+  lastSeedTs = Date.now();
+  STEPPING = true;
+  try {
+    const supplier = await chain.caller("supplier");
+    const now = Date.now();
+    recordDeploy("seed:register");
+    const reg = await chain.register({
+      supplier,
+      debtorTag: "debtor:defaultseed",
+      docHash: `sha256:seed-default-${now}`,
+      faceMotes: toMotes(2),
+      dueTs: now + 60_000,
+      risk: 20,
+      discountBps: 200,
+      decisionHash: `sha256:seed-default-decision-${now}`,
+    });
+    recordDeploy("seed:fund");
+    await chain.fund(reg.result.invoiceId);
+    bookCache.ts = 0;
+    feed.publish({
+      actor: "collector",
+      kind: "onchain",
+      message: `seeded default-workout inventory: invoice #${reg.result.invoiceId}, due in 60s`,
+      deployHash: reg.deployHashes.at(-1),
+    });
+    return true;
+  } catch (e) {
+    feed.publish({
+      actor: "system",
+      kind: "error",
+      message: `default-inventory seed failed: ${(e as Error).message.slice(-160)}`,
+    });
+    return false;
+  } finally {
+    STEPPING = false;
+  }
+}
+
 async function cleanupTick() {
+  if (STEPPING) return;
+  // First priority: keep the loss half of the story playable.
+  if (await replenishDefaultInventory()) return;
   if (STEPPING) return;
   // Overdue positions are NOT settled away — they are the default-workout
   // preset's inventory (the loss half of the credit story).

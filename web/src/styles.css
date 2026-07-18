@@ -4071,3 +4071,186 @@ button.field-wallet {
 .lj-pe-share {
   color: rgba(23, 19, 13, 0.65);
 }
+
+/* ---------- gates story ---------- */
+.story-acts.gates {
+  grid-template-columns: repeat(3, 1fr);
+}
+@media (max-width: 980px) {
+  .story-acts.gates {
+    grid-template-columns: 1fr;
+  }
+}
+.story-stamp.ink {
+  background: var(--ink);
+  color: var(--paper);
+}
+.gate-verdicts {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.gv {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 5px 10px;
+  border-radius: 3px;
+  border: 1.5px solid;
+}
+.gv.ok {
+  color: var(--green);
+  border-color: var(--green);
+}
+.gv.no {
+  color: var(--red);
+  border-color: var(--red);
+}
+.side-quest {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding: 13px 18px;
+  border: 1.5px dashed #7a4dd0;
+  border-radius: 4px;
+  background: rgba(122, 77, 208, 0.05);
+  font-size: 13.5px;
+}
+.sq-kicker {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.8px;
+  color: #7a4dd0;
+  white-space: nowrap;
+}
+.sq-text {
+  flex: 1;
+  min-width: 260px;
+}
+
+/* ---------- picker groups ---------- */
+.lj-group-lbl {
+  margin: 26px 0 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2.2px;
+  color: rgba(23, 19, 13, 0.55);
+}
+.lj-presets.main {
+  grid-template-columns: 1fr;
+}
+@media (min-width: 720px) {
+  .lj-presets.challenge {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+.lj-preset-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.lj-preset-time {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--green);
+  border: 1px solid var(--green);
+  border-radius: 999px;
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+
+/* ---------- predict-then-verify ---------- */
+.lj-predict {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1.5px solid var(--ink);
+  border-radius: 4px;
+  background: rgba(23, 19, 13, 0.03);
+}
+.lj-predict-q {
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.lj-predict-opts {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.lj-predict-btn {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 9px 16px;
+  background: var(--card, #fffdf7);
+  border: 1.5px solid var(--ink);
+  border-radius: 3px;
+  cursor: pointer;
+  transition:
+    transform 0.1s ease,
+    box-shadow 0.1s ease;
+}
+.lj-predict-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 var(--red);
+}
+.lj-predict-locked {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  color: rgba(23, 19, 13, 0.7);
+}
+.lj-predict-reveal {
+  margin-top: 6px;
+  padding: 7px 11px;
+  border-radius: 3px;
+  font-size: 12.5px;
+}
+.lj-predict-reveal.hit {
+  background: rgba(15, 138, 95, 0.08);
+  color: var(--green);
+}
+.lj-predict-reveal.miss {
+  background: rgba(201, 138, 27, 0.1);
+  color: #8a5c10;
+}
+
+/* ---------- wallet delta card ---------- */
+.lj-wallet-delta {
+  margin-top: 16px;
+  padding: 14px 18px;
+  border: 1.5px solid var(--green);
+  border-radius: 4px;
+  background: rgba(15, 138, 95, 0.05);
+}
+.lj-wd-rows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 18px;
+  font-size: 13px;
+  max-width: 380px;
+}
+.lj-wd-rows b {
+  text-align: right;
+}
+.lj-wd-rows .good {
+  color: var(--green);
+}
+
+/* ---------- finish actions ---------- */
+.lj-finish-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
