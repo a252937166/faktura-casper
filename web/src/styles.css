@@ -3029,3 +3029,103 @@ td:first-child {
 .hero h1 {
   margin-top: 10px;
 }
+
+/* ==== wallet soft-gate (before a walkthrough starts) ===================== */
+.lj-gate {
+  margin-top: 30px;
+  padding: 26px;
+  background: var(--card);
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  box-shadow: 6px 6px 0 rgba(23, 19, 13, 0.13);
+  animation: ljstep 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.lj-gate-kicker {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.lj-gate h2 {
+  font-family: var(--serif);
+  font-size: 26px;
+  margin: 8px 0 18px;
+}
+.lj-gate-options {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+@media (min-width: 720px) {
+  .lj-gate-options {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.lj-gate-opt {
+  text-align: left;
+  padding: 18px;
+  background: var(--paper);
+  border: 1.5px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition:
+    transform 0.1s,
+    box-shadow 0.1s,
+    border-color 0.1s;
+}
+.lj-gate-opt:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  border-color: var(--ink);
+  box-shadow: 4px 4px 0 rgba(23, 19, 13, 0.15);
+}
+.lj-gate-opt.primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  box-shadow: 5px 5px 0 var(--red);
+}
+.lj-gate-opt.primary:hover {
+  box-shadow: 7px 7px 0 var(--red);
+}
+.lj-gate-opt-title {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 14px;
+}
+.lj-gate-opt.primary .lj-gate-opt-title {
+  color: var(--paper);
+}
+.lj-gate-opt-sub {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.lj-gate-opt.primary .lj-gate-opt-sub {
+  color: rgba(246, 243, 236, 0.85);
+}
+.lj-gate-opt.primary .lj-gate-opt-sub b {
+  color: var(--paper);
+}
+
+.field-wallet {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.field-wallet.on {
+  color: var(--green);
+  font-weight: 700;
+}
+button.field-wallet {
+  background: none;
+  border: none;
+  color: var(--red);
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}

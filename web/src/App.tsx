@@ -569,6 +569,7 @@ export default function App() {
             <SubmitPanel
               supplierDefault={meta?.supplier ?? null}
               liveMode={meta?.mode === "live-testnet"}
+              wallet={wallet}
               onOpenGuided={() => setRunnerOpen(true)}
               onSubmitted={(r) => {
                 notify(
@@ -798,11 +799,13 @@ function AiThinking({ compact }: { compact?: boolean }) {
 function SubmitPanel({
   supplierDefault,
   liveMode,
+  wallet,
   onOpenGuided,
   onSubmitted,
 }: {
   supplierDefault: string | null;
   liveMode: boolean;
+  wallet: WalletState;
   onOpenGuided: () => void;
   onSubmitted: (r: InvoiceRecord) => void;
 }) {
@@ -818,6 +821,19 @@ function SubmitPanel({
     history: "6 prior invoices, all paid within terms",
   });
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  // A connected wallet becomes the supplier automatically — the advance is
+  // yours unless you type a different address.
+  useEffect(() => {
+    if (wallet.publicKey) {
+      setForm((f) =>
+        f.supplierAddress && f.supplierAddress !== wallet.publicKey
+          ? f
+          : { ...f, supplierAddress: wallet.publicKey! },
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallet.publicKey]);
   const num = () => String(Math.floor(Math.random() * 900) + 100);
   const presets: Record<string, Partial<typeof form> & { hint: string }> = {
     "Safe invoice": {
@@ -946,7 +962,16 @@ function SubmitPanel({
           />
         </div>
         <div className="field full">
-          <label>Supplier Casper address — receives the advance (optional)</label>
+          <label>
+            Supplier Casper address — receives the advance
+            {wallet.connected && wallet.publicKey && form.supplierAddress === wallet.publicKey ? (
+              <span className="field-wallet on"> · ◈ your connected wallet</span>
+            ) : !wallet.connected ? (
+              <button className="field-wallet linklike" onClick={() => void connectWallet()}>
+                · connect your wallet to receive it yourself
+              </button>
+            ) : null}
+          </label>
           <input
             value={form.supplierAddress}
             placeholder={
@@ -1767,6 +1792,8 @@ function JudgeGuided({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [runStartTs, setRunStartTs] = useState(0);
+  /** Preset chosen while no wallet was connected — held at the wallet gate. */
+  const [pendingPreset, setPendingPreset] = useState<string | null>(null);
   const explorer = health?.explorer ?? "https://testnet.cspr.live";
 
   useEffect(() => {
@@ -1785,12 +1812,13 @@ function JudgeGuided({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const start = async (preset: string) => {
+  const doStart = async (preset: string, supplierAddress?: string) => {
     setErr(null);
     setBusy(true);
+    setPendingPreset(null);
     try {
-      // If a wallet is connected, the desk pays the advance to THEIR address.
-      setSession(await judge.createSession(preset, wallet.publicKey ?? undefined));
+      // With a wallet connected, the desk pays the advance to THEIR address.
+      setSession(await judge.createSession(preset, supplierAddress));
     } catch (e) {
       setErr((e as Error).message);
       judge
@@ -1801,6 +1829,24 @@ function JudgeGuided({
       setBusy(false);
     }
   };
+
+  /**
+   * Soft wallet gate: connecting is the RECOMMENDED path (the advance lands in
+   * your own wallet), but never a hard wall — a judge without the extension
+   * can always continue with the demo supplier account.
+   */
+  const start = (preset: string) => {
+    if (wallet.connected && wallet.publicKey) void doStart(preset, wallet.publicKey);
+    else setPendingPreset(preset);
+  };
+
+  // Wallet connected while waiting at the gate — continue automatically.
+  useEffect(() => {
+    if (pendingPreset && wallet.connected && wallet.publicKey) {
+      void doStart(pendingPreset, wallet.publicKey);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallet.connected, wallet.publicKey]);
 
   const runNext = async () => {
     if (!session) return;
@@ -1898,25 +1944,65 @@ function JudgeGuided({
           )}
           {wallet.error && <div className="lj-err">{wallet.error}</div>}
 
-          <div className="lj-presets">
-            {presets.map((p, idx) => (
-              <button
-                key={p.id}
-                className={`lj-preset ${p.id === "policy-block" ? "ace" : ""}`}
-                disabled={paused || busy}
-                onClick={() => start(p.id)}
-              >
-                <div className="lj-preset-title">{p.title}</div>
-                <div className="lj-preset-sub">{p.subtitle}</div>
-                <div className="lj-preset-meta">
-                  {p.steps.length} steps · {p.steps.filter((s) => s.kind === "chain").length} real
-                  transactions
-                  {p.id === "policy-block" && <span className="lj-ace-tag">the one to watch</span>}
-                </div>
-                <span className="lj-preset-go">Begin →</span>
+          {pendingPreset ? (
+            /* Soft wallet gate — connect is the recommended path, the demo
+               supplier is always available so nobody is ever locked out. */
+            <div className="lj-gate">
+              <div className="lj-gate-kicker">
+                {presets.find((p) => p.id === pendingPreset)?.title ?? "Walkthrough"} · one choice
+                before we run
+              </div>
+              <h2>Who should receive the invoice advance?</h2>
+              <div className="lj-gate-options">
+                <button className="lj-gate-opt primary" onClick={() => void connectWallet()}>
+                  <span className="lj-gate-opt-title">
+                    ⛓ {wallet.available ? "Connect Casper Wallet" : "Get Casper Wallet ↗"}
+                  </span>
+                  <span className="lj-gate-opt-sub">
+                    Recommended — the desk pays the advance to <b>your own address</b> and you watch
+                    your balance move on a real chain. Read-only: public key only, never a
+                    signature.
+                  </span>
+                </button>
+                <button
+                  className="lj-gate-opt"
+                  disabled={busy}
+                  onClick={() => void doStart(pendingPreset)}
+                >
+                  <span className="lj-gate-opt-title">Continue with the demo supplier</span>
+                  <span className="lj-gate-opt-sub">
+                    No extension needed — the advance goes to the desk's demo supplier account
+                    instead. Every transaction is just as real.
+                  </span>
+                </button>
+              </div>
+              <button className="lj-back" onClick={() => setPendingPreset(null)}>
+                ← Pick a different walkthrough
               </button>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <div className="lj-presets">
+              {presets.map((p, idx) => (
+                <button
+                  key={p.id}
+                  className={`lj-preset ${p.id === "policy-block" ? "ace" : ""}`}
+                  disabled={paused || busy}
+                  onClick={() => start(p.id)}
+                >
+                  <div className="lj-preset-title">{p.title}</div>
+                  <div className="lj-preset-sub">{p.subtitle}</div>
+                  <div className="lj-preset-meta">
+                    {p.steps.length} steps · {p.steps.filter((s) => s.kind === "chain").length} real
+                    transactions
+                    {p.id === "policy-block" && (
+                      <span className="lj-ace-tag">the one to watch</span>
+                    )}
+                  </div>
+                  <span className="lj-preset-go">Begin →</span>
+                </button>
+              ))}
+            </div>
+          )}
           {err && <div className="lj-err">{err}</div>}
         </div>
       )}
