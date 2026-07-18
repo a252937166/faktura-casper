@@ -9,7 +9,7 @@
 | 5 | **Policy-reverted funding** — the AI approved, the contract said no (`User error: 15`, SingleInvoiceCapExceeded) | [testnet.cspr.live/transaction/830ebd775835ffdeba1122b9969…](https://testnet.cspr.live/transaction/830ebd775835ffdeba1122b99695a0bf589de442f80d1c31c1d43c4e7039aaea) |
 | 6 | **x402 settlement** — buyer agent paid 2.5 CSPR, got the verified report | [testnet.cspr.live/deploy/adf150c7a0e07976da430b85f58e48a9…](https://testnet.cspr.live/deploy/adf150c7a0e07976da430b85f58e48a930095dd3bfe31837a021061c34688c7c) |
 | 7 | **MCP in one command** (after the clone below) | `cd agents && npm install && FAKTURA_API=https://faktura.axiqo.xyz npm run mcp` |
-| 8 | **GitHub release** (CI green: fmt, clippy, 12 contract tests, typecheck, format, web build) | [github.com/a252937166/faktura-casper/releases/tag/v0.2.0-…](https://github.com/a252937166/faktura-casper/releases/tag/v0.2.0-final-live-testnet) |
+| 8 | **GitHub release** (CI green: fmt, clippy, 12 contract tests, typecheck, format, web build) | [github.com/a252937166/faktura-casper/releases/tag/v0.2.1-…](https://github.com/a252937166/faktura-casper/releases/tag/v0.2.1-final-live-testnet) |
 
 Two minutes of hands-on, if you have them:
 
