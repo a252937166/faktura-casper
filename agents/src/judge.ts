@@ -1400,7 +1400,10 @@ export function makeJudgeRouter(): Router {
   // on a cold ~60 s livenet read.
   cachedPool().catch(() => {});
   cachedPolicyBps().catch(() => {});
-  cachedFundedIds().catch(() => {});
+  cachedBook().catch(() => {});
+  // Warm the FULL health snapshot too — otherwise the first ~70 s after a
+  // restart answer every session-create with a misleading "node unreachable".
+  cachedHealth().catch(() => {});
 
   r.get("/health", async (req, res) => {
     try {
