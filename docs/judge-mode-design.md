@@ -30,7 +30,7 @@ nginx routes to it.
 | Method | Path                          | Purpose |
 |--------|-------------------------------|---------|
 | GET    | `/api/judge/health`           | balances, pool, per-preset `canRun`, budgets, active session (owner only) |
-| GET    | `/api/judge/presets`          | the 3 preset descriptors with step lists |
+| GET    | `/api/judge/presets`          | the 4 preset descriptors with step lists |
 | POST   | `/api/judge/session`          | `{preset, supplierAddress?}` → `{id, displayId, token, steps…}` (signs nothing) |
 | POST   | `/api/judge/session/:id/next` | header `X-Judge-Token` — runs the next step: **exactly one transaction** |
 | GET    | `/api/judge/session/:id`      | session state (resume); owner requests refresh `lastActivityTs` |
@@ -124,7 +124,8 @@ double-submit debounce, a CORS allow-list, `trust proxy` IP handling, and
   visitor. Positions survive restarts.
 - **Health gating is per-preset.** `canRun` checks only the personas a preset
   actually signs with (happy: agent+debtor · policy-block: agent · x402:
-  debtor) plus pool feasibility and budgets; the global `paused` flag is
+  agent+debtor · default: collector) plus pool feasibility, overdue inventory
+  and budgets; the global `paused` flag is
   reserved for "the node/contract is unreachable". A low collector balance
   can never switch the policy firewall off.
 
