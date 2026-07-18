@@ -509,10 +509,10 @@ export default function App() {
         {meta?.mcp && (
           <button
             className="chip chip-btn"
-            title="Open the MCP agent interface — 5 tools, quick-start commands, live previews"
+            title="Open the MCP agent interface — 6 tools, quick-start commands, live previews"
             onClick={() => setMcpOpen(true)}
           >
-            MCP · 5 tools ▾
+            MCP · 6 tools ▾
           </button>
         )}
         <a
@@ -866,7 +866,7 @@ export default function App() {
             <div>
               <h2>Don't take our word for it. Trigger it yourself. Verify every transaction.</h2>
               <p>
-                Four guided walkthroughs — the full lifecycle, the policy firewall, an x402 purchase
+                Five guided walkthroughs — the full lifecycle, the policy firewall, an x402 purchase
                 where the buyer acts on the report, and a default workout. One click per step, one
                 real agent-signed Casper transaction per click, explorer links as they confirm. Your
                 wallet never signs anything.
@@ -3483,17 +3483,20 @@ const MCP_TOOLS: McpToolSpec[] = [
     badgeKind: "audit",
     headline: "Audit our AI. Don't take our word.",
     detail:
-      "Re-reads the off-chain decision memo hash AND the anchor stored in the on-chain invoice record, and compares them. If anyone rewrote the rationale after the fact, this is where it shows.",
+      "Re-computes the SHA-256 of the FULL canonical memo document — rationale and red flags included — then compares that fresh hash against BOTH the local record and the on-chain anchor. Comparing two stored strings would prove nothing; a fresh re-hash betrays any after-the-fact edit.",
     params: [{ k: "invoiceId", d: "on-chain invoice id" }],
     ask: "Prove the AI decision on invoice #12 wasn't rewritten after the fact.",
     live: "verify",
     sample: `{
   "invoiceId": 12,
-  "offchainMemoHash": "sha256:c9b1e7d40a52f688…",
+  "recomputedMemoHash": "sha256:c9b1e7d40a52f688…",
+  "storedLocalHash":    "sha256:c9b1e7d40a52f688…",
   "onchainAnchoredHash": "sha256:c9b1e7d40a52f688…",
+  "localMatch": true,
+  "onchainMatch": true,
   "match": true,
-  "verdict": "MATCH — the memo the AI produced is
-    exactly what was anchored on-chain",
+  "verdict": "MATCH — the full memo document
+    re-hashes to exactly what was anchored",
   "registerTx": "https://testnet.cspr.live/deploy/…"
 }`,
   },
@@ -3525,18 +3528,21 @@ const MCP_TOOLS: McpToolSpec[] = [
     badgeKind: "read",
     headline: "Every credit history you can buy.",
     detail:
-      "All on-chain invoices whose decision memo is anchored — LISTED, FUNDED, SETTLED or DEFAULTED. A settled or even defaulted receivable still has a verifiable history worth pricing; this is the buyable universe for get_risk_report.",
+      "Only invoices whose canonical memo ACTUALLY verifies make this list — the memo document re-hashes to the local decision hash and matches the on-chain anchor. LISTED, FUNDED, SETTLED or DEFAULTED: a closed receivable still has a verifiable history worth pricing via get_risk_report.",
     params: [{ k: "—", d: "no arguments" }],
     ask: "List every invoice with a verifiable decision memo I could buy a report on.",
     sample: `{
-  "count": 27,
+  "count": 4,
   "verified": [
+    { "id": 30, "state": "SETTLED",
+      "riskScore": 20, "memoVerified": true,
+      "decisionHash": "sha256:1cde…" },
     { "id": 27, "state": "FUNDED",
-      "riskScore": 18, "decisionHash": "sha256:3e1f…" },
-    { "id": 26, "state": "SETTLED",
-      "riskScore": 22, "decisionHash": "sha256:91d4…" },
+      "riskScore": 18, "memoVerified": true,
+      "decisionHash": "sha256:3e1f…" },
     { "id": 25, "state": "DEFAULTED",
-      "riskScore": 20, "decisionHash": "sha256:5a88…" }
+      "riskScore": 20, "memoVerified": true,
+      "decisionHash": "sha256:5a88…" }
   ]
 }`,
   },
@@ -3599,23 +3605,43 @@ function McpDrawer({
         setLiveOut((o) => ({ ...o, [t.name]: JSON.stringify(body, null, 2) }));
       } else if (t.live === "verify") {
         const [inv, p] = await Promise.all([api.invoices(), api.pool()]);
-        const withDecision = inv.filter((r) => r.decision && r.id > 0);
         const onchainById = new Map(p.onchain.map((o: { id: number }) => [o.id, o]));
-        const target = withDecision.find((r) => onchainById.has(r.id));
+        // A verification demo is only honest against a record that HAS the
+        // canonical memo document — that is the thing being re-hashed.
+        const target = inv.find((r) => r.decision && r.memo && r.id > 0 && onchainById.has(r.id));
         if (!target) {
-          setLiveOut((o) => ({ ...o, [t.name]: '{ "error": "no verifiable invoice yet" }' }));
+          setLiveOut((o) => ({
+            ...o,
+            [t.name]:
+              '{ "error": "no invoice with a canonical memo on this host yet — underwrite one first" }',
+          }));
           return;
         }
         const onchain = onchainById.get(target.id) as unknown as { decisionHash: string };
-        const match = target.decision!.decisionHash === onchain.decisionHash;
+        // Re-hash the FULL memo document in the browser — same bytes, same
+        // SHA-256 the chain anchors. Comparing two stored strings proves
+        // nothing; this proves the story was never rewritten.
+        const digest = await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(JSON.stringify(target.memo)),
+        );
+        const recomputedMemoHash = `sha256:${[...new Uint8Array(digest)]
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("")}`;
+        const localMatch = recomputedMemoHash === target.decision!.decisionHash;
+        const onchainMatch = recomputedMemoHash === onchain.decisionHash;
+        const match = localMatch && onchainMatch;
         const body = {
           invoiceId: target.id,
-          offchainMemoHash: target.decision!.decisionHash,
+          recomputedMemoHash,
+          storedLocalHash: target.decision!.decisionHash,
           onchainAnchoredHash: onchain.decisionHash,
+          localMatch,
+          onchainMatch,
           match,
           verdict: match
-            ? "MATCH — the memo the AI produced is exactly what was anchored on-chain"
-            : "MISMATCH",
+            ? "MATCH — the full memo document re-hashes to exactly what was anchored on-chain"
+            : "MISMATCH — the memo does not re-hash to the anchor",
           registerTx:
             target.chain.registerHash && !isSimulatedHash(target.chain.registerHash)
               ? `${p.explorer}/deploy/${target.chain.registerHash}`

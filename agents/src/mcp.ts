@@ -10,11 +10,17 @@
  *   FAKTURA_API=https://faktura.axiqo.xyz npx tsx src/mcp.ts
  *   # or register it:  claude mcp add faktura -- npx tsx src/mcp.ts
  */
+import crypto from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
 const base = (process.env.FAKTURA_API ?? "http://localhost:4020").replace(/\/$/, "");
+
+/** Re-hash a canonical memo document fetched over REST. JSON.parse preserves
+ * key order, so stringifying the parsed object reproduces the hashed bytes. */
+const memoHash = (memo: unknown) =>
+  `sha256:${crypto.createHash("sha256").update(JSON.stringify(memo)).digest("hex")}`;
 
 const text = (v: unknown) => ({
   content: [
@@ -85,13 +91,22 @@ const STATE_NAMES = ["LISTED", "FUNDED", "SETTLED", "DEFAULTED"];
 
 server.tool(
   "list_verified_invoices",
-  "Every on-chain invoice whose AI decision memo is anchored (LISTED, FUNDED, SETTLED or DEFAULTED) — the buyable universe for get_risk_report. A settled or defaulted receivable still has a verifiable credit history worth pricing.",
+  "Every on-chain invoice whose canonical decision memo ACTUALLY verifies — the memo document re-hashes to the local decision hash AND matches the on-chain anchor (LISTED, FUNDED, SETTLED or DEFAULTED). This is the buyable universe for get_risk_report; invoices with a hash but no verifiable memo are excluded, not dressed up.",
   {},
   async () => {
     const [inv, pool] = await Promise.all([get("/api/invoices"), get("/api/pool")]);
     const locals = (inv.body as any[]) ?? [];
     const verified = ((pool.body.onchain as any[]) ?? [])
-      .filter((i) => locals.some((r) => r.id === i.id && r.decision))
+      .filter((i) =>
+        locals.some(
+          (r) =>
+            r.id === i.id &&
+            r.decision &&
+            r.memo &&
+            memoHash(r.memo) === r.decision.decisionHash &&
+            r.decision.decisionHash === i.decisionHash,
+        ),
+      )
       .map((i) => ({
         id: i.id,
         state: STATE_NAMES[i.state] ?? `#${i.state}`,
@@ -100,6 +115,7 @@ server.tool(
         discountBps: i.discountBps,
         dueIso: new Date(i.dueTs).toISOString(),
         decisionHash: i.decisionHash,
+        memoVerified: true,
       }));
     return text({ count: verified.length, verified });
   },
@@ -179,7 +195,7 @@ server.tool(
 
 server.tool(
   "verify_decision_hash",
-  "Audit an AI underwriting decision: compares the SHA-256 of the off-chain decision memo with the decision hash anchored in the on-chain invoice record, and returns explorer links.",
+  "Audit an AI underwriting decision the hard way: re-computes the SHA-256 of the FULL canonical memo document (rationale and red flags included), then compares that fresh hash against BOTH the locally stored decision hash and the anchor in the on-chain invoice record. Editing one character of the memo after the fact breaks this — comparing two stored strings would not catch it, so this tool never does that.",
   { invoiceId: z.number().describe("On-chain invoice id") },
   async (a) => {
     const [inv, pool] = await Promise.all([get("/api/invoices"), get("/api/pool")]);
@@ -187,17 +203,31 @@ server.tool(
     const onchain = (pool.body.onchain as any[])?.find((x) => x.id === a.invoiceId);
     if (!record?.decision || !onchain)
       return text({ error: `no local decision or on-chain record for invoice #${a.invoiceId}` });
-    const offchainHash = record.decision.decisionHash;
-    const onchainHash = onchain.decisionHash;
+    if (!record.memo) {
+      return text({
+        invoiceId: a.invoiceId,
+        match: false,
+        error:
+          "canonical memo unavailable (legacy record predating faktura.decision.v1) — there is nothing to re-hash, so this decision cannot be verified. Underwrite a fresh invoice to see a full verification.",
+        storedLocalHash: record.decision.decisionHash,
+        onchainAnchoredHash: onchain.decisionHash,
+      });
+    }
+    const recomputedMemoHash = memoHash(record.memo);
+    const localMatch = recomputedMemoHash === record.decision.decisionHash;
+    const onchainMatch = recomputedMemoHash === onchain.decisionHash;
+    const match = localMatch && onchainMatch;
     return text({
       invoiceId: a.invoiceId,
-      offchainMemoHash: offchainHash,
-      onchainAnchoredHash: onchainHash,
-      match: offchainHash === onchainHash,
-      verdict:
-        offchainHash === onchainHash
-          ? "MATCH — the memo the AI produced is exactly what was anchored on-chain"
-          : "MISMATCH — the off-chain memo does not correspond to the on-chain anchor",
+      recomputedMemoHash,
+      storedLocalHash: record.decision.decisionHash,
+      onchainAnchoredHash: onchain.decisionHash,
+      localMatch,
+      onchainMatch,
+      match,
+      verdict: match
+        ? "MATCH — the full memo document re-hashes to exactly what was anchored on-chain"
+        : "MISMATCH — the memo document does NOT re-hash to the anchor; someone edited the story after the fact",
       // Simulated showcase writes are tagged 'showcase:' — never build an
       // explorer URL out of one.
       registerTx:

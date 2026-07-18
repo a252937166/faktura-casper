@@ -12,6 +12,7 @@ import { x402Gate } from "./x402.js";
 import { getSeed } from "./chain-showcase.js";
 import { makeJudgeRouter } from "./judge.js";
 import { RELEASE } from "./release.js";
+import { hashDecisionMemo, isCanonicalDecisionMemo } from "./decision-memo.js";
 import type { FeedEvent } from "./feed.js";
 import type { InvoiceRecord } from "./store.js";
 
@@ -206,7 +207,17 @@ app.get("/api/risk/:id", requireRiskReport, x402Gate(), async (req, res) => {
   const record = res.locals.riskRecord as InvoiceRecord;
   const inv = res.locals.chainInvoice as NonNullable<Awaited<ReturnType<typeof chain.invoice>>>;
   const decision = record.decision!; // guaranteed by requireRiskReport
+  // A report is only first-class when its canonical memo is present AND
+  // re-hashes to the stored decision hash — anything else is honestly labeled
+  // legacy (pre-canonical-memo records): the buyer paid, the buyer gets the
+  // data, and the buyer's verifier knows exactly what it can and cannot check.
+  const verifiable =
+    !!record.memo &&
+    isCanonicalDecisionMemo(record.memo) &&
+    hashDecisionMemo(record.memo) === decision.decisionHash;
   res.json({
+    reportType: verifiable ? "faktura.risk-report.v1" : "faktura.risk-report.legacy",
+    ...(verifiable ? {} : { legacy: true }),
     invoiceId: id,
     issuedAt: new Date().toISOString(),
     issuer: "faktura-risk-oracle-v1",
@@ -217,7 +228,7 @@ app.get("/api/risk/:id", requireRiskReport, x402Gate(), async (req, res) => {
     decisionHash: decision.decisionHash,
     // The FULL canonical memo (faktura.decision.v1) when available — buyers
     // re-hash this document themselves instead of trusting our hash claim.
-    memo: record.memo ?? null,
+    memo: verifiable ? record.memo : null,
     onchain: {
       state: inv.state,
       faceValue: inv.faceValue,

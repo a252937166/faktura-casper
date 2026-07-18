@@ -36,7 +36,7 @@ endef
 
 test:
 	$(CONTRACTS) && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-	$(AGENTS) && npm install --no-audit --no-fund && npm run format:check && npm run typecheck
+	$(AGENTS) && npm install --no-audit --no-fund && npm run format:check && npm run typecheck && npm test
 	$(WEB) && npm install --no-audit --no-fund && npm run format:check && npm run build
 
 build:

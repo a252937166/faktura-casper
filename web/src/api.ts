@@ -37,6 +37,8 @@ export interface InvoiceRecord {
     docHash: string;
     receivedTs: number;
   };
+  /** Canonical decision memo (faktura.decision.v1) — verifiers re-hash THIS. */
+  memo?: unknown;
   decision?: Decision;
   chain: {
     registerHash?: string;
@@ -241,7 +243,7 @@ export interface JudgeSession {
 }
 
 export interface JudgePreset {
-  id: "happy" | "policy-block" | "x402" | "default";
+  id: "happy" | "policy-block" | "x402" | "default" | "ai-reject";
   title: string;
   subtitle: string;
   steps: { key: string; actor: string; title: string; kind: "compute" | "chain" }[];
@@ -264,6 +266,8 @@ export interface JudgeHealth {
   canRun?: Record<string, { ok: boolean; reason?: string }>;
   budget?: { capCspr: number; spentCspr: number; deploysToday?: number; deployCap?: number };
   uptimeSec?: number;
+  /** Deploy-time provenance of the LIVE SIGNER backend (tag + commit). */
+  release?: { release: string; gitSha: string; builtAt: string };
   deskBusy?: boolean;
   activeSession: JudgeSession | null;
 }

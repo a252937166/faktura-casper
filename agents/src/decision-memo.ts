@@ -82,3 +82,35 @@ export function buildDecisionMemo(m: {
 export function hashDecisionMemo(memo: CanonicalDecisionMemo): string {
   return `sha256:${sha256(JSON.stringify(memo))}`;
 }
+
+/**
+ * Structural gate for untrusted memo documents (an x402 report, a receipt).
+ * A verifier must refuse to "verify" something that is not actually a
+ * canonical memo — hashing an arbitrary blob and calling it a match would be
+ * theater. Checks the schema literal and every field the hash contract needs.
+ */
+export function isCanonicalDecisionMemo(x: unknown): x is CanonicalDecisionMemo {
+  if (typeof x !== "object" || x === null) return false;
+  const m = x as Record<string, unknown>;
+  const o = m.opinion as Record<string, unknown> | undefined;
+  const a = m.applied as Record<string, unknown> | undefined;
+  return (
+    m.schema === "faktura.decision.v1" &&
+    typeof m.intakeId === "string" &&
+    typeof m.invoiceNumber === "string" &&
+    typeof m.decidedAt === "string" &&
+    typeof m.provider === "string" &&
+    typeof m.model === "string" &&
+    !!o &&
+    typeof o.approve === "boolean" &&
+    typeof o.risk_score === "number" &&
+    typeof o.discount_bps === "number" &&
+    typeof o.rationale === "string" &&
+    Array.isArray(o.red_flags) &&
+    !!a &&
+    typeof a.approve === "boolean" &&
+    typeof a.risk_score === "number" &&
+    typeof a.discount_bps === "number" &&
+    Array.isArray(m.policyNotes)
+  );
+}

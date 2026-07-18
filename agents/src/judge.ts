@@ -14,6 +14,8 @@
  * is untouched.
  */
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import cors from "cors";
 import { Router, type Request } from "express";
 import {
@@ -36,11 +38,17 @@ import {
   spentLast24h,
   stalePositions,
   touchPosition,
+  type RecentRun,
 } from "./judge-limits.js";
 import { config } from "./config.js";
 import { chain, LivenetError } from "./chain.js";
 import { underwrite as llmUnderwrite } from "./llm.js";
-import { buildDecisionMemo, hashDecisionMemo } from "./decision-memo.js";
+import {
+  buildDecisionMemo,
+  hashDecisionMemo,
+  isCanonicalDecisionMemo,
+  type CanonicalDecisionMemo,
+} from "./decision-memo.js";
 import { RELEASE } from "./release.js";
 import { db, upsertInvoice, type InvoiceRecord } from "./store.js";
 import { feed } from "./feed.js";
@@ -225,6 +233,53 @@ function publicSession(s: Session) {
   };
 }
 
+// ---- receipts: canonical proof documents, one file per run ------------------
+
+const receiptsDir = () => path.join(config.dataDir, "receipts");
+
+/** Canonical faktura.credit-receipt.v1: receiptHash is the SHA-256 of the
+ * JSON body WITHOUT the receiptHash field (which is appended last, so
+ * `const { receiptHash, ...body } = doc` reproduces the hashed bytes).
+ * `npm run verify-receipt -- file.json` re-checks it offline; add `--online`
+ * to also confirm every transaction against the chain. */
+function buildReceipt(run: RecentRun) {
+  const body = {
+    schema: "faktura.credit-receipt.v1",
+    displayId: run.displayId,
+    preset: run.preset,
+    title: run.title,
+    endedTs: run.endedTs,
+    wallet: run.wallet ?? null,
+    invoiceId: run.invoiceId ?? null,
+    faceCspr: run.faceCspr ?? null,
+    decisionHash: run.decisionHash ?? null,
+    memo: run.memo ?? null,
+    consumerVerdict: run.consumerVerdict ?? null,
+    poolBefore: run.poolBefore ?? null,
+    poolAfter: run.poolAfter ?? null,
+    steps: run.steps,
+    contract: config.contract,
+    chain: config.chainName,
+    explorer,
+    release: RELEASE,
+  };
+  const receiptHash = `sha256:${sha256(JSON.stringify(body))}`;
+  return { ...body, receiptHash };
+}
+
+/** Best-effort per-run persistence — the ring keeps 10, the disk keeps all. */
+function persistReceipt(run: RecentRun) {
+  try {
+    fs.mkdirSync(receiptsDir(), { recursive: true });
+    fs.writeFileSync(
+      path.join(receiptsDir(), `${run.displayId}.json`),
+      JSON.stringify(buildReceipt(run), null, 2),
+    );
+  } catch {
+    /* a failed receipt write must never break the walkthrough itself */
+  }
+}
+
 // ---- pool snapshot + health (cached: livenet reads are ~60 s cold) ----------
 
 async function snap(): Promise<PoolSnap> {
@@ -287,6 +342,8 @@ interface BookInvoice {
   state: number;
   dueTs: number;
   faceValue: string;
+  /** On-chain anchored decision hash — the x402 predicates verify against it. */
+  decisionHash: string;
 }
 
 /** The invoice book, cached like the pool (livenet reads are slow). Funded
@@ -307,6 +364,7 @@ async function cachedBook(ttlMs = 90_000): Promise<BookInvoice[]> {
             state: i.state,
             dueTs: i.dueTs,
             faceValue: i.faceValue,
+            decisionHash: i.decisionHash,
           })),
         };
       })
@@ -478,11 +536,14 @@ async function health() {
     ),
     x402: gate(
       "x402",
-      book.some((i) => db.invoices.some((r) => r.id === i.id && r.decision))
+      book.some((i) =>
+        db.invoices.some((r) => r.id === i.id && verifiedMemoRecord(r, i.decisionHash)),
+      )
         ? { ok: true }
         : {
             ok: false,
-            reason: "no on-chain invoice with a decision memo yet — run the Full lifecycle first",
+            reason:
+              "no invoice with a verifiable canonical memo yet — run the Full lifecycle first",
           },
     ),
     default: gate(
@@ -639,7 +700,7 @@ async function doUnderwrite(
   // discount band further ([0.5%, 4%]) so the advance is deterministic enough
   // to clear the single-invoice cap no matter how the LLM prices it.
   const attemptOnce = async () => {
-    const { opinion } = await llmUnderwrite({
+    const { opinion, provider, model } = await llmUnderwrite({
       supplierName: input.supplierName,
       debtorName: input.debtorName,
       amountCspr: input.amountCspr,
@@ -660,7 +721,7 @@ async function doUnderwrite(
       approve = false;
       policyNotes.push(`risk ${risk_score} > prefilter max ${p.maxRiskScore}`);
     }
-    return { opinion, approve, risk_score, discount_bps, policyNotes };
+    return { opinion, provider, model, approve, risk_score, discount_bps, policyNotes };
   };
 
   // Every preset has an EXPECTED verdict (ai-reject expects the NO; the others
@@ -678,16 +739,18 @@ async function doUnderwrite(
         : "The model declined this clean invoice — twice in a row. Testnet models have moods; hit Retry to ask again.",
     );
   }
-  const { opinion, approve, risk_score, discount_bps, policyNotes } = verdict;
+  const { opinion, provider, model, approve, risk_score, discount_bps, policyNotes } = verdict;
 
   // The SAME canonical memo + hash as the production pipeline — the anchor
   // covers the WHOLE opinion (rationale, red flags), so rewriting any of it
-  // after the fact breaks the on-chain match. Vendor-neutral identity.
+  // after the fact breaks the on-chain match. The memo is an AUDIT artifact:
+  // it records the REAL provider/model that produced this opinion (matching
+  // processIntake); every UI surface keeps the vendor-neutral desk identity.
   const memo = buildDecisionMemo({
     intakeId: s.id,
     invoiceNumber: input.invoiceNumber,
-    provider: "desk",
-    model: "autonomous-ai-underwriter",
+    provider,
+    model,
     opinion,
     applied: { approve, risk_score, discount_bps },
     policyNotes,
@@ -1002,10 +1065,15 @@ async function stepAttestReject(s: Session) {
  */
 async function stepPickVerified(s: Session) {
   const book = await cachedBook();
-  const withMemo = book.filter((i) => db.invoices.some((r) => r.id === i.id && r.decision));
+  // STRICT pick: only invoices whose canonical memo re-hashes to the stored
+  // decision hash AND to the on-chain anchor qualify — the consumer step
+  // downstream REJECTS anything weaker, so never sell it a lemon.
+  const withMemo = book.filter((i) =>
+    db.invoices.some((r) => r.id === i.id && verifiedMemoRecord(r, i.decisionHash)),
+  );
   if (!withMemo.length) {
     throw new Error(
-      "No on-chain invoice with a decision memo is on the book yet — run the Full lifecycle walkthrough once, then come back to buy its report.",
+      "No invoice with a verifiable canonical memo is on the book yet — run the Full lifecycle walkthrough once, then come back to buy its report.",
     );
   }
   const pick = [...withMemo].reverse().find((i) => i.state === 1) ?? withMemo[withMemo.length - 1];
@@ -1073,6 +1141,23 @@ async function stepX402(s: Session) {
  * applies its own acceptance policy, and anchors its verdict on-chain —
  * closing the loop: produce → sell → verify → act.
  */
+/**
+ * The ONE definition of "verified invoice" for the x402 surface: the local
+ * record must carry a canonical memo that re-hashes to its stored decision
+ * hash (and to the on-chain anchor when the caller has it). canRun.x402 and
+ * the pick step share this predicate, so the desk never advertises a report
+ * it could not verifiably sell.
+ */
+export function verifiedMemoRecord(
+  r: { memo?: unknown; decision?: { decisionHash: string } },
+  onchainHash?: string,
+): boolean {
+  if (!r.decision || !r.memo || !isCanonicalDecisionMemo(r.memo)) return false;
+  const rehash = hashDecisionMemo(r.memo);
+  if (rehash !== r.decision.decisionHash) return false;
+  return onchainHash === undefined || rehash === onchainHash;
+}
+
 /** The consumer's OWN verification policy — every check it performs, hashed
  * and anchored as ITS verdict (not a re-anchor of the underwriter's hash). */
 export function consumerChecks(
@@ -1086,20 +1171,34 @@ export function consumerChecks(
   local: { decisionHash: string; riskScore: number; discountBps: number } | null,
   onchain: { decisionHash: string; riskScore: number; discountBps: number } | null,
 ) {
-  // Strongest check first: re-hash the memo DOCUMENT the oracle shipped —
-  // trusting the oracle's own hash claim would be circular.
-  const recomputed = rep.memo ? hashDecisionMemo(rep.memo as never) === rep.decisionHash : null;
+  // Strongest check first: the memo DOCUMENT the oracle shipped must BE a
+  // canonical memo AND re-hash to the claimed decision hash. No memo, no
+  // deal — a report without the hashed document is unverifiable by
+  // definition, and trusting the oracle's own hash claim would be circular.
+  const recomputed =
+    !!rep.memo &&
+    isCanonicalDecisionMemo(rep.memo) &&
+    hashDecisionMemo(rep.memo) === rep.decisionHash;
+  const memo = recomputed ? (rep.memo as CanonicalDecisionMemo) : null;
+  // Field binding INSIDE the memo: the numbers being sold must be the numbers
+  // the hashed document itself carries. Without this, an agent could register
+  // an invoice whose contract fields disagree with its memo (hash intact) and
+  // every hash comparison would still pass.
+  const memoRisk = !!memo && memo.applied.risk_score === rep.riskScore;
+  const memoDiscount = !!memo && memo.applied.discount_bps === rep.discountBps;
   const localHash = !!local && local.decisionHash === rep.decisionHash;
   const chainHash = !!onchain && onchain.decisionHash === rep.decisionHash;
-  // Field binding: the numbers in the report must be THE numbers the memo and
-  // the contract carry — a "keep the hash, tweak the score" oracle fails here.
+  // Field binding against the desk's record and the contract: a "keep the
+  // hash, tweak the score" oracle fails here.
   const localRisk = !!local && local.riskScore === rep.riskScore;
   const chainRisk = !!onchain && onchain.riskScore === rep.riskScore;
   const localDiscount = !!local && local.discountBps === rep.discountBps;
   const chainDiscount = !!onchain && onchain.discountBps === rep.discountBps;
   const riskOk = rep.riskScore <= 35;
   const accepted =
-    recomputed !== false &&
+    recomputed &&
+    memoRisk &&
+    memoDiscount &&
     localHash &&
     chainHash &&
     localRisk &&
@@ -1109,6 +1208,8 @@ export function consumerChecks(
     riskOk;
   return {
     recomputed,
+    memoRisk,
+    memoDiscount,
     localHash,
     chainHash,
     localRisk,
@@ -1160,6 +1261,8 @@ async function stepConsumerVerdict(s: Session) {
     schema: "faktura.consumer-verdict.v1",
     reportDecisionHash: rep.decisionHash,
     memoRecomputedMatch: c.recomputed,
+    memoRiskMatch: c.memoRisk,
+    memoDiscountMatch: c.memoDiscount,
     localHashMatch: c.localHash,
     onchainHashMatch: c.chainHash,
     riskFieldMatch: c.localRisk && c.chainRisk,
@@ -1180,14 +1283,13 @@ async function stepConsumerVerdict(s: Session) {
   );
   const tx = att.deployHashes.at(-1);
   const checks = [
-    c.recomputed === null ? null : `memo re-hash ${c.recomputed ? "MATCH" : "MISMATCH"}`,
-    `report↔memo ${c.localHash ? "MATCH" : "MISMATCH"}`,
+    `memo ${!rep.memo ? "MISSING" : c.recomputed ? "re-hash MATCH" : "re-hash MISMATCH"}`,
+    `report↔memo fields ${c.memoRisk && c.memoDiscount ? "BOUND" : "MISMATCH"}`,
+    `report↔desk ${c.localHash ? "MATCH" : "MISMATCH"}`,
     `report↔on-chain ${c.chainHash ? "MATCH" : "MISMATCH"}`,
     `risk/discount fields ${c.localRisk && c.chainRisk && c.localDiscount && c.chainDiscount ? "BOUND" : "MISMATCH"}`,
     `risk ${rep.riskScore} ${c.riskOk ? "≤" : ">"} 35`,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  ].join(" · ");
   return {
     result: `Consumer verdict: ${verdict} — ${checks} — verdict memo anchored (attestation #${att.result.attestationId})`,
     txHash: tx,
@@ -1199,7 +1301,8 @@ async function stepConsumerVerdict(s: Session) {
         ? "The consumer re-hashed the shipped memo document, matched it against the desk's copy AND the anchor read from the Casper contract, verified the risk/discount fields are hash-bound, and cleared its own policy (risk ≤ 35). Its verdict memo is anchored on-chain by the attestation relay."
         : `The purchased report failed the consumer agent's checks (${checks}) — the REJECTION is anchored on-chain too.`,
       redFlags: [
-        ...(c.recomputed === false ? ["memo re-hash mismatch"] : []),
+        ...(c.recomputed ? [] : [rep.memo ? "memo re-hash mismatch" : "canonical memo missing"]),
+        ...(c.memoRisk && c.memoDiscount ? [] : ["report fields not bound to the memo document"]),
         ...(c.localHash ? [] : ["local memo hash mismatch"]),
         ...(c.chainHash ? [] : ["on-chain anchor mismatch"]),
         ...(c.localRisk && c.chainRisk ? [] : ["risk score not hash-bound"]),
@@ -1606,20 +1709,39 @@ function clientCid(req: Request, res?: { setHeader(n: string, v: string): void }
   if (m) return m[1];
   if (res) {
     const cid = crypto.randomUUID();
+    // Secure only over HTTPS (production sits behind nginx TLS, trust proxy is
+    // on) — adding it on plain-http localhost would make the browser drop it.
+    const secure =
+      req.secure || String(req.headers["x-forwarded-proto"] ?? "") === "https" ? "; Secure" : "";
     res.setHeader(
       "Set-Cookie",
-      `fj_cid=${cid}; Path=/api/judge; HttpOnly; SameSite=Strict; Max-Age=86400`,
+      `fj_cid=${cid}; Path=/api/judge; HttpOnly; SameSite=Strict; Max-Age=86400${secure}`,
     );
     return cid;
   }
   return "";
 }
 
+/**
+ * Pure ownership rule (unit-tested): a session that HAS a cookie-bound owner
+ * is owned ONLY by that cookie — a request without it is a stranger, even
+ * from the same IP (hotel/office NAT puts many visitors behind one address).
+ * The IP comparison survives solely for sessions created by builds that
+ * predate ownerCid.
+ */
+export function ownerMatch(
+  ownerCid: string | undefined,
+  ownerIp: string,
+  reqCid: string,
+  reqIp: string,
+): boolean {
+  if (ownerCid) return !!reqCid && reqCid === ownerCid;
+  return ownerIp === reqIp;
+}
+
 /** True when the request provably belongs to the session's creator. */
 function isOwner(s: Session, req: Request): boolean {
-  const cid = clientCid(req);
-  if (s.ownerCid && cid) return s.ownerCid === cid;
-  return s.ip === clientIp(req);
+  return ownerMatch(s.ownerCid, s.ip, clientCid(req), clientIp(req));
 }
 
 function endSession(s: Session, status: "done" | "failed", note?: string) {
@@ -1745,39 +1867,27 @@ export function makeJudgeRouter(): Router {
   });
 
   // One receipt as a downloadable proof document (curl-able by a judge).
-  // Canonical faktura.credit-receipt.v1: receiptHash is the SHA-256 of the
-  // JSON body WITHOUT the receiptHash field (which is appended last, so
-  // `const { receiptHash, ...body } = doc` reproduces the hashed bytes).
-  // `npm run verify-receipt -- file.json` re-checks it offline, memo included.
+  // Served from the live ring when fresh; from the per-run file on disk once
+  // the ring rolls over — a proof link handed to a judge must never die.
   r.get("/recent/:displayId", (req, res) => {
-    const run = recentRuns(10).find((x) => x.displayId === req.params.displayId);
-    if (!run) {
-      res.status(404).json({ error: "no receipt with that id in the recent window" });
+    const id = req.params.displayId;
+    const run = recentRuns(10).find((x) => x.displayId === id);
+    if (run) {
+      res.setHeader("Content-Disposition", `attachment; filename="${run.displayId}.json"`);
+      res.json(buildReceipt(run));
       return;
     }
-    const body = {
-      schema: "faktura.credit-receipt.v1",
-      displayId: run.displayId,
-      preset: run.preset,
-      title: run.title,
-      endedTs: run.endedTs,
-      wallet: run.wallet ?? null,
-      invoiceId: run.invoiceId ?? null,
-      faceCspr: run.faceCspr ?? null,
-      decisionHash: run.decisionHash ?? null,
-      memo: run.memo ?? null,
-      consumerVerdict: run.consumerVerdict ?? null,
-      poolBefore: run.poolBefore ?? null,
-      poolAfter: run.poolAfter ?? null,
-      steps: run.steps,
-      contract: config.contract,
-      chain: config.chainName,
-      explorer,
-      release: RELEASE,
-    };
-    const receiptHash = `sha256:${sha256(JSON.stringify(body))}`;
-    res.setHeader("Content-Disposition", `attachment; filename="${run.displayId}.json"`);
-    res.json({ ...body, receiptHash });
+    if (/^JUDGE-[0-9]{8}-[0-9A-F]{4,16}$/.test(id)) {
+      try {
+        const disk = fs.readFileSync(path.join(receiptsDir(), `${id}.json`), "utf8");
+        res.setHeader("Content-Disposition", `attachment; filename="${id}.json"`);
+        res.type("application/json").send(disk);
+        return;
+      } catch {
+        /* fall through to 404 */
+      }
+    }
+    res.status(404).json({ error: "no receipt with that id" });
   });
 
   // Create a guided session (does not sign anything yet).
@@ -2000,7 +2110,9 @@ export function makeJudgeRouter(): Router {
         if (!s.poolAfter)
           s.poolAfter = (await cachedPool(1).catch(() => ({ snap: null }))).snap ?? undefined;
         // Public receipt: the proof that a real walkthrough just happened.
-        recordRecentRun({
+        // Recorded in the ring for the homepage AND persisted per-run so the
+        // proof link survives the ring rolling over.
+        const run: RecentRun = {
           displayId: s.displayId,
           preset: s.preset,
           title: s.title,
@@ -2024,7 +2136,9 @@ export function makeJudgeRouter(): Router {
           consumerVerdict: s.ctx.consumerVerdict,
           poolBefore: s.poolBefore ?? null,
           poolAfter: s.poolAfter ?? null,
-        });
+        };
+        recordRecentRun(run);
+        persistReceipt(run);
       } else {
         s.steps[s.cursor].status = "ready";
       }

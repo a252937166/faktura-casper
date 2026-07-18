@@ -343,8 +343,30 @@ async function finalizeReject(
     decisionHash?: string;
   },
 ): Promise<InvoiceRecord> {
-  const decisionHash =
-    d.decisionHash ?? `sha256:${sha256(JSON.stringify({ intakeId: record.intakeId, ...d }))}`;
+  // Callers that already built a canonical memo (the LLM path) pass its hash.
+  // Deterministic hard rejects arrive WITHOUT one — they get a canonical memo
+  // here, so every autonomous "no" anchors the exact same document shape as
+  // every "yes" (no ad-hoc hash structures anywhere).
+  let decisionHash = d.decisionHash;
+  if (!decisionHash) {
+    const memo = buildDecisionMemo({
+      intakeId: record.intakeId,
+      invoiceNumber: record.intake.invoiceNumber,
+      provider: "deterministic-policy",
+      model: d.model,
+      opinion: {
+        approve: false,
+        risk_score: d.riskScore,
+        discount_bps: d.discountBps,
+        rationale: d.rationale,
+        red_flags: d.redFlags,
+      },
+      applied: { approve: false, risk_score: d.riskScore, discount_bps: d.discountBps },
+      policyNotes: d.policyNotes,
+    });
+    record.memo = memo;
+    decisionHash = hashDecisionMemo(memo);
+  }
   record.decision = {
     approve: false,
     riskScore: d.riskScore,

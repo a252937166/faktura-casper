@@ -105,7 +105,7 @@ compromised-key scenario) and the permission layer; CI runs them plus
    │x402 buyer│───────────▶│  · AI-attestation log                     │
    └──────────┘ pay-per-call         Casper Testnet
    ┌──────────┐  MCP/stdio
-   │ any agent│───────────▶ 5 tools: pool_stats · submit_invoice ·
+   │ any agent│───────────▶ 6 tools: pool_stats · submit_invoice · list_verified_invoices ·
    └──────────┘             get_risk_report · verify_decision_hash ·
                             list_funded_invoices
 ```
@@ -127,9 +127,9 @@ cd agents && npm install && FAKTURA_API=https://faktura.axiqo.xyz npm run mcp
 claude mcp add faktura -e FAKTURA_API=https://faktura.axiqo.xyz -- npx tsx src/mcp.ts
 ```
 
-No terminal handy? Click the **MCP · 5 tools** chip on the
+No terminal handy? Click the **MCP · 6 tools** chip on the
 [live showcase](https://faktura.axiqo.xyz) — it opens the agent interface with
-all five tools, copyable commands, and live read-only previews (including the
+all six tools, copyable commands, and live read-only previews (including the
 real off-chain vs. on-chain decision-hash comparison).
 
 Tools: `pool_stats`, `list_funded_invoices`, `submit_invoice` (drives the real
@@ -145,7 +145,7 @@ banner):
 - **🟢 Live Testnet Judge Mode** — on [faktura.axiqo.xyz](https://faktura.axiqo.xyz)
   click **▶ Use the real AI desk**. Each preset drives the *full* lifecycle as
   **real Casper Testnet transactions** with a CSPR.live link on every step —
-  no simulation. Four presets: the main story (AI underwrite →
+  no simulation. Five presets: the main story (AI underwrite →
   register → fund → attest → settle — supplier paid, debtor settles), the **policy firewall**
   (the AI approves an oversized invoice and the *contract* reverts funding with
   `SingleInvoiceCapExceeded` — the failed transaction links right there), an
