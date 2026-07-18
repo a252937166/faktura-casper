@@ -237,9 +237,26 @@ export interface JudgeHealth {
   pool: Record<string, number> | null;
   x402Price: string;
   canRun?: Record<string, { ok: boolean; reason?: string }>;
-  budget?: { capCspr: number; spentCspr: number };
+  budget?: { capCspr: number; spentCspr: number; deploysToday?: number; deployCap?: number };
   deskBusy?: boolean;
   activeSession: JudgeSession | null;
+}
+
+/** A completed walkthrough, persisted server-side as a public receipt. */
+export interface RecentRun {
+  displayId: string;
+  preset: string;
+  title: string;
+  endedTs: number;
+  wallet?: string;
+  steps: {
+    key: string;
+    title: string;
+    status: string;
+    txHash?: string;
+    explorerUrl?: string;
+    result?: string;
+  }[];
 }
 
 /** The judge backend is a separate origin (:4034) behind nginx at /api/judge. */
@@ -286,6 +303,7 @@ export const judge = {
     fetch(`${JUDGE_BASE}/balance/${pubkey}`).then((r) =>
       j<{ pubkey: string; cspr: number | null }>(r),
     ),
+  recent: () => fetch(`${JUDGE_BASE}/recent`).then((r) => j<{ runs: RecentRun[] }>(r)),
 };
 
 export const motesToCspr = (m: string | undefined) =>

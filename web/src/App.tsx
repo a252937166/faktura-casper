@@ -7,6 +7,7 @@ import {
   motesToCspr,
   rememberJudgeToken,
   stateName,
+  type ChainStats,
   type FeedEvent,
   type InvoiceRecord,
   type JudgeHealth,
@@ -15,9 +16,11 @@ import {
   type JudgeStep,
   type Meta,
   type PoolResponse,
+  type RecentRun,
   type RiskReport,
 } from "./api";
 import { connectWallet, disconnectWallet, initWallet, shortKey, type WalletState } from "./wallet";
+import { EVIDENCE } from "./evidence";
 
 /**
  * The only way a hash is ever rendered: real deploys link to the explorer,
@@ -67,6 +70,102 @@ function CasperMark({ size = 16 }: { size?: number }) {
 
 const riskColor = (r: number) => (r <= 30 ? "#0f8a5f" : r <= 55 ? "#c98a1b" : "#d92d2d");
 
+/**
+ * The hero invoice is a STATE MACHINE, not a prop: it loops the two real
+ * endings (funded / blocked-by-contract) with numbers that mirror the live
+ * walkthrough — a 2 CSPR happy-path face and an above-the-cap policy-block
+ * face — so the story on the right is the same story a judge can trigger.
+ */
+const HERO_RUNS = [
+  {
+    variant: "funded" as const,
+    supplier: "Nordwind Logistics",
+    face: "2 CSPR",
+    advance: "1.96 CSPR",
+    risk: "28 / 100",
+    phases: ["WAITING", "AI REVIEWING", "AI APPROVED", "POLICY CHECK", "FUNDED", "SETTLED"],
+  },
+  {
+    variant: "blocked" as const,
+    supplier: "Baltic Freight Union",
+    face: "84 CSPR",
+    advance: "82.3 CSPR",
+    risk: "31 / 100",
+    phases: ["WAITING", "AI REVIEWING", "AI APPROVED", "POLICY CHECK", "BLOCKED"],
+  },
+];
+
+function HeroInvoice() {
+  const [run, setRun] = useState(0);
+  const [phase, setPhase] = useState(0);
+  useEffect(() => {
+    const r = HERO_RUNS[run];
+    const last = phase >= r.phases.length - 1;
+    const t = setTimeout(
+      () => {
+        if (last) {
+          setRun((run + 1) % HERO_RUNS.length);
+          setPhase(0);
+        } else setPhase(phase + 1);
+      },
+      last ? 3400 : 1500,
+    );
+    return () => clearTimeout(t);
+  }, [run, phase]);
+  const r = HERO_RUNS[run];
+  const label = r.phases[phase];
+  const scored = phase >= 2;
+  const approved = phase >= 2;
+  const funded = r.variant === "funded" && phase >= 4;
+  const settled = r.variant === "funded" && phase >= 5;
+  const blocked = r.variant === "blocked" && phase >= 4;
+  return (
+    <div className="doc-wrap" aria-hidden>
+      <div className={`doc ${blocked ? "doc-blocked" : ""}`}>
+        <header>
+          INVOICE <span>№ 2026-0{347 + run}</span>
+        </header>
+        <div className="doc-row">
+          <span>Supplier</span>
+          <b>{r.supplier}</b>
+        </div>
+        <div className="doc-row">
+          <span>Debtor</span>
+          <b>Aurora Retail AG</b>
+        </div>
+        <div className="doc-row">
+          <span>Risk score</span>
+          <b className="r-red">{scored ? r.risk : "…"}</b>
+        </div>
+        <div className="doc-row">
+          <span>Discount</span>
+          <b>{scored ? "2.00%" : "…"}</b>
+        </div>
+        <div className="doc-row">
+          <span>Single-invoice cap</span>
+          <b className={blocked ? "doc-bad" : ""}>
+            {r.variant === "blocked" ? (phase >= 3 ? "EXCEEDED" : "checking…") : "within limits"}
+          </b>
+        </div>
+        <div className="doc-total">
+          <span>ADVANCE</span>
+          <b>{scored ? r.advance : "…"}</b>
+        </div>
+        <div className={`doc-status ${blocked ? "bad" : settled || funded ? "good" : ""}`}>
+          <i className="doc-status-dot" />
+          {label === "BLOCKED" ? "BLOCKED — User error: 15" : label}
+        </div>
+      </div>
+      {approved && <div className="stamp s1">AI APPROVED</div>}
+      {(funded || settled) && <div className="stamp s2">{settled ? "SETTLED" : "FUNDED"}</div>}
+      {blocked && <div className="stamp s2 blocked">BLOCKED BY CONTRACT</div>}
+      <div className="doc-caption">
+        Illustrative loop — the guided walkthrough runs both endings with real Testnet transactions.
+      </div>
+    </div>
+  );
+}
+
 function fmtCspr(n: number) {
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
@@ -97,6 +196,14 @@ export default function App() {
   const [jhealth, setJhealth] = useState<JudgeHealth | null>(null);
   const [judgeProbed, setJudgeProbed] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
+  /** Full desk is collapsed by default — the homepage is a story, not a dashboard. */
+  const [deskOpen, setDeskOpen] = useState(false);
+  const [recent, setRecent] = useState<RecentRun[]>([]);
+  const fetchRecent = () =>
+    judge
+      .recent()
+      .then((r) => setRecent(r.runs))
+      .catch(() => {});
   const [wallet, setWallet] = useState<WalletState>({
     available: false,
     connected: false,
@@ -123,7 +230,10 @@ export default function App() {
   const probeJudge = () =>
     judge
       .health()
-      .then((h) => setJhealth(h))
+      .then((h) => {
+        setJhealth(h);
+        fetchRecent();
+      })
       .catch(() => setJhealth(null))
       .finally(() => setJudgeProbed(true));
 
@@ -255,7 +365,7 @@ export default function App() {
                   <i /> LIVE DESK ONLINE
                 </span>
                 <span className="ds-text">
-                  Sign <b>real Casper Testnet transactions</b> in the{" "}
+                  Trigger <b>real, agent-signed Casper Testnet transactions</b> in the{" "}
                   <button className="linklike" onClick={() => openRunner()}>
                     guided walkthrough
                   </button>
@@ -355,14 +465,10 @@ export default function App() {
             </p>
           )}
           <p className="hero-links">
-            <a
-              target="_blank"
-              rel="noreferrer"
-              href="https://github.com/a252937166/faktura-casper/blob/master/DORAHACKS.md"
-            >
+            <a target="_blank" rel="noreferrer" href={EVIDENCE.evidencePackUrl}>
               View contract &amp; transaction evidence →
             </a>
-            <a href="https://youtu.be/47ZNPZlRXVA" target="_blank" rel="noreferrer">
+            <a href={EVIDENCE.videoUrl} target="_blank" rel="noreferrer">
               Watch the 3-min demo ↗
             </a>
           </p>
@@ -370,7 +476,7 @@ export default function App() {
             <div className="hero-live">
               <span className={`live-dot ${jhealth?.paused ? "amber" : "green"}`} />
               {jhealth?.paused
-                ? "Live workflow paused (topping up testnet keys) — the desk preview below still works."
+                ? "Live workflow paused — the Casper node is unreachable right now; the desk preview below still works."
                 : "Guided workflow: real Testnet transactions. Desk preview below: safe showcase data."}
             </div>
           ) : (
@@ -381,62 +487,23 @@ export default function App() {
               </div>
             )
           )}
+          {/* Trust facts, not business metrics — TVL & share price live on the desk below. */}
           <div className="hero-metrics">
             <div className="hm-red">
-              <b>{fmtCspr(tvl)} CSPR</b>
-              <span>pool TVL</span>
+              <b>5</b>
+              <span>real Testnet txs per full run</span>
             </div>
             <div>
-              <b>{sharePrice.toFixed(4)}</b>
-              <span>LP share price</span>
+              <b>On-chain</b>
+              <span>risk limits the AI cannot cross</span>
             </div>
             <div>
-              <b>{stats?.attestationCount ?? 0}</b>
-              <span>
-                {meta?.mode === "live-testnet"
-                  ? "AI decisions on-chain"
-                  : "AI decisions / seeded anchors"}
-              </span>
+              <b>Read-only</b>
+              <span>wallet connect — never a signature</span>
             </div>
           </div>
         </div>
-        <div className="doc-wrap" aria-hidden>
-          <div className="doc">
-            <header>
-              INVOICE <span>№ 2026-0347</span>
-            </header>
-            <div className="doc-row">
-              <span>Supplier</span>
-              <b>Nordwind Logistics</b>
-            </div>
-            <div className="doc-row">
-              <span>Debtor</span>
-              <b>Aurora Retail AG</b>
-            </div>
-            <div className="doc-row">
-              <span>Tenor</span>
-              <b>30 days</b>
-            </div>
-            <div className="doc-row">
-              <span>Risk score</span>
-              <b className="r-red">28 / 100</b>
-            </div>
-            <div className="doc-row">
-              <span>Discount</span>
-              <b>2.00%</b>
-            </div>
-            <div className="doc-row">
-              <span>Decision hash</span>
-              <b>sha256:9d93…a8e1</b>
-            </div>
-            <div className="doc-total">
-              <span>ADVANCE</span>
-              <b>58.8 CSPR</b>
-            </div>
-          </div>
-          <div className="stamp s1">APPROVED</div>
-          <div className="stamp s2">FUNDED</div>
-        </div>
+        <HeroInvoice />
       </section>
 
       {/* ---- One invoice, two endings — the whole product in one story ---- */}
@@ -470,11 +537,7 @@ export default function App() {
               Autonomous, but never unbounded.
             </p>
             <div className="story-links">
-              <a
-                target="_blank"
-                rel="noreferrer"
-                href="https://testnet.cspr.live/transaction/830ebd77ee7a06e6a35709ed2ff958e3135db6bd231bec4a4c90ae12879ff9d1"
-              >
+              <a target="_blank" rel="noreferrer" href={EVIDENCE.policyRevertTxUrl}>
                 Open a real reverted transaction ↗
               </a>
               {liveJudge && (
@@ -486,6 +549,11 @@ export default function App() {
           </div>
         </div>
       </section>
+
+      {/* ---- Latest real run — a receipt, not a metric ---- */}
+      {liveJudge && recent.length > 0 && (
+        <LatestRunReceipt runs={recent} onOpen={() => openRunner()} />
+      )}
 
       {/* ---- Capabilities, each backed by something real ---- */}
       <section className="caps">
@@ -528,11 +596,11 @@ export default function App() {
         <section className="runit">
           <div className="runit-card">
             <div>
-              <h2>Don't take our word for it. Sign it yourself.</h2>
+              <h2>Don't take our word for it. Trigger it yourself. Verify every transaction.</h2>
               <p>
                 Three guided walkthroughs — the full lifecycle, the policy firewall and an x402
-                purchase. One click per step, one real Casper Testnet transaction per click,
-                explorer links as they confirm.
+                purchase. One click per step, one real agent-signed Casper Testnet transaction per
+                click, explorer links as they confirm. Your wallet never signs anything.
               </p>
             </div>
             <button className="btn-primary big" onClick={() => openRunner()}>
@@ -550,244 +618,265 @@ export default function App() {
             ? "Reads come from a captured snapshot of the real testnet contract; new writes here are simulated (the guided walkthrough is the live surface)."
             : "Everything below reads and writes the live testnet contract."}
         </p>
+        <button className="desk-toggle" onClick={() => setDeskOpen(!deskOpen)}>
+          {deskOpen ? "▴ Collapse the full desk" : "▾ Open the full live desk"}
+        </button>
       </section>
 
-      <section className="stats">
-        <div className="stat">
-          <div className="label">Pool TVL</div>
-          <div className="value">{fmtCspr(tvl)} CSPR</div>
-          <div className="sub">
-            liquid {fmtCspr(motesToCspr(stats?.liquid))} · deployed{" "}
-            {fmtCspr(motesToCspr(stats?.deployed))}
-          </div>
-        </div>
-        <div className="stat">
-          <div className="label">Pool value / share</div>
-          <div className={`value ${sharePrice > 1 ? "good" : ""}`}>{sharePrice.toFixed(4)}</div>
-          <div className="sub">1.0000 at genesis — yield accrues here</div>
-        </div>
-        <div className="stat">
-          <div className="label">Lifetime advances</div>
-          <div className="value accent">{fmtCspr(motesToCspr(stats?.totalFunded))} CSPR</div>
-          <div className="sub">{stats?.invoiceCount ?? 0} invoices registered</div>
-        </div>
-        <div className="stat">
-          <div className="label">Lifetime collected</div>
-          <div className="value">{fmtCspr(motesToCspr(stats?.totalSettled))} CSPR</div>
-          <div className="sub">face value settled by debtors</div>
-        </div>
-        <div className="stat">
-          <div className="label">Lifetime defaults</div>
-          <div className={`value ${motesToCspr(stats?.totalDefaulted) > 0 ? "bad" : ""}`}>
-            {fmtCspr(motesToCspr(stats?.totalDefaulted))} CSPR
-          </div>
-          <div className="sub">written off autonomously</div>
-        </div>
-        <div className="stat">
-          <div className="label">AI Attestations</div>
-          <div className="value">{stats?.attestationCount ?? 0}</div>
-          <div className="sub">
-            {meta?.mode === "live-testnet"
-              ? "decision hashes anchored on-chain"
-              : "seeded anchors + simulated new decisions"}
-          </div>
-        </div>
-      </section>
+      {!deskOpen && (
+        <DeskSummary
+          stats={stats}
+          tvl={tvl}
+          sharePrice={sharePrice}
+          invoices={invoices}
+          events={events}
+          onOpen={() => setDeskOpen(true)}
+        />
+      )}
 
-      <div className="grid">
-        <div style={{ display: "grid", gap: 16 }}>
-          <div className="panel">
-            <div className="head">
-              Receivables pipeline
-              <span className="hint">
-                {meta?.mode === "live-testnet"
-                  ? "every state transition is a Casper Testnet transaction"
-                  : "seeded from real Casper Testnet · new writes simulated"}
-              </span>
-              <span className="right hint">{invoices.length} intakes</span>
-            </div>
-            {invoices.length === 0 ? (
-              <div className="empty">
-                No invoices yet — submit one below and watch the underwriter work.
+      {deskOpen && (
+        <>
+          <section className="stats">
+            <div className="stat">
+              <div className="label">Pool TVL</div>
+              <div className="value">{fmtCspr(tvl)} CSPR</div>
+              <div className="sub">
+                liquid {fmtCspr(motesToCspr(stats?.liquid))} · deployed{" "}
+                {fmtCspr(motesToCspr(stats?.deployed))}
               </div>
-            ) : (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Invoice</th>
-                    <th>Supplier → Debtor</th>
-                    <th className="num">Face</th>
-                    <th className="num">Advance</th>
-                    <th>Risk</th>
-                    <th>Due</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoices.map((r) => {
-                    const chainState = pool?.onchain.find((o) => o.id === r.id);
-                    // policy_blocked outranks the raw chain state (Listed): the
-                    // register succeeded but the contract refused the funding.
-                    const status =
-                      r.status === "policy_blocked"
-                        ? "policy_blocked"
-                        : chainState && r.id
-                          ? stateName(chainState.state)
-                          : r.status;
-                    return (
-                      <tr key={r.intakeId} className="row" onClick={() => setSelected(r)}>
-                        <td className="mono">{r.intake.invoiceNumber}</td>
-                        <td>
-                          {r.intake.supplierName} <span className="muted">→</span>{" "}
-                          {r.intake.debtorName}
-                        </td>
-                        <td className="num mono">{fmtCspr(r.intake.amountCspr)}</td>
-                        <td className="num mono">
-                          {r.decision?.approve
-                            ? fmtCspr(
-                                (r.intake.amountCspr * (10_000 - r.decision.discountBps)) / 10_000,
-                              )
-                            : "—"}
-                        </td>
-                        <td>
-                          {r.decision ? (
-                            <span className="risk">
-                              <span className="bar">
-                                <i
-                                  style={{
-                                    width: `${r.decision.riskScore}%`,
-                                    background: riskColor(r.decision.riskScore),
-                                  }}
-                                />
-                              </span>
-                              <span className="mono">{r.decision.riskScore}</span>
-                            </span>
-                          ) : (
-                            <span className="muted mono">…</span>
-                          )}
-                        </td>
-                        <td className="mono muted">
-                          {new Date(r.intake.dueTs).toISOString().slice(0, 10)}
-                        </td>
-                        <td>
-                          <span className={`badge ${status}`}>{status.toUpperCase()}</span>
-                        </td>
+            </div>
+            <div className="stat">
+              <div className="label">Pool value / share</div>
+              <div className={`value ${sharePrice > 1 ? "good" : ""}`}>{sharePrice.toFixed(4)}</div>
+              <div className="sub">1.0000 at genesis — yield accrues here</div>
+            </div>
+            <div className="stat">
+              <div className="label">Lifetime advances</div>
+              <div className="value accent">{fmtCspr(motesToCspr(stats?.totalFunded))} CSPR</div>
+              <div className="sub">{stats?.invoiceCount ?? 0} invoices registered</div>
+            </div>
+            <div className="stat">
+              <div className="label">Lifetime collected</div>
+              <div className="value">{fmtCspr(motesToCspr(stats?.totalSettled))} CSPR</div>
+              <div className="sub">face value settled by debtors</div>
+            </div>
+            <div className="stat">
+              <div className="label">Lifetime defaults</div>
+              <div className={`value ${motesToCspr(stats?.totalDefaulted) > 0 ? "bad" : ""}`}>
+                {fmtCspr(motesToCspr(stats?.totalDefaulted))} CSPR
+              </div>
+              <div className="sub">written off autonomously</div>
+            </div>
+            <div className="stat">
+              <div className="label">AI Attestations</div>
+              <div className="value">{stats?.attestationCount ?? 0}</div>
+              <div className="sub">
+                {meta?.mode === "live-testnet"
+                  ? "decision hashes anchored on-chain"
+                  : "seeded anchors + simulated new decisions"}
+              </div>
+            </div>
+          </section>
+
+          <div className="grid">
+            <div style={{ display: "grid", gap: 16 }}>
+              <div className="panel">
+                <div className="head">
+                  Receivables pipeline
+                  <span className="hint">
+                    {meta?.mode === "live-testnet"
+                      ? "every state transition is a Casper Testnet transaction"
+                      : "seeded from real Casper Testnet · new writes simulated"}
+                  </span>
+                  <span className="right hint">{invoices.length} intakes</span>
+                </div>
+                {invoices.length === 0 ? (
+                  <div className="empty">
+                    No invoices yet — submit one below and watch the underwriter work.
+                  </div>
+                ) : (
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Invoice</th>
+                        <th>Supplier → Debtor</th>
+                        <th className="num">Face</th>
+                        <th className="num">Advance</th>
+                        <th>Risk</th>
+                        <th>Due</th>
+                        <th>Status</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-            <div className="pool-actions">
-              <span className="muted" style={{ fontSize: 12 }}>
-                LP demo actions:
-              </span>
-              <input value={depositAmt} onChange={(e) => setDepositAmt(e.target.value)} />
-              <button
-                className="btn ghost sm"
-                disabled={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  try {
-                    await api.deposit(Number(depositAmt));
+                    </thead>
+                    <tbody>
+                      {invoices.map((r) => {
+                        const chainState = pool?.onchain.find((o) => o.id === r.id);
+                        // policy_blocked outranks the raw chain state (Listed): the
+                        // register succeeded but the contract refused the funding.
+                        const status =
+                          r.status === "policy_blocked"
+                            ? "policy_blocked"
+                            : chainState && r.id
+                              ? stateName(chainState.state)
+                              : r.status;
+                        return (
+                          <tr key={r.intakeId} className="row" onClick={() => setSelected(r)}>
+                            <td className="mono">{r.intake.invoiceNumber}</td>
+                            <td>
+                              {r.intake.supplierName} <span className="muted">→</span>{" "}
+                              {r.intake.debtorName}
+                            </td>
+                            <td className="num mono">{fmtCspr(r.intake.amountCspr)}</td>
+                            <td className="num mono">
+                              {r.decision?.approve
+                                ? fmtCspr(
+                                    (r.intake.amountCspr * (10_000 - r.decision.discountBps)) /
+                                      10_000,
+                                  )
+                                : "—"}
+                            </td>
+                            <td>
+                              {r.decision ? (
+                                <span className="risk">
+                                  <span className="bar">
+                                    <i
+                                      style={{
+                                        width: `${r.decision.riskScore}%`,
+                                        background: riskColor(r.decision.riskScore),
+                                      }}
+                                    />
+                                  </span>
+                                  <span className="mono">{r.decision.riskScore}</span>
+                                </span>
+                              ) : (
+                                <span className="muted mono">…</span>
+                              )}
+                            </td>
+                            <td className="mono muted">
+                              {new Date(r.intake.dueTs).toISOString().slice(0, 10)}
+                            </td>
+                            <td>
+                              <span className={`badge ${status}`}>{status.toUpperCase()}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+                <div className="pool-actions">
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    LP demo actions:
+                  </span>
+                  <input value={depositAmt} onChange={(e) => setDepositAmt(e.target.value)} />
+                  <button
+                    className="btn ghost sm"
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        await api.deposit(Number(depositAmt));
+                        notify(
+                          meta?.mode === "live-testnet"
+                            ? `Deposited ${depositAmt} CSPR into the pool`
+                            : `SHOWCASE: simulated ${depositAmt} CSPR deposit in memory`,
+                        );
+                        refresh();
+                      } catch (e) {
+                        notify(`Deposit failed: ${(e as Error).message}`);
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    Deposit CSPR
+                  </button>
+                  <span className="muted" style={{ fontSize: 11.5, fontFamily: "var(--mono)" }}>
+                    {meta?.mode === "live-testnet"
+                      ? `share price ${sharePrice.toFixed(4)} · funded from real testnet balance`
+                      : `share price ${sharePrice.toFixed(4)} · showcase deposit simulated in memory`}
+                  </span>
+                </div>
+              </div>
+
+              <div id="sell">
+                <SubmitPanel
+                  supplierDefault={meta?.supplier ?? null}
+                  liveMode={meta?.mode === "live-testnet"}
+                  wallet={wallet}
+                  onOpenGuided={() => setRunnerOpen(true)}
+                  onSubmitted={(r) => {
                     notify(
-                      meta?.mode === "live-testnet"
-                        ? `Deposited ${depositAmt} CSPR into the pool`
-                        : `SHOWCASE: simulated ${depositAmt} CSPR deposit in memory`,
+                      r.status === "rejected"
+                        ? `Underwriter REJECTED ${r.intake.invoiceNumber}`
+                        : r.status === "policy_blocked"
+                          ? `Casper policy BLOCKED funding of ${r.intake.invoiceNumber} — open it to see the firewall`
+                          : `Underwriter approved & funded ${r.intake.invoiceNumber}`,
                     );
                     refresh();
-                  } catch (e) {
-                    notify(`Deposit failed: ${(e as Error).message}`);
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                Deposit CSPR
-              </button>
-              <span className="muted" style={{ fontSize: 11.5, fontFamily: "var(--mono)" }}>
-                {meta?.mode === "live-testnet"
-                  ? `share price ${sharePrice.toFixed(4)} · funded from real testnet balance`
-                  : `share price ${sharePrice.toFixed(4)} · showcase deposit simulated in memory`}
-              </span>
+                  }}
+                />
+              </div>
             </div>
-          </div>
 
-          <div id="sell">
-            <SubmitPanel
-              supplierDefault={meta?.supplier ?? null}
-              liveMode={meta?.mode === "live-testnet"}
-              wallet={wallet}
-              onOpenGuided={() => setRunnerOpen(true)}
-              onSubmitted={(r) => {
-                notify(
-                  r.status === "rejected"
-                    ? `Underwriter REJECTED ${r.intake.invoiceNumber}`
-                    : r.status === "policy_blocked"
-                      ? `Casper policy BLOCKED funding of ${r.intake.invoiceNumber} — open it to see the firewall`
-                      : `Underwriter approved & funded ${r.intake.invoiceNumber}`,
-                );
-                refresh();
-              }}
-            />
-          </div>
-        </div>
-
-        <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
-          <AgentRoles />
-          <div className="panel">
-            <div className="head">
-              Agent activity
-              <span className="hint">live</span>
-              <span className="right">
-                <span className="dot" />
-              </span>
-            </div>
-            <div className="feed" ref={feedRef}>
-              {events.length === 0 && <div className="empty">Agents idle…</div>}
-              {events.map((e, i) => {
-                // The freshest "the model is scoring…" line gets the working
-                // treatment — pulsing AI avatar + shimmer — so you can SEE the
-                // agent thinking, not just read about it.
-                const aiWorking = e.kind === "llm" && i === 0;
-                return (
-                  <div
-                    className={`feed-item ${e.actor === "underwriter" ? "is-ai" : ""} ${aiWorking ? "ai-working" : ""}`}
-                    key={`${e.ts}-${i}`}
-                  >
-                    <div className={`avatar ${e.actor === "underwriter" ? "ai" : ""}`}>
-                      {ACTOR_ICON[e.actor] ?? "•"}
-                    </div>
-                    <div className="body">
-                      <div className="msg">
-                        {e.message}
-                        {aiWorking && (
-                          <span className="lj-ai-dots">
-                            <i />
-                            <i />
-                            <i />
-                          </span>
-                        )}
+            <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
+              <AgentRoles />
+              <div className="panel">
+                <div className="head">
+                  Agent activity
+                  <span className="hint">
+                    {meta?.mode === "showcase" ? "live AI · showcase writes simulated" : "live"}
+                  </span>
+                  <span className="right">
+                    <span className="dot" />
+                  </span>
+                </div>
+                <div className="feed" ref={feedRef}>
+                  {events.length === 0 && <div className="empty">Agents idle…</div>}
+                  {events.map((e, i) => {
+                    // The freshest "the model is scoring…" line gets the working
+                    // treatment — pulsing AI avatar + shimmer — so you can SEE the
+                    // agent thinking, not just read about it.
+                    const aiWorking = e.kind === "llm" && i === 0;
+                    return (
+                      <div
+                        className={`feed-item ${e.actor === "underwriter" ? "is-ai" : ""} ${aiWorking ? "ai-working" : ""}`}
+                        key={`${e.ts}-${i}`}
+                      >
+                        <div className={`avatar ${e.actor === "underwriter" ? "ai" : ""}`}>
+                          {ACTOR_ICON[e.actor] ?? "•"}
+                        </div>
+                        <div className="body">
+                          <div className="msg">
+                            {e.message}
+                            {aiWorking && (
+                              <span className="lj-ai-dots">
+                                <i />
+                                <i />
+                                <i />
+                              </span>
+                            )}
+                          </div>
+                          <div className="meta">
+                            <span>{e.actor}</span>
+                            <span>{timeAgo(e.ts)}</span>
+                            {e.deployHash && (
+                              <TxLink
+                                hash={e.deployHash}
+                                explorer={pool?.explorer ?? "https://testnet.cspr.live"}
+                                prefix="tx "
+                              />
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div className="meta">
-                        <span>{e.actor}</span>
-                        <span>{timeAgo(e.ts)}</span>
-                        {e.deployHash && (
-                          <TxLink
-                            hash={e.deployHash}
-                            explorer={pool?.explorer ?? "https://testnet.cspr.live"}
-                            prefix="tx "
-                          />
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        </>
+      )}
 
       {selected && (
         <Drawer
@@ -830,12 +919,141 @@ export default function App() {
           onClose={() => {
             setRunnerOpen(false);
             refresh();
+            fetchRecent();
           }}
         />
       )}
       {mcpOpen && <McpDrawer meta={meta} notify={notify} onClose={() => setMcpOpen(false)} />}
       {toast && <div className="toast">{toast}</div>}
     </div>
+  );
+}
+
+/**
+ * Collapsed desk: three current numbers, the three freshest invoices and feed
+ * lines — enough to prove the book is alive without turning the homepage into
+ * a dashboard. The full desk is one click away.
+ */
+function DeskSummary({
+  stats,
+  tvl,
+  sharePrice,
+  invoices,
+  events,
+  onOpen,
+}: {
+  stats: ChainStats | undefined;
+  tvl: number;
+  sharePrice: number;
+  invoices: InvoiceRecord[];
+  events: FeedEvent[];
+  onOpen: () => void;
+}) {
+  return (
+    <section className="desk-summary">
+      <div className="stats compact">
+        <div className="stat">
+          <div className="label">Pool TVL</div>
+          <div className="value">{fmtCspr(tvl)} CSPR</div>
+          <div className="sub">
+            liquid {fmtCspr(motesToCspr(stats?.liquid))} · deployed{" "}
+            {fmtCspr(motesToCspr(stats?.deployed))}
+          </div>
+        </div>
+        <div className="stat">
+          <div className="label">Pool value / share</div>
+          <div className={`value ${sharePrice > 1 ? "good" : ""}`}>{sharePrice.toFixed(4)}</div>
+          <div className="sub">1.0000 at genesis — yield accrues here</div>
+        </div>
+        <div className="stat">
+          <div className="label">Lifetime advances</div>
+          <div className="value accent">{fmtCspr(motesToCspr(stats?.totalFunded))} CSPR</div>
+          <div className="sub">{stats?.invoiceCount ?? 0} invoices registered</div>
+        </div>
+      </div>
+      <div className="desk-summary-cols">
+        <div className="panel">
+          <div className="head">
+            Latest invoices <span className="right hint">{invoices.length} total</span>
+          </div>
+          {invoices.slice(0, 3).map((r) => (
+            <div className="dsum-row" key={r.intakeId}>
+              <span className="mono">{r.intake.invoiceNumber}</span>
+              <span className="dsum-names">
+                {r.intake.supplierName} <span className="muted">→</span> {r.intake.debtorName}
+              </span>
+              <span className="mono num">{fmtCspr(r.intake.amountCspr)} CSPR</span>
+              <span className={`badge ${r.status}`}>{r.status.toUpperCase()}</span>
+            </div>
+          ))}
+          {invoices.length === 0 && <div className="empty">No invoices yet.</div>}
+        </div>
+        <div className="panel">
+          <div className="head">
+            Agent activity <span className="right hint">latest 3</span>
+          </div>
+          {events.slice(0, 3).map((e, i) => (
+            <div className="dsum-row feedish" key={`${e.ts}-${i}`}>
+              <span className="dsum-actor">{e.actor}</span>
+              <span className="dsum-msg">{e.message}</span>
+              <span className="muted">{timeAgo(e.ts)}</span>
+            </div>
+          ))}
+          {events.length === 0 && <div className="empty">Agents idle…</div>}
+        </div>
+      </div>
+      <button className="desk-toggle big" onClick={onOpen}>
+        ▾ Open the full live desk — full book, LP actions, custom intake, agent roles &amp; feed
+      </button>
+    </section>
+  );
+}
+
+/**
+ * The receipt of the LAST completed real walkthrough — persisted server-side.
+ * More convincing than any static metric: it names the run, lists every step
+ * and links every transaction.
+ */
+function LatestRunReceipt({ runs, onOpen }: { runs: RecentRun[]; onOpen: () => void }) {
+  const run = runs[0];
+  if (!run) return null;
+  const txs = run.steps.filter((s) => s.txHash);
+  return (
+    <section className="latest-run">
+      <div className="latest-run-card">
+        <div className="latest-run-head">
+          <span className="latest-run-kicker">LATEST LIVE TESTNET RUN</span>
+          <span className="latest-run-id mono">{run.displayId}</span>
+          <span className="latest-run-when">{timeAgo(run.endedTs)}</span>
+        </div>
+        <div className="latest-run-steps">
+          {run.steps.map((s) => (
+            <div className="latest-run-step" key={s.key}>
+              <span className={`lr-mark ${s.status}`}>
+                {s.status === "reverted" ? "⛔" : s.status === "done" ? "✓" : "•"}
+              </span>
+              <span className="lr-title">{s.title}</span>
+              {s.txHash && (
+                <a className="lr-tx mono" target="_blank" rel="noreferrer" href={s.explorerUrl}>
+                  {s.txHash.slice(0, 8)}… ↗
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="latest-run-foot">
+          {run.wallet && (
+            <span className="lr-wallet">◈ advance paid to visitor wallet {run.wallet}</span>
+          )}
+          <span className="lr-count">
+            {txs.length} real transaction{txs.length === 1 ? "" : "s"} on CSPR.live
+          </span>
+          <button className="linklike" onClick={onOpen}>
+            Run the next one yourself →
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1772,6 +1990,19 @@ function JudgeHealthBar({ health }: { health: JudgeHealth | null }) {
           </span>
         );
       })}
+      {health.budget && (
+        <>
+          <span className="lj-hsep">·</span>
+          <span
+            className="lj-bal"
+            title="Anti-abuse budgets: daily wallet-payout CSPR and signed transactions"
+          >
+            budget {health.budget.spentCspr}/{health.budget.capCspr} CSPR
+            {health.budget.deployCap != null &&
+              ` · ${health.budget.deploysToday ?? 0}/${health.budget.deployCap} tx`}
+          </span>
+        </>
+      )}
     </div>
   );
 }
@@ -1793,50 +2024,72 @@ function ElapsedTimer({ startTs }: { startTs: number }) {
 }
 
 /**
- * Every walkthrough step maps to a real MCP tool — the same capability an
- * agent can call over stdio. Shown inline so "watch the demo" becomes
- * "my agent could do this".
+ * Every walkthrough step maps to a real MCP capability. The verb matters:
+ * "drive" tools EXECUTE the step from an agent; "verify"/"observe" tools audit
+ * or read its effect — the hook never claims more than the tool actually does.
  */
-const STEP_MCP: Record<string, { tool: string; prompt: string }> = {
+const STEP_MCP: Record<string, { tool: string; verb: string; prompt: string }> = {
   underwrite: {
     tool: "submit_invoice",
+    verb: "Your agent can drive this pipeline",
     prompt: "Submit this invoice to Faktura and tell me the AI's risk score, price and red flags.",
   },
   register: {
     tool: "submit_invoice",
+    verb: "Your agent can drive this pipeline",
     prompt:
       "Submit an invoice to Faktura — the tool drives register + fund on-chain and returns the tx hashes.",
   },
   fund: {
     tool: "pool_stats",
+    verb: "Your agent can verify the pool effect",
     prompt: "How much liquid capital does the Faktura pool have left after that funding?",
   },
   attest: {
     tool: "verify_decision_hash",
+    verb: "Your agent can audit this anchor",
     prompt: "Verify the latest Faktura invoice's decision hash against its on-chain attestation.",
   },
   pick: {
     tool: "list_funded_invoices",
+    verb: "Your agent can read the book",
     prompt: "Which invoices is the Faktura pool currently exposed to?",
   },
   x402: {
     tool: "get_risk_report",
+    verb: "Your agent can buy this report",
     prompt: "Buy the x402 risk report for that funded invoice and summarise the red flags.",
   },
   settle: {
     tool: "pool_stats",
+    verb: "Your agent can verify the pool effect",
     prompt: "Did the pool realise yield after that settlement? Compare TVL before and after.",
   },
 };
 
+/**
+ * Collapsed by default: the walkthrough serves judges first, developers second.
+ * One quiet line advertises the capability; expanding reveals the prompt.
+ */
 function AgentHook({ stepKey, onOpenMcp }: { stepKey: string; onOpenMcp: () => void }) {
   const m = STEP_MCP[stepKey];
+  const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   if (!m) return null;
+  if (!open) {
+    return (
+      <button className="lj-agenthook-fold" onClick={() => setOpen(true)}>
+        ▸ Related MCP capability · <b>{m.tool}</b>
+      </button>
+    );
+  }
   return (
     <div className="lj-agenthook">
       <div className="lj-agenthook-head">
-        <span className="lj-agenthook-badge">🤖 your agent can do this too</span>
+        <button className="lj-agenthook-fold open" onClick={() => setOpen(false)}>
+          ▾ Related MCP capability
+        </button>
+        <span className="lj-agenthook-badge">🤖 {m.verb}</span>
         <span className="lj-agenthook-tool">
           MCP tool: <b>{m.tool}</b>
         </span>
@@ -2202,8 +2455,8 @@ function JudgeGuided({
 
       {paused && (
         <div className="lj-paused">
-          Live judge mode is temporarily paused — a testnet key needs a top-up or the node is
-          unreachable. The safe showcase remains fully available.
+          Live judge mode is temporarily paused — the Casper node is unreachable right now. The safe
+          showcase remains fully available.
         </div>
       )}
 
@@ -2461,7 +2714,7 @@ function AgentRoles() {
     ["Supplier", "→", "receives the advance", "#0f8a5f"],
     ["Investor (LP)", "$", "deposit / withdraw", "#2456b8"],
     ["Debtor", "✓", "settles face value", "#17130d"],
-    ["x402 buyer", "402", "buys the risk report", "#7a4dd0"],
+    ["x402 buyer", "402", "buys the risk report · demo signs with the debtor key", "#7a4dd0"],
   ] as const;
   return (
     <div className="panel roles">
@@ -2502,7 +2755,7 @@ const MCP_TOOLS = [
   },
   {
     name: "submit_invoice",
-    what: "drives the real underwriting pipeline: AI scoring → on-chain policy → register/fund/attest",
+    what: "runs the underwriting pipeline (live AI + policy checks). Hosted here: writes are simulated; a local live-mode stack signs the real register/fund/attest deploys",
     ask: '"Sell this €40k receivable from Aurora Retail, due in 30 days."',
   },
   {
@@ -2652,8 +2905,10 @@ function McpDrawer({
           </div>
           <div className="note" style={{ marginTop: 6 }}>
             POSIX shell (macOS / Linux / WSL) · defined in{" "}
-            <span className="mono">agents/src/mcp.ts</span> · works against this host or a local
-            live-mode stack.
+            <span className="mono">agents/src/mcp.ts</span>. <b>Hosted MCP</b> (this host): live AI
+            + read-only chain data, writes simulated — the guided walkthrough stays the only public
+            signing surface. <b>Local live mode</b> with your own funded testnet keys signs real
+            deploys.
           </div>
         </div>
 
