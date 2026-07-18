@@ -826,6 +826,7 @@ export default function App() {
           onHealth={setJhealth}
           wallet={wallet}
           initialPreset={runnerPreset}
+          onOpenMcp={() => setMcpOpen(true)}
           onClose={() => {
             setRunnerOpen(false);
             refresh();
@@ -1791,6 +1792,75 @@ function ElapsedTimer({ startTs }: { startTs: number }) {
   );
 }
 
+/**
+ * Every walkthrough step maps to a real MCP tool — the same capability an
+ * agent can call over stdio. Shown inline so "watch the demo" becomes
+ * "my agent could do this".
+ */
+const STEP_MCP: Record<string, { tool: string; prompt: string }> = {
+  underwrite: {
+    tool: "submit_invoice",
+    prompt: "Submit this invoice to Faktura and tell me the AI's risk score, price and red flags.",
+  },
+  register: {
+    tool: "submit_invoice",
+    prompt:
+      "Submit an invoice to Faktura — the tool drives register + fund on-chain and returns the tx hashes.",
+  },
+  fund: {
+    tool: "pool_stats",
+    prompt: "How much liquid capital does the Faktura pool have left after that funding?",
+  },
+  attest: {
+    tool: "verify_decision_hash",
+    prompt: "Verify the latest Faktura invoice's decision hash against its on-chain attestation.",
+  },
+  pick: {
+    tool: "list_funded_invoices",
+    prompt: "Which invoices is the Faktura pool currently exposed to?",
+  },
+  x402: {
+    tool: "get_risk_report",
+    prompt: "Buy the x402 risk report for that funded invoice and summarise the red flags.",
+  },
+  settle: {
+    tool: "pool_stats",
+    prompt: "Did the pool realise yield after that settlement? Compare TVL before and after.",
+  },
+};
+
+function AgentHook({ stepKey, onOpenMcp }: { stepKey: string; onOpenMcp: () => void }) {
+  const m = STEP_MCP[stepKey];
+  const [copied, setCopied] = useState(false);
+  if (!m) return null;
+  return (
+    <div className="lj-agenthook">
+      <div className="lj-agenthook-head">
+        <span className="lj-agenthook-badge">🤖 your agent can do this too</span>
+        <span className="lj-agenthook-tool">
+          MCP tool: <b>{m.tool}</b>
+        </span>
+      </div>
+      <div className="lj-agenthook-row">
+        <code className="lj-agenthook-prompt">"{m.prompt}"</code>
+        <button
+          className="lj-agenthook-copy"
+          onClick={() => {
+            navigator.clipboard?.writeText(m.prompt).catch(() => {});
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1600);
+          }}
+        >
+          {copied ? "COPIED ✓" : "COPY"}
+        </button>
+        <button className="lj-agenthook-open" onClick={onOpenMcp}>
+          MCP interface →
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function GuidedStep({
   step,
   index,
@@ -1803,6 +1873,7 @@ function GuidedStep({
   walletLock,
   onReconnect,
   onAbandon,
+  onOpenMcp,
 }: {
   step: JudgeStep;
   index: number;
@@ -1816,6 +1887,7 @@ function GuidedStep({
   walletLock?: string | null;
   onReconnect: () => void;
   onAbandon: () => void;
+  onOpenMcp: () => void;
 }) {
   const done = step.status === "done" || step.status === "reverted";
   const isAi = step.kind === "compute";
@@ -1953,6 +2025,8 @@ function GuidedStep({
           </div>
         )}
 
+        <AgentHook stepKey={step.key} onOpenMcp={onOpenMcp} />
+
         {/* What's next — so the user always knows where the story is going */}
         {nextTitle && !running && (
           <div className="lj-next">
@@ -1969,6 +2043,7 @@ function JudgeGuided({
   onHealth,
   wallet,
   initialPreset,
+  onOpenMcp,
   onClose,
 }: {
   health: JudgeHealth | null;
@@ -1976,6 +2051,7 @@ function JudgeGuided({
   wallet: WalletState;
   /** Preset the caller wants started immediately (hero CTA deep-link). */
   initialPreset?: string | null;
+  onOpenMcp: () => void;
   onClose: () => void;
 }) {
   const [presets, setPresets] = useState<JudgePreset[]>([]);
@@ -2323,6 +2399,7 @@ function JudgeGuided({
                 walletLock={walletMismatch ? session.wallet : null}
                 onReconnect={() => void connectWallet()}
                 onAbandon={reset}
+                onOpenMcp={onOpenMcp}
               />
             ))}
           </div>
@@ -2536,8 +2613,8 @@ function McpDrawer({
 
   return (
     <>
-      <div className="drawer-backdrop" onClick={onClose} />
-      <div className="drawer mcp-drawer">
+      <div className="drawer-backdrop mcp-top-bd" onClick={onClose} />
+      <div className="drawer mcp-drawer mcp-top">
         <h2>
           MCP Agent Interface{" "}
           <span className={`badge ${meta?.mode === "live-testnet" ? "FUNDED" : "LISTED"}`}>
