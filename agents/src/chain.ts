@@ -11,6 +11,21 @@ export interface ChainResult<T = unknown> {
 }
 
 /**
+ * A livenet invocation that FAILED — including an on-chain revert, which is
+ * still a real, explorer-linkable transaction. Callers that expect a revert
+ * (the policy firewall) need the hash of the transaction that just failed,
+ * not only the error text.
+ */
+export class LivenetError extends Error {
+  deployHashes: string[];
+  constructor(message: string, deployHashes: string[]) {
+    super(message);
+    this.name = "LivenetError";
+    this.deployHashes = deployHashes;
+  }
+}
+
+/**
  * Runs the Rust livenet ops binary (contracts/bin/livenet.rs) with the key of
  * the given persona and parses the `RESULT {...}` line. All transaction
  * construction / signing / waiting stays inside the audited Odra host.
@@ -53,7 +68,17 @@ export async function livenet<T = unknown>(
       clearTimeout(timer);
       const raw = out + "\n" + err;
       if (code !== 0) {
-        reject(new Error(`livenet ${args.join(" ")} failed (${code}):\n${raw.slice(-2000)}`));
+        // A revert exits non-zero but its transaction DID land — keep the
+        // hashes so the caller can link the failed deploy on the explorer.
+        const seen = [...new Set(raw.match(/\b[0-9a-f]{64}\b/g) ?? [])].filter(
+          (h) => !config.contract.includes(h),
+        );
+        reject(
+          new LivenetError(
+            `livenet ${args.join(" ")} failed (${code}):\n${raw.slice(-2000)}`,
+            seen,
+          ),
+        );
         return;
       }
       const line = out.split("\n").find((l) => l.startsWith("RESULT "));

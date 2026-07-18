@@ -9,6 +9,7 @@ import {
   stateName,
   type ApiError,
   type ChainStats,
+  type DecisionCard,
   type FeedEvent,
   type InvoiceRecord,
   type JudgeHealth,
@@ -2237,6 +2238,21 @@ const STEP_MCP: Record<string, { tool: string; verb: string; prompt: string }> =
     verb: "Your agent can verify the pool effect",
     prompt: "Did the pool realise yield after that settlement? Compare TVL before and after.",
   },
+  consumer: {
+    tool: "verify_decision_hash",
+    verb: "Your agent can audit the memo it bought",
+    prompt: "Verify the purchased risk report's decision hash against the on-chain anchor.",
+  },
+  "pick-expired": {
+    tool: "list_funded_invoices",
+    verb: "Your agent can read the book",
+    prompt: "Which funded Faktura invoices are past their due date?",
+  },
+  default: {
+    tool: "pool_stats",
+    verb: "Your agent can verify the loss",
+    prompt: "Compare Faktura's totalDefaulted and share price before and after that write-off.",
+  },
 };
 
 /**
@@ -2286,6 +2302,44 @@ function AgentHook({ stepKey, onOpenMcp }: { stepKey: string; onOpenMcp: () => v
   );
 }
 
+/**
+ * The AI's judgment made legible: verdict, price, the WHY and the red flags —
+ * so the walkthrough shows an auditable credit opinion, not a black-box score.
+ */
+function AiDecisionCard({ d }: { d: DecisionCard }) {
+  return (
+    <div className={`lj-ai-decision ${d.verdict === "APPROVE" ? "ok" : "no"}`}>
+      <div className="lj-aid-head">
+        <span className="lj-aid-kicker">AI DECISION</span>
+        <span className={`lj-aid-verdict ${d.verdict === "APPROVE" ? "ok" : "no"}`}>
+          {d.verdict}
+        </span>
+        <span className="lj-aid-fact">
+          risk <b>{d.riskScore}/100</b>
+        </span>
+        {d.discountBps > 0 && (
+          <span className="lj-aid-fact">
+            price <b>{(d.discountBps / 100).toFixed(2)}%</b>
+          </span>
+        )}
+      </div>
+      {d.rationale && (
+        <p className="lj-aid-why">
+          <span className="lj-aid-lbl">Why</span>
+          {d.rationale}
+        </p>
+      )}
+      <div className="lj-aid-flags">
+        <span className="lj-aid-lbl">Red flags</span>
+        {d.redFlags.length ? d.redFlags.join(" · ") : "none"}
+      </div>
+      <div className="lj-aid-hash mono" title={d.decisionHash}>
+        {d.model} · {d.decisionHash.slice(0, 24)}…
+      </div>
+    </div>
+  );
+}
+
 function GuidedStep({
   step,
   index,
@@ -2329,6 +2383,7 @@ function GuidedStep({
             {step.title}
           </div>
           {done && step.result && <div className="lj-row-result">{step.result}</div>}
+          {done && step.decision && <AiDecisionCard d={step.decision} />}
         </div>
         {done && step.txHash && (
           <a className="lj-row-tx" target="_blank" rel="noreferrer" href={step.explorerUrl}>
@@ -2459,6 +2514,67 @@ function GuidedStep({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Where DeFi meets the credit outcome: the pool BEFORE vs AFTER the run, with
+ * the realized yield or loss and the LP share-value move — so "the pool earns
+ * / absorbs" is a number, not a sentence.
+ */
+function PoolEconomics({
+  before,
+  after,
+}: {
+  before?: Record<string, number>;
+  after: Record<string, number>;
+}) {
+  const share = (p?: Record<string, number>) =>
+    p && p.totalShares ? (p.liquid + p.deployed) / p.totalShares : null;
+  const sb = share(before);
+  const sa = share(after);
+  const value = (p?: Record<string, number>) => (p ? p.liquid + p.deployed : null);
+  const vb = value(before);
+  const va = value(after);
+  const delta = vb != null && va != null ? va - vb : null;
+  const fmt = (n: number) => (Math.round(n * 1000) / 1000).toString();
+  return (
+    <div className="lj-finish-pool">
+      <div className="lj-pe-kicker">POOL ECONOMICS</div>
+      <div className="lj-pe-grid">
+        <span className="lj-pe-lbl"></span>
+        <span className="lj-pe-col">liquid</span>
+        <span className="lj-pe-col">deployed</span>
+        <span className="lj-pe-col">share value</span>
+        {before && (
+          <>
+            <span className="lj-pe-lbl">before</span>
+            <span className="mono">{fmt(before.liquid)}</span>
+            <span className="mono">{fmt(before.deployed)}</span>
+            <span className="mono">{sb ? sb.toFixed(4) : "—"}</span>
+          </>
+        )}
+        <span className="lj-pe-lbl">after</span>
+        <span className="mono">{fmt(after.liquid)}</span>
+        <span className="mono">{fmt(after.deployed)}</span>
+        <span className="mono">{sa ? sa.toFixed(4) : "—"}</span>
+      </div>
+      {delta != null && Math.abs(delta) > 0.0005 && (
+        <div className={`lj-pe-delta ${delta > 0 ? "gain" : "loss"}`}>
+          {delta > 0 ? "yield realized" : "credit loss absorbed by LPs"}{" "}
+          <b>
+            {delta > 0 ? "+" : ""}
+            {fmt(delta)} CSPR
+          </b>
+          {sb != null && sa != null && sb !== sa && (
+            <span className="lj-pe-share">
+              {" "}
+              · share value {sb.toFixed(4)} → {sa.toFixed(4)}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -2802,9 +2918,11 @@ function JudgeGuided({
                   ? "no advance will move — the contract is about to reject this one"
                   : session.preset === "x402"
                     ? "no new advance — reuses an already-funded invoice"
-                    : session.wallet
-                      ? `◈ advance pays YOUR wallet ${shortKey(session.wallet)}`
-                      : "advance pays the demo supplier"}
+                    : session.preset === "default"
+                      ? "no payout — an overdue advance gets written off; LPs absorb the loss"
+                      : session.wallet
+                        ? `◈ advance pays YOUR wallet ${shortKey(session.wallet)}`
+                        : "advance pays the demo supplier"}
               </div>
               <h1>{session.title}</h1>
             </div>
@@ -2866,12 +2984,7 @@ function JudgeGuided({
                 </div>
               )}
               {session.poolAfter && (
-                <div className="lj-finish-pool">
-                  Pool now: liquid <b>{session.poolAfter.liquid}</b> · deployed{" "}
-                  <b>{session.poolAfter.deployed}</b> · settled{" "}
-                  <b>{session.poolAfter.totalSettled}</b> CSPR ·{" "}
-                  <b>{session.poolAfter.invoiceCount}</b> invoices
-                </div>
+                <PoolEconomics before={session.poolBefore} after={session.poolAfter} />
               )}
               <button className="lj-run-btn ghost" onClick={reset}>
                 Run another walkthrough →

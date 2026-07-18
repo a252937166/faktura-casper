@@ -37,7 +37,7 @@ import {
   touchPosition,
 } from "./judge-limits.js";
 import { config } from "./config.js";
-import { chain } from "./chain.js";
+import { chain, LivenetError } from "./chain.js";
 import { underwrite as llmUnderwrite } from "./llm.js";
 import { db, upsertInvoice, type InvoiceRecord } from "./store.js";
 import { feed } from "./feed.js";
@@ -61,6 +61,21 @@ const day = 86_400_000;
 
 type StepStatus = "locked" | "ready" | "running" | "done" | "reverted" | "failed";
 
+/**
+ * The AI's judgment, made visible: not just a number, but the WHY — so the
+ * walkthrough reads "the model formed an auditable credit opinion", not
+ * "a black box emitted a score". Vendor-neutral by policy.
+ */
+export interface DecisionCard {
+  verdict: "APPROVE" | "REJECT";
+  riskScore: number;
+  discountBps: number;
+  rationale: string;
+  redFlags: string[];
+  model: string;
+  decisionHash: string;
+}
+
 interface JudgeStep {
   key: string;
   actor: string;
@@ -73,6 +88,8 @@ interface JudgeStep {
   txHash?: string;
   explorerUrl?: string;
   result?: string;
+  /** structured AI decision (underwrite / consumer steps) */
+  decision?: DecisionCard;
   what?: string;
   who?: string;
   why?: string;
@@ -81,7 +98,12 @@ interface JudgeStep {
 }
 
 interface StepDef extends Omit<JudgeStep, "status"> {
-  run: (s: Session) => Promise<{ result: string; txHash?: string; reverted?: boolean }>;
+  run: (s: Session) => Promise<{
+    result: string;
+    txHash?: string;
+    reverted?: boolean;
+    decision?: DecisionCard;
+  }>;
 }
 
 interface Session {
@@ -122,6 +144,8 @@ interface Session {
     x402AmountMotes?: string;
     /** Visitor's connected Casper wallet — the advance is paid HERE when set. */
     supplierOverride?: string;
+    /** The purchased x402 risk report — consumed by the consumer-verdict step. */
+    report?: { invoiceId: number; riskScore: number; decisionHash: string };
     /** True while re-running a previously failed step — executors reconcile
      * against the chain first instead of blindly signing again. */
     retrying?: boolean;
@@ -139,6 +163,7 @@ interface PoolSnap {
   totalFunded: number;
   totalSettled: number;
   totalDefaulted: number;
+  totalShares: number;
   invoiceCount: number;
 }
 
@@ -190,6 +215,7 @@ async function snap(): Promise<PoolSnap> {
     totalFunded: cspr(s.totalFunded),
     totalSettled: cspr(s.totalSettled),
     totalDefaulted: cspr(s.totalDefaulted),
+    totalShares: cspr(s.totalShares),
     invoiceCount: s.invoiceCount,
   };
 }
@@ -227,28 +253,57 @@ async function balanceWithTimeout(pubHex: string, ms = 12_000): Promise<number |
   ]);
 }
 
-/** Funded-invoice ids, cached like the pool (livenet reads are slow). */
-let fundedCache: { ts: number; ids: number[] } = { ts: 0, ids: [] };
-let fundedInflight: Promise<void> | null = null;
-async function cachedFundedIds(ttlMs = 90_000): Promise<number[]> {
-  const freshEnough = Date.now() - fundedCache.ts < ttlMs;
-  if (freshEnough) return fundedCache.ids;
-  if (!fundedInflight) {
-    fundedInflight = chain
+/** Contract grace period (deploy arg was 30000 ms) + a settle-time buffer. */
+const GRACE_MS = Number(process.env.FAKTURA_GRACE_MS ?? 30_000);
+
+interface BookInvoice {
+  id: number;
+  state: number;
+  dueTs: number;
+  faceValue: string;
+}
+
+/** The invoice book, cached like the pool (livenet reads are slow). Funded
+ * ids and overdue-funded inventory both derive from ONE read. */
+let bookCache: { ts: number; list: BookInvoice[] } = { ts: 0, list: [] };
+let bookInflight: Promise<void> | null = null;
+async function cachedBook(ttlMs = 90_000): Promise<BookInvoice[]> {
+  const freshEnough = Date.now() - bookCache.ts < ttlMs;
+  if (freshEnough) return bookCache.list;
+  if (!bookInflight) {
+    bookInflight = chain
       .invoices(1, 200)
       .then((list) => {
-        fundedCache = { ts: Date.now(), ids: list.filter((i) => i.state === 1).map((i) => i.id) };
+        bookCache = {
+          ts: Date.now(),
+          list: list.map((i) => ({
+            id: i.id,
+            state: i.state,
+            dueTs: i.dueTs,
+            faceValue: i.faceValue,
+          })),
+        };
       })
       .catch(() => {
-        fundedCache = { ...fundedCache, ts: Date.now() };
+        bookCache = { ...bookCache, ts: Date.now() };
       })
       .finally(() => {
-        fundedInflight = null;
+        bookInflight = null;
       });
   }
-  if (fundedCache.ts > 0) return fundedCache.ids;
-  await fundedInflight;
-  return fundedCache.ids;
+  if (bookCache.ts > 0) return bookCache.list;
+  await bookInflight;
+  return bookCache.list;
+}
+
+async function cachedFundedIds(ttlMs = 90_000): Promise<number[]> {
+  return (await cachedBook(ttlMs)).filter((i) => i.state === 1).map((i) => i.id);
+}
+
+/** Funded invoices past due + grace — the default-workout inventory. */
+function overdueFunded(list: BookInvoice[]): BookInvoice[] {
+  const cutoff = Date.now() - GRACE_MS - 5_000;
+  return list.filter((i) => i.state === 1 && i.dueTs < cutoff);
 }
 
 /** On-chain single-invoice cap (bps), cached — policy is effectively static. */
@@ -278,7 +333,7 @@ async function cachedPolicyBps(): Promise<number> {
  * [0.96·face, 0.995·face]; face is sized so the WHOLE band clears the cap and
  * stays under liquidity.
  */
-function policyBlockPlan(
+export function policyBlockPlan(
   pool: PoolSnap | null,
   capBps: number,
 ): {
@@ -327,7 +382,8 @@ const FLOORS: Record<string, number> = {
 const PRESET_NEEDS: Record<string, Array<(typeof PERSONAS)[number]>> = {
   happy: ["agent", "debtor"],
   "policy-block": ["agent"],
-  x402: ["debtor"],
+  x402: ["agent", "debtor"], // buyer pays with the debtor key; the verdict anchors with the agent key
+  default: ["collector"],
 };
 
 function personaGate(
@@ -365,7 +421,9 @@ async function health() {
     }),
   );
   const { snap: pool, ok: contractOk } = await cachedPool();
-  const fundedIds = await cachedFundedIds().catch(() => [] as number[]);
+  const book = await cachedBook().catch(() => [] as BookInvoice[]);
+  const fundedIds = book.filter((i) => i.state === 1).map((i) => i.id);
+  const overdueCount = overdueFunded(book).length;
   const capBps = await cachedPolicyBps();
   const low = PERSONAS.filter((p) => balances[p] != null && (balances[p] as number) < FLOORS[p]);
   // Global pause is reserved for "the chain is unreachable" — per-preset
@@ -400,6 +458,16 @@ async function health() {
             ok: false,
             reason:
               "no funded invoice with a decision memo on the book — run the Full lifecycle first",
+          },
+    ),
+    default: gate(
+      "default",
+      overdueCount
+        ? { ok: true }
+        : {
+            ok: false,
+            reason:
+              "no overdue funded invoice on the book — the desk seeds one periodically; check back soon",
           },
     ),
   };
@@ -480,7 +548,9 @@ function intakeFor(preset: string, faceCspr: number, runId: string) {
   };
 }
 
-async function doUnderwrite(s: Session): Promise<{ result: string; reverted?: boolean }> {
+async function doUnderwrite(
+  s: Session,
+): Promise<{ result: string; reverted?: boolean; decision?: DecisionCard }> {
   // Size the face: happy path is small; policy-block is sized above the on-chain
   // single-invoice cap (from live pool value) so funding will revert on-chain.
   // Use the CACHED pool + policy (warmed at session creation) so this "instant"
@@ -565,14 +635,27 @@ async function doUnderwrite(s: Session): Promise<{ result: string; reverted?: bo
   s.ctx.amountCspr = input.amountCspr;
   s.ctx.approved = approve;
 
+  // The card the judge sees: the WHY, not only the number. Vendor-neutral.
+  const card: DecisionCard = {
+    verdict: approve ? "APPROVE" : "REJECT",
+    riskScore: risk_score,
+    discountBps: discount_bps,
+    rationale: (opinion.rationale ?? "").slice(0, 420),
+    redFlags: opinion.red_flags ?? [],
+    model: "autonomous-ai-underwriter",
+    decisionHash,
+  };
+
   if (!approve) {
     return {
       result: `AI REJECTED — risk ${risk_score}/100 (${opinion.red_flags.join("; ") || "over policy"})`,
       reverted: true,
+      decision: card,
     };
   }
   return {
     result: `AI APPROVED — risk ${risk_score}/100, discount ${(discount_bps / 100).toFixed(2)}%, face ${input.amountCspr} CSPR. Decision hash ${decisionHash.slice(0, 20)}…`,
+    decision: card,
   };
 }
 
@@ -645,14 +728,16 @@ function fundBookkeeping(s: Session, tx?: string) {
   r.chain.fundHash = tx ?? r.chain.fundHash;
   r.status = "funded";
   upsertInvoice(r);
-  fundedCache.ts = 0; // the book just changed
+  bookCache.ts = 0; // the book just changed
   // Real capital left the pool — track the open position so an abandoned
-  // walkthrough gets auto-settled by the cleanup worker.
+  // walkthrough gets auto-settled by the cleanup worker (unless it goes
+  // overdue first, in which case it becomes default-workout inventory).
   addPosition({
     sessionId: s.id,
     displayId: s.displayId,
     invoiceId: r.id,
     faceMotes: toMotes(r.intake.amountCspr),
+    dueTs: r.intake.dueTs,
     fundedTs: Date.now(),
   });
   if (s.preset === "policy-block") {
@@ -699,10 +784,15 @@ async function stepFund(s: Session) {
       if (/User error:\s*15\b/.test(msg)) {
         r.status = "policy_blocked";
         r.chain.fundError = err;
+        // The revert is a REAL transaction — link the one the judge just
+        // triggered, not only the canonical example from the evidence pack.
+        const revertTx = (e as LivenetError).deployHashes?.at(-1);
+        r.chain.fundHash = revertTx;
         upsertInvoice(r);
         return {
-          result: `Contract REVERTED funding — ${err}. The AI said yes; Casper said no.`,
+          result: `Contract REVERTED funding — ${err}. The AI said yes; Casper said no. The invoice stays listed but unfunded.`,
           reverted: true,
+          txHash: revertTx,
         };
       }
       // Any OTHER revert breaks the demo's promise — fail loudly, void the run.
@@ -717,8 +807,50 @@ async function stepFund(s: Session) {
   }
 }
 
+/**
+ * Casper 2.0 RPC lookup for a submitted transaction (Odra signs Version1
+ * transactions — the legacy info_get_deploy cannot see them). Used to
+ * reconcile "the client timed out but the chain may have kept going".
+ */
+async function checkTxSuccess(hash: string): Promise<"success" | "failure" | "unknown"> {
+  try {
+    const res = await fetch(`${config.nodeAddress}/rpc`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "info_get_transaction",
+        params: { transaction_hash: { Version1: hash } },
+      }),
+    });
+    const d = (await res.json()) as any;
+    if (d.error) return "unknown";
+    const er = d.result?.execution_info?.execution_result ?? {};
+    const v = er.Version2 ?? er.Version1 ?? {};
+    if (!d.result?.execution_info) return "unknown"; // still settling
+    return v.error_message ? "failure" : "success";
+  } catch {
+    return "unknown";
+  }
+}
+
 async function stepAttest(s: Session) {
   const r = s.ctx.record!;
+  // Retry after a timeout: if the earlier attest deploy landed, recover it
+  // instead of anchoring the same memo twice.
+  const pending = s.ctx.pendingTx?.attest;
+  if (s.ctx.retrying && pending) {
+    const status = await checkTxSuccess(pending);
+    if (status === "success") {
+      r.chain.attestHashes.push(pending);
+      upsertInvoice(r);
+      return {
+        result: `Decision memo hash anchored on-chain (recovered — the earlier deploy landed)`,
+        txHash: pending,
+      };
+    }
+  }
   const att = await chain.attest(
     "UNDERWRITE_APPROVE",
     r.id,
@@ -789,6 +921,12 @@ async function stepX402(s: Session) {
     });
     if (retry.status === 200) {
       const rep = (await retry.json()) as any;
+      // Keep the report — the consumer-verdict step audits and acts on it.
+      s.ctx.report = {
+        invoiceId: id,
+        riskScore: Number(rep.riskScore),
+        decisionHash: String(rep.decisionHash),
+      };
       return {
         result: `Report delivered for ${cspr(s.ctx.x402AmountMotes ?? config.x402.priceMotes)} CSPR — risk ${rep.riskScore}, decision ${String(rep.decisionHash).slice(0, 18)}…`,
         txHash: s.ctx.x402Proof,
@@ -800,6 +938,49 @@ async function stepX402(s: Session) {
   );
 }
 
+/**
+ * The half of the agent economy most demos skip: the BUYER acts on what it
+ * bought. The consumer agent audits the memo hash against its local copy,
+ * applies its own acceptance policy, and anchors its verdict on-chain —
+ * closing the loop: produce → sell → verify → act.
+ */
+async function stepConsumerVerdict(s: Session) {
+  const rep = s.ctx.report;
+  if (!rep) throw new Error("no purchased report in this session — run the x402 step first");
+  const local = db.invoices.find((r) => r.id === rep.invoiceId && r.decision);
+  const hashMatch = !!local && local.decision!.decisionHash === rep.decisionHash;
+  const riskOk = rep.riskScore <= 35;
+  const accepted = hashMatch && riskOk;
+  const verdict = accepted ? "ACCEPT" : "REJECT";
+  let tx: string | undefined;
+  let anchored = "";
+  if (accepted) {
+    const att = await chain.attest(
+      "CREDIT_REPORT_ACCEPTED",
+      rep.invoiceId,
+      rep.decisionHash,
+      "consumer-agent",
+    );
+    tx = att.deployHashes.at(-1);
+    anchored = ` — verdict anchored on-chain (attestation #${att.result.attestationId})`;
+  }
+  return {
+    result: `Consumer verdict: ${verdict} — memo hash ${hashMatch ? "MATCH" : "MISMATCH"}, risk ${rep.riskScore} ${riskOk ? "≤" : ">"} 35${anchored}`,
+    txHash: tx,
+    decision: {
+      verdict: (accepted ? "APPROVE" : "REJECT") as DecisionCard["verdict"],
+      riskScore: rep.riskScore,
+      discountBps: 0,
+      rationale: accepted
+        ? "The purchased memo hash matches the on-chain anchor and the risk score clears the consumer's own policy (≤ 35) — the buyer agent accepts the report and records its acceptance."
+        : "The purchased report failed the consumer agent's checks — no acceptance is recorded.",
+      redFlags: hashMatch ? [] : ["decision hash mismatch"],
+      model: "consumer-agent",
+      decisionHash: rep.decisionHash,
+    },
+  };
+}
+
 /** Common post-settle bookkeeping — used by fresh settles AND timeout recovery. */
 async function settleBookkeeping(s: Session, tx?: string, recovered = false) {
   const r = s.ctx.record!;
@@ -807,7 +988,7 @@ async function settleBookkeeping(s: Session, tx?: string, recovered = false) {
   r.status = "settled";
   upsertInvoice(r);
   resolvePosition(r.id); // the pool is whole again — nothing left to clean up
-  fundedCache.ts = 0; // the book just changed
+  bookCache.ts = 0; // the book just changed
   s.poolAfter = await snap().catch(() => undefined);
   return {
     result:
@@ -838,11 +1019,79 @@ async function stepSettle(s: Session) {
   }
 }
 
+/**
+ * The loss half of the credit lifecycle: pick a funded invoice that blew past
+ * due + grace, and let the COLLECTOR key write it off — the one entrypoint
+ * the underwriter key cannot call.
+ */
+async function stepPickExpired(s: Session) {
+  const book = await cachedBook();
+  const inventory = overdueFunded(book);
+  if (!inventory.length) {
+    throw new Error(
+      "No overdue funded invoice is on the book right now — the desk seeds one periodically; try again in a few minutes (or run the Full lifecycle and come back after its due date).",
+    );
+  }
+  const inv = inventory[0];
+  s.ctx.invoiceId = inv.id;
+  s.ctx.amountCspr = cspr(inv.faceValue);
+  const overdueSec = Math.max(0, Math.round((Date.now() - inv.dueTs) / 1000));
+  return {
+    result: `Invoice #${inv.id} (face ${cspr(inv.faceValue)} CSPR) is ${overdueSec}s past due — beyond the grace window, eligible for write-off`,
+  };
+}
+
+async function stepDefault(s: Session) {
+  const id = s.ctx.invoiceId!;
+  const recover = async () => {
+    const inv = await chain.invoice(id).catch(() => null);
+    if (inv?.state === 3) {
+      resolvePosition(id);
+      bookCache.ts = 0;
+      s.poolAfter = await snap().catch(() => undefined);
+      return {
+        result: `DEFAULTED — recovered (the earlier deploy landed). The pool booked the loss.`,
+        txHash: s.ctx.pendingTx?.default,
+      };
+    }
+    return null;
+  };
+  if (s.ctx.retrying) {
+    const r = await recover();
+    if (r) return r;
+  }
+  try {
+    const d = await chain.markDefault(id);
+    const tx = d.deployHashes.at(-1);
+    resolvePosition(id);
+    bookCache.ts = 0;
+    const rec = db.invoices.find((x) => x.id === id);
+    if (rec) {
+      rec.status = "defaulted";
+      rec.chain.defaultHash = tx;
+      upsertInvoice(rec);
+    }
+    s.poolAfter = await snap().catch(() => undefined);
+    return {
+      result: `DEFAULTED — the advance is written off and LPs absorb the loss through the share price. Only the collector key can sign this.`,
+      txHash: tx,
+    };
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (/User error:\s*5\b/.test(msg)) {
+      const r = await recover();
+      if (r) return r;
+    }
+    throw new Error(`mark_default did not confirm — ${normalizeRevert(msg)}`);
+  }
+}
+
 function normalizeRevert(msg: string): string {
   const m = msg.match(/User error:\s*(\d+)/);
   const names: Record<string, string> = {
     "5": "InvalidState",
     "6": "InsufficientLiquidity",
+    "10": "NotDue",
     "13": "RiskAbovePolicy",
     "14": "DiscountOutOfPolicy",
     "15": "SingleInvoiceCapExceeded",
@@ -987,6 +1236,44 @@ function x402Defs(): StepDef[] {
       why: "Machine-to-machine payment for verifiable data — the report carries the on-chain decision hash.",
       run: stepX402,
     },
+    {
+      key: "consumer",
+      actor: "oracle",
+      kind: "chain",
+      title: "Buyer agent verifies & ACTS on the report",
+      action: "Audit + anchor the verdict",
+      what: "The consumer agent recomputes the memo-hash match, applies its OWN acceptance policy (risk ≤ 35), and anchors CREDIT_REPORT_ACCEPTED on-chain.",
+      who: "Consumer agent (underwriter key anchors the verdict)",
+      why: "The other half of the agent economy: the buyer doesn't just pay — it verifies and takes its own on-chain action based on what it bought.",
+      run: stepConsumerVerdict,
+    },
+  ];
+}
+
+function defaultDefs(): StepDef[] {
+  return [
+    {
+      key: "pick-expired",
+      actor: "collector",
+      kind: "compute",
+      title: "Find an overdue funded invoice",
+      action: "Scan the book",
+      what: "The collector scans the funded book for an invoice past its due date + grace window — real credit sometimes goes bad.",
+      who: "Collector agent",
+      why: "Yield is only half of credit; a real desk must also process losses. Instant — no gas.",
+      run: stepPickExpired,
+    },
+    {
+      key: "default",
+      actor: "collector",
+      kind: "chain",
+      title: "Collector writes the invoice off",
+      action: "Sign mark_default",
+      what: "mark_default flags the invoice DEFAULTED, removes its advance from deployed capital and books the loss — LPs absorb it through the share price.",
+      who: "Collector key — the ONLY key the contract accepts here",
+      why: "Separation of duties, enforced on-chain: the underwriter cannot write off its own book.",
+      run: stepDefault,
+    },
   ];
 }
 
@@ -994,6 +1281,7 @@ function defsFor(preset: string): StepDef[] {
   if (preset === "happy") return happyDefs();
   if (preset === "policy-block") return policyBlockDefs();
   if (preset === "x402") return x402Defs();
+  if (preset === "default") return defaultDefs();
   throw new Error(`unknown preset ${preset}`);
 }
 
@@ -1015,9 +1303,16 @@ const PRESETS = [
   {
     id: "x402",
     title: "x402 machine payment",
-    subtitle: "A buyer agent pays over HTTP 402 for the risk report",
-    steps: 4,
+    subtitle: "A buyer agent pays over HTTP 402, verifies, and acts on the report",
+    steps: 3,
     defs: x402Defs,
+  },
+  {
+    id: "default",
+    title: "Default workout",
+    subtitle: "An overdue invoice is written off — LPs absorb the loss",
+    steps: 2,
+    defs: defaultDefs,
   },
 ];
 
@@ -1344,6 +1639,7 @@ export function makeJudgeRouter(): Router {
       s.ctx.retrying = isRetry;
       const out = await def.run(s);
       step.result = out.result;
+      if (out.decision) step.decision = out.decision;
       if (out.txHash) {
         step.txHash = out.txHash;
         step.explorerUrl = deployUrl(out.txHash);
@@ -1438,7 +1734,11 @@ function startCleanupWorker() {
 
 async function cleanupTick() {
   if (STEPPING) return;
-  const stale = stalePositions(CLEANUP_IDLE_MS);
+  // Overdue positions are NOT settled away — they are the default-workout
+  // preset's inventory (the loss half of the credit story).
+  const stale = stalePositions(CLEANUP_IDLE_MS).filter(
+    (p) => !(p.dueTs && p.dueTs + GRACE_MS + 5_000 < Date.now()),
+  );
   if (!stale.length) return;
   const pos = stale[0];
   const owner = sessions.get(pos.sessionId);
@@ -1457,7 +1757,7 @@ async function cleanupTick() {
     recordDeploy("cleanup:settle");
     const st = await chain.settle(pos.invoiceId, pos.faceMotes);
     resolvePosition(pos.invoiceId);
-    fundedCache.ts = 0;
+    bookCache.ts = 0;
     const rec = db.invoices.find((x) => x.id === pos.invoiceId);
     if (rec) {
       rec.status = "settled";

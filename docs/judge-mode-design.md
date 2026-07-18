@@ -45,8 +45,15 @@ Presets:
 2. **`policy-block`** — the ace (3 steps): the AI approves an oversized invoice,
    registration succeeds, and `fund_invoice` **reverts with `User error: 15`
    (SingleInvoiceCapExceeded)**.
-3. **`x402`** — 2 steps: pick an already-funded invoice (zero new exposure) and
-   buy its risk report over HTTP 402 with a real native-CSPR transfer.
+3. **`x402`** — 3 steps: pick an already-funded invoice (zero new exposure),
+   buy its risk report over HTTP 402 with a real native-CSPR transfer, then the
+   consumer agent VERIFIES the memo hash, applies its own acceptance policy
+   (risk ≤ 35) and anchors `CREDIT_REPORT_ACCEPTED` on-chain — the buyer acts
+   on what it bought.
+4. **`default`** — 2 steps: the collector finds a funded invoice past due +
+   grace and signs `mark_default` — the loss half of the credit lifecycle,
+   absorbed by LPs through the share price. Overdue positions are exempt from
+   the auto-settle cleanup precisely so this inventory exists.
 
 Sessions: unguessable UUID id + human `JUDGE-YYYYMMDD-XXXX` display id + a
 32-byte bearer token required on every mutation. The active session (with its
@@ -89,7 +96,7 @@ reservation. The ledger write is atomic (temp + rename) and the reserve path
 | Global payout CSPR per 24 h | 10 | `JUDGE_DAILY_PAYOUT_CSPR` |
 | Walkthroughs per IP per hour | 4 | `JUDGE_RUNS_PER_IP_HOUR` |
 | Walkthroughs per 24 h (all) | 24 | `JUDGE_RUNS_PER_DAY` |
-| Per-preset per 24 h | 12 / 10 / 15 | `JUDGE_HAPPY_PER_DAY` / `JUDGE_POLICY_PER_DAY` / `JUDGE_X402_PER_DAY` |
+| Per-preset per 24 h | 12 / 10 / 15 / 8 | `JUDGE_HAPPY_PER_DAY` / `JUDGE_POLICY_PER_DAY` / `JUDGE_X402_PER_DAY` / `JUDGE_DEFAULT_PER_DAY` |
 | Signed steps (gas) per 24 h | 60 | `JUDGE_DEPLOYS_PER_DAY` |
 
 Plus: one active session globally (same-IP restart supersedes instantly; a

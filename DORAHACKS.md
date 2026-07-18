@@ -53,8 +53,18 @@ Both wallet runs prove the public-key → account-hash normalization on both
 Casper key schemes. The budgets did their job during the matrix: payouts
 3.93 / 10 CSPR daily cap, signed steps 13 / 60 daily gas budget — all persisted
 (see [docs/judge-mode-design.md](docs/judge-mode-design.md)). The latest
-completed run is always visible on the homepage ("LATEST LIVE TESTNET RUN")
+completed run is always visible on the homepage ("LATEST LIVE RUN")
 and at `/api/judge/recent`.
+
+The same evening, three more guided runs verified the credit-lifecycle
+completions — **the revert you trigger now links itself**, the x402 buyer
+**acts** on what it bought, and the collector processes a real loss:
+
+| Run | Steps | Key transactions |
+|---|---|---|
+| **Policy firewall** `JUDGE-20260718-CDD9` — the revert step carries the JUST-TRIGGERED failed tx | 3/3 ✓ | register [`0631679f…`](https://testnet.cspr.live/deploy/0631679f8010532102609619c9ffa3ab5c4f6412379b4054c135572bd04b8b4a) → fund **REVERTED, err 15, linked live** [`269a3e22…`](https://testnet.cspr.live/transaction/269a3e223b8ee3c003488dd59636fd19f22744fc655571310858bfac6baf1166) |
+| **x402 + consumer verdict** `JUDGE-20260718-B066` — buyer pays, verifies the memo hash, ACCEPTs (risk 20 ≤ 35) and anchors `CREDIT_REPORT_ACCEPTED` | 3/3 ✓ | payment [`bbba64e6…`](https://testnet.cspr.live/deploy/bbba64e663e89fcbe847e81905b5273a5e1814ae6cf9cc92477aef4ccdd4b9e9) · verdict attest [`075ff462…`](https://testnet.cspr.live/deploy/075ff462106fd0864b017e6e6ba224eec0f5a6f788376a3be885e96e98c8542e) |
+| **Default workout** `JUDGE-20260718-2A6D` — an overdue funded invoice written off by the COLLECTOR key; LPs absorb the loss | 2/2 ✓ | mark_default [`c9d24e8c…`](https://testnet.cspr.live/deploy/c9d24e8cadd054c2ab9fcfae582cb144816996fb828cfea60289a4291412deb6) |
 
 ## The deployment
 

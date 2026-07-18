@@ -188,6 +188,17 @@ export const api = {
 
 export type JudgeStepStatus = "locked" | "ready" | "running" | "done" | "reverted" | "failed";
 
+/** Structured AI judgment attached to underwrite / consumer steps. */
+export interface DecisionCard {
+  verdict: "APPROVE" | "REJECT";
+  riskScore: number;
+  discountBps: number;
+  rationale: string;
+  redFlags: string[];
+  model: string;
+  decisionHash: string;
+}
+
 export interface JudgeStep {
   key: string;
   actor: string;
@@ -198,6 +209,7 @@ export interface JudgeStep {
   txHash?: string;
   explorerUrl?: string;
   result?: string;
+  decision?: DecisionCard;
   what?: string;
   who?: string;
   why?: string;
@@ -227,7 +239,7 @@ export interface JudgeSession {
 }
 
 export interface JudgePreset {
-  id: "happy" | "policy-block" | "x402";
+  id: "happy" | "policy-block" | "x402" | "default";
   title: string;
   subtitle: string;
   steps: { key: string; actor: string; title: string; kind: "compute" | "chain" }[];

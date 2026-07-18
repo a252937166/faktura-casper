@@ -1852,7 +1852,14 @@ td:first-child {
 }
 @media (min-width: 720px) {
   .lj-presets {
-    grid-template-columns: repeat(3, 1fr);
+    /* four stories now (lifecycle · firewall · x402 · default) — 2×2 reads
+       better than 3+1 orphan */
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (min-width: 1180px) {
+  .lj-presets {
+    grid-template-columns: repeat(4, 1fr);
   }
 }
 .lj-preset {
@@ -3958,4 +3965,109 @@ button.field-wallet {
   width: 1px;
   height: 1px;
   overflow: hidden;
+}
+
+/* ---------- AI decision card ---------- */
+.lj-ai-decision {
+  margin-top: 8px;
+  padding: 10px 14px;
+  background: rgba(15, 138, 95, 0.06);
+  border: 1px solid rgba(15, 138, 95, 0.4);
+  border-radius: 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.lj-ai-decision.no {
+  background: rgba(217, 45, 45, 0.06);
+  border-color: rgba(217, 45, 45, 0.4);
+}
+.lj-aid-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 5px;
+}
+.lj-aid-kicker {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.8px;
+  color: rgba(23, 19, 13, 0.55);
+}
+.lj-aid-verdict {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.lj-aid-verdict.ok {
+  color: var(--green);
+}
+.lj-aid-verdict.no {
+  color: var(--red);
+}
+.lj-aid-fact {
+  font-size: 12px;
+  color: rgba(23, 19, 13, 0.7);
+}
+.lj-aid-lbl {
+  display: inline-block;
+  margin-right: 8px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  color: rgba(23, 19, 13, 0.5);
+  text-transform: uppercase;
+}
+.lj-aid-why {
+  margin: 4px 0;
+}
+.lj-aid-flags {
+  margin: 2px 0;
+}
+.lj-aid-hash {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: rgba(23, 19, 13, 0.5);
+}
+
+/* ---------- pool economics (finish card) ---------- */
+.lj-pe-kicker {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.8px;
+  color: rgba(23, 19, 13, 0.55);
+  margin-bottom: 7px;
+}
+.lj-pe-grid {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr 1fr;
+  gap: 3px 16px;
+  font-size: 12.5px;
+  max-width: 420px;
+}
+.lj-pe-col,
+.lj-pe-lbl {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  color: rgba(23, 19, 13, 0.55);
+  text-transform: uppercase;
+}
+.lj-pe-delta {
+  margin-top: 8px;
+  font-size: 13px;
+}
+.lj-pe-delta.gain b {
+  color: var(--green);
+}
+.lj-pe-delta.loss b {
+  color: var(--red);
+}
+.lj-pe-share {
+  color: rgba(23, 19, 13, 0.65);
 }
