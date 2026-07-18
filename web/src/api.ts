@@ -126,9 +126,20 @@ export interface PoolResponse {
   explorer: string;
 }
 
+/** Error carrying the server's JSON body (e.g. retryAfterMs on a debounce 429). */
+export interface ApiError extends Error {
+  body?: Record<string, unknown>;
+  status?: number;
+}
+
 const j = <T>(r: Response): Promise<T> => {
   if (!r.ok)
-    return r.json().then((b) => Promise.reject(new Error((b as any).error ?? r.statusText)));
+    return r.json().then((b) => {
+      const e = new Error((b as any).error ?? r.statusText) as ApiError;
+      e.body = b as Record<string, unknown>;
+      e.status = r.status;
+      return Promise.reject(e);
+    });
   return r.json() as Promise<T>;
 };
 

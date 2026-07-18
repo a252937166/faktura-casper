@@ -3610,8 +3610,20 @@ button.field-wallet {
 .desk-toggle.big {
   display: block;
   width: 100%;
-  padding: 13px 16px;
+  padding: 15px 16px;
   margin-top: 14px;
+  background: var(--ink);
+  color: var(--paper);
+  box-shadow: 5px 5px 0 var(--red);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+}
+.desk-toggle.big:hover {
+  background: var(--ink);
+  color: var(--paper);
+  transform: translate(-2px, -2px);
+  box-shadow: 7px 7px 0 var(--red);
 }
 .desk-summary {
   margin-bottom: 26px;
@@ -3917,4 +3929,33 @@ button.field-wallet {
   .site-logo {
     height: 44px;
   }
+}
+
+/* ---------- walkthrough starting indicator ---------- */
+.lj-starting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 14px;
+  padding: 12px 16px;
+  background: rgba(15, 138, 95, 0.08);
+  border: 1.5px solid var(--green);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  color: var(--green);
+}
+
+/* CSPR.click host: ClickUI must be mounted for its sign-in modal to exist,
+   but its top bar has no place in our header — park it off-screen. The modal
+   itself portals to <body> and renders normally. */
+.csprclick-host {
+  position: fixed;
+  top: -10000px;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
 }
