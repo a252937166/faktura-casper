@@ -3636,20 +3636,22 @@ function McpDrawer({
       <div className="drawer mcp-drawer mcp-top mcp2">
         {/* ---- hero ---- */}
         <div className="mcp2-hero">
-          <div className="mcp2-kicker">🤖 AGENT-NATIVE INTERFACE · MODEL CONTEXT PROTOCOL</div>
-          <h2>
-            Your agent talks to this desk directly{" "}
-            <span className={`badge ${meta?.mode === "live-testnet" ? "FUNDED" : "LISTED"}`}>
-              {meta?.mode === "live-testnet" ? "LIVE TESTNET" : "SHOWCASE"}
-            </span>
-          </h2>
-          <p>
-            The whole credit desk — pool, book, underwriter, x402 oracle, audit trail — ships as{" "}
-            <b>six MCP tools over stdio</b>, defined in{" "}
-            <span className="mono">agents/src/mcp.ts</span>. Point any MCP-capable agent at this
-            very host and it can read the chain, drive the pipeline and audit the AI without a
-            browser.
-          </p>
+          <div className="mcp2-hero-text">
+            <div className="mcp2-kicker">🤖 AGENT-NATIVE INTERFACE · MODEL CONTEXT PROTOCOL</div>
+            <h2>
+              Your agent talks to this desk directly{" "}
+              <span className={`badge ${meta?.mode === "live-testnet" ? "FUNDED" : "LISTED"}`}>
+                {meta?.mode === "live-testnet" ? "LIVE TESTNET" : "SHOWCASE"}
+              </span>
+            </h2>
+            <p>
+              The whole credit desk — pool, book, underwriter, x402 oracle, audit trail — ships as{" "}
+              <b>six MCP tools over stdio</b>, defined in{" "}
+              <span className="mono">agents/src/mcp.ts</span>. Point any MCP-capable agent at this
+              very host and it can read the chain, drive the pipeline and audit the AI without a
+              browser.
+            </p>
+          </div>
           <div className="mcp2-modes">
             <div className="mcp2-mode">
               <b>◉ HOSTED — this site</b>
@@ -3715,41 +3717,51 @@ function McpDrawer({
                   <b className="mono">{t.name}</b>
                   <span className={`mcp2-badge k-${t.badgeKind}`}>{t.badge}</span>
                 </div>
-                <div className="mcp2-tool-headline">{t.headline}</div>
-                <div className="mcp2-tool-detail">{t.detail}</div>
-                <div className="mcp2-params">
-                  {t.params.map((p) => (
-                    <div className="mcp2-param" key={p.k}>
-                      <code>{p.k}</code>
-                      <span>{p.d}</span>
+                <div className="mcp2-tool-grid">
+                  <div className="mcp2-tool-info">
+                    <div className="mcp2-tool-headline">{t.headline}</div>
+                    <div className="mcp2-tool-detail">{t.detail}</div>
+                    <div className="mcp2-params">
+                      {t.params.map((p) =>
+                        p.k === "—" ? (
+                          <div className="mcp2-param mcp2-param-none" key={p.k}>
+                            <span>no arguments — call it bare</span>
+                          </div>
+                        ) : (
+                          <div className="mcp2-param" key={p.k}>
+                            <code>{p.k}</code>
+                            <span>{p.d}</span>
+                          </div>
+                        ),
+                      )}
                     </div>
-                  ))}
-                </div>
-                <div className="mcp2-ask">
-                  <span className="mcp2-ask-label">you say</span>
-                  <span className="mcp2-ask-text">“{t.ask}”</span>
-                </div>
-                <div className="mcp2-term">
-                  <div className="mcp2-term-bar">
-                    <span className="mcp2-dot r" />
-                    <span className="mcp2-dot y" />
-                    <span className="mcp2-dot g" />
-                    <span className="mcp2-term-title">faktura-mcp · {t.name}</span>
-                    <span className={`mcp2-term-tag ${live ? "live" : ""}`}>
-                      {live ? "● LIVE OUTPUT" : "SAMPLE OUTPUT"}
-                    </span>
-                    {t.live && (
-                      <button
-                        className="mcp2-copy"
-                        disabled={busy === t.name}
-                        onClick={() => void runLive(t)}
-                        title="Call this host's real REST endpoint — the same one the MCP tool wraps"
-                      >
-                        {busy === t.name ? "running…" : live ? "↻ re-run live" : "▸ run live"}
-                      </button>
-                    )}
+                    <div className="mcp2-ask">
+                      <span className="mcp2-ask-label">you say</span>
+                      <span className="mcp2-ask-text">“{t.ask}”</span>
+                    </div>
                   </div>
-                  <pre>{live ?? t.sample}</pre>
+                  <div className="mcp2-term">
+                    <div className="mcp2-term-bar">
+                      <span className="mcp2-dot r" />
+                      <span className="mcp2-dot y" />
+                      <span className="mcp2-dot g" />
+                      <span className="mcp2-term-title">faktura-mcp · {t.name}</span>
+                      <span className={`mcp2-term-tag ${live ? "live" : ""}`}>
+                        {live ? "● LIVE OUTPUT" : "SAMPLE OUTPUT"}
+                      </span>
+                      {t.live && (
+                        <button
+                          className="mcp2-copy"
+                          disabled={busy === t.name}
+                          onClick={() => void runLive(t)}
+                          title="Call this host's real REST endpoint — the same one the MCP tool wraps"
+                        >
+                          {busy === t.name ? "running…" : live ? "↻ re-run live" : "▸ run live"}
+                        </button>
+                      )}
+                    </div>
+                    <pre>{live ?? t.sample}</pre>
+                  </div>
                 </div>
               </div>
             );
