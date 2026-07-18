@@ -3226,7 +3226,10 @@ button.field-wallet {
   color: var(--red);
   white-space: nowrap;
 }
-.casper-mark { display: inline-block; vertical-align: -2px; }
+.casper-mark {
+  display: inline-block;
+  vertical-align: -2px;
+}
 
 .section-title {
   font-family: var(--serif);
@@ -3236,7 +3239,9 @@ button.field-wallet {
   text-wrap: balance;
 }
 
-.story { padding: 46px 0 8px; }
+.story {
+  padding: 46px 0 8px;
+}
 .story-acts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -3264,17 +3269,28 @@ button.field-wallet {
   padding: 3px 9px;
   transform: rotate(-2deg);
 }
-.story-stamp.red { background: var(--red); }
-.story-stamp.green { background: var(--green); }
+.story-stamp.red {
+  background: var(--red);
+}
+.story-stamp.green {
+  background: var(--green);
+}
 .story-act h3 {
   font-family: var(--serif);
   font-size: 19px;
   margin: 4px 0 10px;
   line-height: 1.2;
 }
-.story-act p { font-size: 13.5px; line-height: 1.6; color: var(--ink); margin: 0; }
+.story-act p {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  margin: 0;
+}
 
-.caps { padding: 40px 0 8px; }
+.caps {
+  padding: 40px 0 8px;
+}
 .caps-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -3286,12 +3302,29 @@ button.field-wallet {
   border-radius: 8px;
   padding: 18px 20px;
 }
-.cap h3 { font-size: 15.5px; margin: 0 0 8px; font-weight: 700; }
-.cap p { font-size: 13px; line-height: 1.6; color: var(--muted); margin: 0; }
-.cap p b { color: var(--ink); }
-.mono-sm { font-family: var(--mono); font-size: 12px; color: var(--red-deep); }
+.cap h3 {
+  font-size: 15.5px;
+  margin: 0 0 8px;
+  font-weight: 700;
+}
+.cap p {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0;
+}
+.cap p b {
+  color: var(--ink);
+}
+.mono-sm {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--red-deep);
+}
 
-.runit { padding: 40px 0 10px; }
+.runit {
+  padding: 40px 0 10px;
+}
 .runit-card {
   display: flex;
   align-items: center;
@@ -3310,11 +3343,32 @@ button.field-wallet {
   margin: 0 0 10px;
   color: var(--paper);
 }
-.runit-card p { max-width: 58ch; font-size: 14px; line-height: 1.6; color: rgba(246, 243, 236, 0.85); margin: 0; }
-.btn-primary.big { font-size: 14px; padding: 18px 34px; flex: none; box-shadow: 5px 5px 0 var(--red); border-color: var(--paper); }
+.runit-card p {
+  max-width: 58ch;
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgba(246, 243, 236, 0.85);
+  margin: 0;
+}
+.btn-primary.big {
+  font-size: 14px;
+  padding: 18px 34px;
+  flex: none;
+  box-shadow: 5px 5px 0 var(--red);
+  border-color: var(--paper);
+}
 
-.desk-head { padding: 46px 0 6px; border-top: 2px solid var(--ink); margin-top: 40px; }
-.desk-head-sub { color: var(--muted); font-size: 13px; margin: 0 0 8px; max-width: 78ch; }
+.desk-head {
+  padding: 46px 0 6px;
+  border-top: 2px solid var(--ink);
+  margin-top: 40px;
+}
+.desk-head-sub {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 8px;
+  max-width: 78ch;
+}
 
 /* hero tagline + cost + links */
 .hero-tagline {
@@ -3323,19 +3377,134 @@ button.field-wallet {
   font-style: italic;
   margin: 0 0 26px;
 }
-.hero-tagline b { color: var(--red); font-style: normal; }
+.hero-tagline b {
+  color: var(--red);
+  font-style: normal;
+}
 .hero-cost {
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--muted);
   margin: 12px 0 0;
 }
-.hero-links { display: flex; gap: 22px; flex-wrap: wrap; margin: 14px 0 0; font-size: 13px; }
-.hero-links a { color: var(--red); }
+.hero-links {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+  margin: 14px 0 0;
+  font-size: 13px;
+}
+.hero-links a {
+  color: var(--red);
+}
 
 /* two-endings story */
-.story-lede { max-width: 68ch; font-size: 15px; line-height: 1.65; margin: 0 0 26px; }
-.story-acts.endings { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
-.story-act.blocked { border-color: var(--red); box-shadow: 5px 5px 0 rgba(217, 45, 45, 0.35); }
-.story-links { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; }
-.story-links a { color: var(--red); font-weight: 600; }
+.story-lede {
+  max-width: 68ch;
+  font-size: 15px;
+  line-height: 1.65;
+  margin: 0 0 26px;
+}
+.story-acts.endings {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+.story-act.blocked {
+  border-color: var(--red);
+  box-shadow: 5px 5px 0 rgba(217, 45, 45, 0.35);
+}
+.story-links {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  font-size: 13px;
+}
+.story-links a {
+  color: var(--red);
+  font-weight: 600;
+}
+
+/* ==== "your agent can do this too" hook ================================== */
+.lj-agenthook {
+  margin-top: 18px;
+  padding: 12px 14px;
+  background: rgba(122, 77, 208, 0.06);
+  border: 1px solid rgba(122, 77, 208, 0.35);
+  border-radius: 7px;
+}
+.lj-agenthook-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.lj-agenthook-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7a4dd0;
+}
+.lj-agenthook-tool {
+  font-size: 12px;
+  color: var(--muted);
+}
+.lj-agenthook-tool b {
+  font-family: var(--mono);
+  color: var(--ink);
+}
+.lj-agenthook-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.lj-agenthook-prompt {
+  flex: 1;
+  min-width: 220px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 7px 10px;
+}
+.lj-agenthook-copy,
+.lj-agenthook-open {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 7px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.lj-agenthook-copy {
+  background: none;
+  border: 1.5px solid var(--ink);
+  color: var(--ink);
+}
+.lj-agenthook-copy:hover {
+  background: var(--card);
+}
+.lj-agenthook-open {
+  background: #7a4dd0;
+  border: 1.5px solid #7a4dd0;
+  color: #fff;
+}
+.lj-agenthook-open:hover {
+  filter: brightness(1.08);
+}
+
+/* MCP drawer must sit above the full-screen walkthrough (z 200) */
+.mcp-top {
+  z-index: 301 !important;
+}
+.mcp-top-bd {
+  z-index: 300 !important;
+}
