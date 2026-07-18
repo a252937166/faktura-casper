@@ -16,6 +16,7 @@ import {
   type PoolResponse,
   type RiskReport,
 } from "./api";
+import { connectWallet, disconnectWallet, initWallet, shortKey, type WalletState } from "./wallet";
 
 /**
  * The only way a hash is ever rendered: real deploys link to the explorer,
@@ -67,7 +68,26 @@ export default function App() {
   const [jhealth, setJhealth] = useState<JudgeHealth | null>(null);
   const [judgeProbed, setJudgeProbed] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [wallet, setWallet] = useState<WalletState>({
+    available: false,
+    connected: false,
+    publicKey: null,
+    error: null,
+  });
+  const [walletBal, setWalletBal] = useState<number | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => initWallet(setWallet), []);
+  useEffect(() => {
+    if (!wallet.publicKey) {
+      setWalletBal(null);
+      return;
+    }
+    judge
+      .balance(wallet.publicKey)
+      .then((b) => setWalletBal(b.cspr))
+      .catch(() => setWalletBal(null));
+  }, [wallet.publicKey, runnerOpen]);
 
   // Detect the live judge backend (:4034 behind /api/judge). Its presence flips
   // the hero to the real-testnet path; absence gracefully keeps the showcase.
@@ -148,6 +168,29 @@ export default function App() {
           <div className="tagline">The autonomous invoice-financing desk on Casper</div>
         </div>
         <div className="spacer" />
+        {wallet.connected && wallet.publicKey ? (
+          <button
+            className="wallet-btn on"
+            title="Connected Casper Wallet — click to disconnect"
+            onClick={() => void disconnectWallet()}
+          >
+            <span className="wallet-dot" />
+            {shortKey(wallet.publicKey)}
+            {walletBal != null && <span className="wallet-bal">{walletBal.toFixed(0)} CSPR</span>}
+          </button>
+        ) : (
+          <button
+            className="wallet-btn"
+            title={
+              wallet.available
+                ? "Connect your Casper Wallet — the desk can pay advances to YOUR address"
+                : "Get the Casper Wallet extension"
+            }
+            onClick={() => void connectWallet()}
+          >
+            ⛓ {wallet.available ? "CONNECT WALLET" : "GET CASPER WALLET"}
+          </button>
+        )}
         <span className="chip">
           <span className="dot" /> casper-test
         </span>
@@ -191,40 +234,60 @@ export default function App() {
       </header>
 
       {meta && (
-        <div className={`mode-banner ${meta.mode}`}>
-          <span className="mode-tag">{meta.mode === "showcase" ? "SHOWCASE" : "LIVE TESTNET"}</span>
-          <span className="mode-text">
-            {meta.mode === "showcase" ? (
+        <div className={`desk-status ${liveJudge ? "live" : meta.mode}`}>
+          <div className="desk-status-main">
+            {liveJudge ? (
               <>
-                On-chain <b>reads</b> come from a captured snapshot of the real testnet contract
-                (verifiable on cspr.live) and the AI underwriter runs <b>live</b> — but{" "}
-                <b>writes are simulated</b> in server memory, not signed transactions. Run the stack
-                locally (README) for real Casper transactions.
+                <span className="ds-pill live">
+                  <i /> LIVE DESK ONLINE
+                </span>
+                <span className="ds-text">
+                  Sign <b>real Casper Testnet transactions</b> in the{" "}
+                  <button className="linklike" onClick={() => setRunnerOpen(true)}>
+                    guided walkthrough
+                  </button>
+                  {" — "}this page below is the safe showcase (simulated writes, real proof).
+                </span>
+              </>
+            ) : meta.mode === "showcase" ? (
+              <>
+                <span className="ds-pill showcase">SHOWCASE</span>
+                <span className="ds-text">
+                  Reads come from a captured snapshot of the <b>real testnet contract</b>; the AI
+                  underwriter runs live; writes are simulated — nothing here pretends to be signed.
+                </span>
               </>
             ) : (
               <>
-                Every action on this page is a <b>real Casper Testnet transaction</b> signed by the
-                agent keys — follow the tx links in the activity feed.
+                <span className="ds-pill live">
+                  <i /> LIVE TESTNET
+                </span>
+                <span className="ds-text">
+                  Every action on this page is a <b>real Casper Testnet transaction</b> signed by
+                  the agent keys.
+                </span>
               </>
             )}
-            {meta.policy && (
-              <span className="policy-note">
-                {" "}
-                On-chain hard caps: risk ≤ {meta.policy.maxRiskScore} · discount{" "}
+          </div>
+          {meta.policy && (
+            <details className="ds-more">
+              <summary>Rules of the desk</summary>
+              <div className="ds-more-body">
+                On-chain hard caps — risk ≤ {meta.policy.maxRiskScore} · discount{" "}
                 {(meta.policy.minDiscountBps / 100).toFixed(1)}–
-                {(meta.policy.maxDiscountBps / 100).toFixed(0)}% · invoice ≤{" "}
-                {(meta.policy.maxSingleInvoiceBps / 100).toFixed(0)}% of pool · debtor ≤{" "}
+                {(meta.policy.maxDiscountBps / 100).toFixed(0)}% · single invoice ≤{" "}
+                {(meta.policy.maxSingleInvoiceBps / 100).toFixed(0)}% of pool · per debtor ≤{" "}
                 {(meta.policy.maxDebtorExposureBps / 100).toFixed(0)}%.
                 {meta.prefilter && (
                   <>
                     {" "}
-                    Agent prefilter (stricter, saves gas): risk ≤ {meta.prefilter.maxRiskScore}. The
-                    contract is the final authority.
+                    The agent pre-filters stricter (risk ≤ {meta.prefilter.maxRiskScore}) to save
+                    gas; <b>the contract is the final authority</b>.
                   </>
                 )}
-              </span>
-            )}
-          </span>
+              </div>
+            </details>
+          )}
         </div>
       )}
 
@@ -551,25 +614,45 @@ export default function App() {
             </div>
             <div className="feed" ref={feedRef}>
               {events.length === 0 && <div className="empty">Agents idle…</div>}
-              {events.map((e, i) => (
-                <div className="feed-item" key={`${e.ts}-${i}`}>
-                  <div className="avatar">{ACTOR_ICON[e.actor] ?? "•"}</div>
-                  <div className="body">
-                    <div className="msg">{e.message}</div>
-                    <div className="meta">
-                      <span>{e.actor}</span>
-                      <span>{timeAgo(e.ts)}</span>
-                      {e.deployHash && (
-                        <TxLink
-                          hash={e.deployHash}
-                          explorer={pool?.explorer ?? "https://testnet.cspr.live"}
-                          prefix="tx "
-                        />
-                      )}
+              {events.map((e, i) => {
+                // The freshest "the model is scoring…" line gets the working
+                // treatment — pulsing AI avatar + shimmer — so you can SEE the
+                // agent thinking, not just read about it.
+                const aiWorking = e.kind === "llm" && i === 0;
+                return (
+                  <div
+                    className={`feed-item ${e.actor === "underwriter" ? "is-ai" : ""} ${aiWorking ? "ai-working" : ""}`}
+                    key={`${e.ts}-${i}`}
+                  >
+                    <div className={`avatar ${e.actor === "underwriter" ? "ai" : ""}`}>
+                      {ACTOR_ICON[e.actor] ?? "•"}
+                    </div>
+                    <div className="body">
+                      <div className="msg">
+                        {e.message}
+                        {aiWorking && (
+                          <span className="lj-ai-dots">
+                            <i />
+                            <i />
+                            <i />
+                          </span>
+                        )}
+                      </div>
+                      <div className="meta">
+                        <span>{e.actor}</span>
+                        <span>{timeAgo(e.ts)}</span>
+                        {e.deployHash && (
+                          <TxLink
+                            hash={e.deployHash}
+                            explorer={pool?.explorer ?? "https://testnet.cspr.live"}
+                            prefix="tx "
+                          />
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -610,6 +693,7 @@ export default function App() {
         <JudgeGuided
           health={jhealth}
           onHealth={setJhealth}
+          wallet={wallet}
           onClose={() => {
             setRunnerOpen(false);
             refresh();
@@ -692,6 +776,39 @@ function ProofStrip({
           )}
         </span>
       ))}
+    </div>
+  );
+}
+
+/**
+ * The AI-at-work takeover shown while the underwriter scores an intake — a
+ * visible, narrated "the model is thinking" moment instead of a dead button.
+ */
+const AI_THINKING_LINES = [
+  "Reading the invoice…",
+  "Weighing the debtor's payment history…",
+  "Scanning for fraud patterns…",
+  "Pricing the risk…",
+  "Writing the decision memo…",
+];
+
+function AiThinking({ compact }: { compact?: boolean }) {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => setI((n) => (n + 1) % AI_THINKING_LINES.length), 1400);
+    return () => clearInterval(iv);
+  }, []);
+  return (
+    <div className={`ai-takeover ${compact ? "compact" : ""}`}>
+      <span className="lj-ai-orb">AI</span>
+      <div className="ai-takeover-body">
+        <div className="ai-takeover-line" key={i}>
+          {AI_THINKING_LINES[i]}
+        </div>
+        <div className="ai-scan">
+          <span />
+        </div>
+      </div>
     </div>
   );
 }
@@ -872,16 +989,12 @@ function SubmitPanel({
                 runs them one click at a time, no long waits.
               </span>
             </>
+          ) : busy ? (
+            <AiThinking />
           ) : (
             <>
-              <button className="btn" disabled={busy} onClick={submit}>
-                {busy ? (
-                  <span className="btn-working">
-                    <span className="btn-orb">AI</span> Underwriting…
-                  </span>
-                ) : (
-                  "Submit to underwriter"
-                )}
+              <button className="btn" onClick={submit}>
+                Submit to underwriter
               </button>
               <span className="muted" style={{ fontSize: 12 }}>
                 LLM proposes → on-chain policy disposes → writes simulated in showcase (a few
@@ -1659,10 +1772,12 @@ function GuidedStep({
 function JudgeGuided({
   health,
   onHealth,
+  wallet,
   onClose,
 }: {
   health: JudgeHealth | null;
   onHealth: (h: JudgeHealth | null) => void;
+  wallet: WalletState;
   onClose: () => void;
 }) {
   const [presets, setPresets] = useState<JudgePreset[]>([]);
@@ -1670,6 +1785,7 @@ function JudgeGuided({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [runStartTs, setRunStartTs] = useState(0);
+  const explorer = health?.explorer ?? "https://testnet.cspr.live";
 
   useEffect(() => {
     judge
@@ -1691,7 +1807,8 @@ function JudgeGuided({
     setErr(null);
     setBusy(true);
     try {
-      setSession(await judge.createSession(preset));
+      // If a wallet is connected, the desk pays the advance to THEIR address.
+      setSession(await judge.createSession(preset, wallet.publicKey ?? undefined));
     } catch (e) {
       setErr((e as Error).message);
       judge
@@ -1772,6 +1889,33 @@ function JudgeGuided({
             open on the explorer the instant it confirms. Each screen tells you what just happened,
             why it matters, and what comes next.
           </p>
+
+          {/* Wallet story — make it YOUR money. Only ever asks for a public key. */}
+          {wallet.connected && wallet.publicKey ? (
+            <div className="lj-wallet on">
+              <span className="lj-wallet-badge">◈</span>
+              <div>
+                <b>Wallet connected — you are the supplier.</b> In the Full lifecycle run the desk
+                pays the invoice advance straight to{" "}
+                <span className="lj-wallet-key">{shortKey(wallet.publicKey)}</span> — watch your own
+                balance move on a real chain.
+              </div>
+            </div>
+          ) : (
+            <div className="lj-wallet">
+              <span className="lj-wallet-badge">⛓</span>
+              <div>
+                <b>Optional: connect your Casper wallet and get paid yourself.</b> The desk will
+                send the invoice advance to <i>your</i> address instead of the demo supplier —
+                read-only, we only ask for your public key, never a signature.
+              </div>
+              <button className="lj-wallet-btn" onClick={() => void connectWallet()}>
+                {wallet.available ? "Connect wallet" : "Get Casper Wallet ↗"}
+              </button>
+            </div>
+          )}
+          {wallet.error && <div className="lj-err">{wallet.error}</div>}
+
           <div className="lj-presets">
             {presets.map((p, idx) => (
               <button
@@ -1848,6 +1992,18 @@ function JudgeGuided({
                 ✓ Walkthrough complete — every step above is a real Casper Testnet transaction you
                 can open on CSPR.live.
               </div>
+              {session.wallet && session.preset === "happy" && (
+                <div className="lj-finish-wallet">
+                  💸 The advance was paid to <b>your wallet</b> ({shortKey(session.wallet)}) —{" "}
+                  <a
+                    target="_blank"
+                    rel="noreferrer"
+                    href={`${explorer}/account/${session.wallet}`}
+                  >
+                    see it on your account ↗
+                  </a>
+                </div>
+              )}
               {session.poolAfter && (
                 <div className="lj-finish-pool">
                   Pool now: liquid <b>{session.poolAfter.liquid}</b> · deployed{" "}

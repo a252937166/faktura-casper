@@ -81,6 +81,8 @@ interface Session {
     approved?: boolean;
     x402Nonce?: string;
     x402Proof?: string;
+    /** Visitor's connected Casper wallet — the advance is paid HERE when set. */
+    supplierOverride?: string;
   };
 }
 
@@ -125,6 +127,7 @@ function publicSession(s: Session) {
     note: s.note,
     poolBefore: s.poolBefore,
     poolAfter: s.poolAfter,
+    wallet: s.ctx.supplierOverride ?? null,
     nextStep: s.cursor < s.steps.length ? s.steps[s.cursor] : null,
   };
 }
@@ -389,8 +392,11 @@ async function doUnderwrite(s: Session): Promise<{ result: string; reverted?: bo
 
 async function stepRegister(s: Session) {
   const r = s.ctx.record!;
+  // If the visitor connected their Casper wallet, THEY are the supplier — the
+  // advance lands in their own wallet. Otherwise the demo supplier receives it.
+  const supplier = s.ctx.supplierOverride ?? (await chain.caller("supplier"));
   const reg = await chain.register({
-    supplier: await chain.caller("supplier"),
+    supplier,
     debtorTag: r.intake.debtorTag,
     docHash: r.intake.docHash,
     faceMotes: toMotes(r.intake.amountCspr),
@@ -405,7 +411,10 @@ async function stepRegister(s: Session) {
   r.status = "approved";
   upsertInvoice(r);
   s.ctx.invoiceId = r.id;
-  return { result: `Invoice #${r.id} registered on Casper Testnet`, txHash: tx };
+  const who = s.ctx.supplierOverride
+    ? ` — supplier: YOUR wallet ${s.ctx.supplierOverride.slice(0, 10)}…`
+    : "";
+  return { result: `Invoice #${r.id} registered on Casper Testnet${who}`, txHash: tx };
 }
 
 async function stepFund(s: Session) {
@@ -416,7 +425,10 @@ async function stepFund(s: Session) {
     r.chain.fundHash = tx;
     r.status = "funded";
     upsertInvoice(r);
-    return { result: `FUNDED — advance streamed from the pool to the supplier`, txHash: tx };
+    const dest = s.ctx.supplierOverride
+      ? `FUNDED — the advance just landed in YOUR wallet (${s.ctx.supplierOverride.slice(0, 10)}…). Check your balance.`
+      : `FUNDED — advance streamed from the pool to the supplier`;
+    return { result: dest, txHash: tx };
   } catch (e) {
     const err = normalizeRevert((e as Error).message);
     r.status = "policy_blocked";
@@ -734,6 +746,22 @@ export function makeJudgeRouter(): Router {
     }
   });
 
+  // Balance of any Casper public key — powers the connected-wallet chip and the
+  // before/after balance story when the advance lands in the visitor's wallet.
+  r.get("/balance/:pubkey", async (req, res) => {
+    const pk = String(req.params.pubkey ?? "").trim();
+    if (!/^0[12][0-9a-fA-F]{64,66}$/.test(pk)) {
+      res.status(400).json({ error: "not a Casper public key hex" });
+      return;
+    }
+    try {
+      const bal = await balanceWithTimeout(pk.toLowerCase());
+      res.json({ pubkey: pk.toLowerCase(), cspr: bal });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message.slice(0, 160) });
+    }
+  });
+
   r.get("/presets", (_req, res) => {
     res.json(
       PRESETS.map((p) => ({
@@ -761,6 +789,20 @@ export function makeJudgeRouter(): Router {
     if (!def) {
       res.status(400).json({ error: "preset must be happy | policy-block | x402" });
       return;
+    }
+    // Optional: the visitor's connected Casper wallet public key. When present,
+    // the advance is paid to THEIR wallet instead of the demo supplier. Only a
+    // recipient address — we never ask the visitor to sign anything.
+    const rawWallet = String(req.body?.supplierAddress ?? "").trim();
+    let supplierOverride: string | undefined;
+    if (rawWallet) {
+      if (!/^0[12][0-9a-fA-F]{64,66}$/.test(rawWallet)) {
+        res.status(400).json({
+          error: "supplierAddress must be a Casper public key hex (01… or 02…)",
+        });
+        return;
+      }
+      supplierOverride = rawWallet.toLowerCase();
     }
     const ip = clientIp(req);
     const existing = activeSession();
@@ -809,7 +851,7 @@ export function makeJudgeRouter(): Router {
       startedTs: Date.now(),
       ip,
       poolBefore: (await cachedPool()).snap ?? undefined,
-      ctx: {},
+      ctx: { supplierOverride },
     };
     sessions.set(s.id, s);
     order.push(s.id);
