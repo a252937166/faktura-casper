@@ -168,6 +168,11 @@ interface PoolSnap {
   invoiceCount: number;
 }
 
+/** Process boot time — a paused health inside the warm-up window is "still
+ * waking up", not "the chain is down"; the copy must say so. */
+const BOOT_TS = Date.now();
+const WARMING_MS = 150_000;
+
 const sessions = new Map<string, Session>();
 const order: string[] = [];
 let seq = 0;
@@ -236,7 +241,9 @@ async function cachedPool(ttlMs = 45_000): Promise<{ snap: PoolSnap | null; ok: 
         poolCache = { ts: Date.now(), snap: s, ok: true };
       })
       .catch(() => {
-        poolCache = { ts: Date.now(), snap: poolCache.snap, ok: false };
+        // Cache a FAILURE for only ~10 s (not the full TTL) — one flaky read
+        // must not pin the desk "paused" for 45 s.
+        poolCache = { ts: Date.now() - Math.max(0, ttlMs - 10_000), snap: poolCache.snap, ok: false };
       })
       .finally(() => {
         poolInflight = null;
@@ -286,7 +293,7 @@ async function cachedBook(ttlMs = 90_000): Promise<BookInvoice[]> {
         };
       })
       .catch(() => {
-        bookCache = { ...bookCache, ts: Date.now() };
+        bookCache = { ...bookCache, ts: Date.now() - Math.max(0, ttlMs - 10_000) };
       })
       .finally(() => {
         bookInflight = null;
@@ -506,6 +513,7 @@ async function health() {
     paused,
     pool,
     x402Price: config.x402.priceMotes,
+    uptimeSec: Math.round((Date.now() - BOOT_TS) / 1000),
     canRun,
     activeSession: activeId ? publicSession(sessions.get(activeId)!) : null,
   };
@@ -1542,9 +1550,13 @@ export function makeJudgeRouter(): Router {
     }
     const h = await cachedHealth().catch(() => null);
     if (!h || h.paused) {
+      const warming = Date.now() - BOOT_TS < WARMING_MS;
       res.status(503).json({
-        error: "Live judge mode is temporarily paused — the Casper node is unreachable.",
+        error: warming
+          ? "The desk just restarted and is warming up — ready in under a minute, hang tight."
+          : "Live judge mode is temporarily paused — the Casper node is unreachable.",
         paused: true,
+        warming,
       });
       return;
     }
