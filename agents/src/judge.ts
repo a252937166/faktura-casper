@@ -16,7 +16,26 @@
 import crypto from "node:crypto";
 import cors from "cors";
 import { Router, type Request } from "express";
-import { DAILY_PAYOUT_CAP_CSPR, canPayout, recordPayout, spentLast24h } from "./judge-limits.js";
+import {
+  CAPS,
+  DAILY_PAYOUT_CAP_CSPR,
+  addPosition,
+  canPayout,
+  canSignDeploy,
+  canStartRun,
+  commitPayout,
+  deploysLast24h,
+  recentRuns,
+  recordDeploy,
+  recordRecentRun,
+  recordRun,
+  releaseReservation,
+  reservePayout,
+  resolvePosition,
+  spentLast24h,
+  stalePositions,
+  touchPosition,
+} from "./judge-limits.js";
 import { config } from "./config.js";
 import { chain } from "./chain.js";
 import { underwrite as llmUnderwrite } from "./llm.js";
@@ -82,10 +101,15 @@ interface Session {
   status: "active" | "done" | "failed";
   startedTs: number;
   endedTs?: number;
+  /** Bumped on every sign of life (create/step start/step end/resume) —
+   * expiry and desk-takeover decisions key off THIS, not startedTs. */
+  lastActivityTs: number;
   ip: string;
   note?: string;
   poolBefore?: PoolSnap;
   poolAfter?: PoolSnap;
+  /** Created via the smoke-test bypass header (self-test tooling). */
+  smoke?: boolean;
   ctx: {
     record?: InvoiceRecord;
     invoiceId?: number;
@@ -94,8 +118,18 @@ interface Session {
     approved?: boolean;
     x402Nonce?: string;
     x402Proof?: string;
+    x402PaidTs?: number;
+    x402AmountMotes?: string;
     /** Visitor's connected Casper wallet — the advance is paid HERE when set. */
     supplierOverride?: string;
+    /** True while re-running a previously failed step — executors reconcile
+     * against the chain first instead of blindly signing again. */
+    retrying?: boolean;
+    /** Payout committed for this session (guards double-commit on recovery). */
+    payoutCommitted?: boolean;
+    /** Deploy hashes seen in timeout errors, keyed by step — the tx may have
+     * landed even though the client gave up waiting. */
+    pendingTx?: Record<string, string>;
   };
 }
 
@@ -230,6 +264,50 @@ async function cachedPolicyBps(): Promise<number> {
   return policyBpsCache;
 }
 
+/**
+ * Feasibility math for the policy-firewall preset. The contract checks, in
+ * order: advance > liquid → InsufficientLiquidity(6); advance > poolValue ×
+ * maxSingleInvoiceBps → SingleInvoiceCapExceeded(15) — where poolValue =
+ * liquid + deployed. A clean error-15 revert therefore needs
+ *     singleCap < advance ≤ liquid − margin,
+ * which is impossible when most of the pool is deployed. Both /health (canRun)
+ * and the underwrite step use THIS one function, so what the UI promises and
+ * what the step does can never diverge.
+ *
+ * The preset clamps the discount to [50, 400] bps, so advance ∈
+ * [0.96·face, 0.995·face]; face is sized so the WHOLE band clears the cap and
+ * stays under liquidity.
+ */
+function policyBlockPlan(
+  pool: PoolSnap | null,
+  capBps: number,
+): {
+  feasible: boolean;
+  faceCspr?: number;
+  singleCap: number;
+  maxAdvance: number;
+  reason?: string;
+} {
+  const liquid = pool?.liquid ?? 0;
+  const deployed = pool?.deployed ?? 0;
+  const poolValue = liquid + deployed;
+  const singleCap = (poolValue * capBps) / 10_000;
+  const margin = Math.max(1, 0.03 * liquid);
+  const maxAdvance = liquid - margin;
+  const faceMin = singleCap / 0.96 + 0.5; // even at max discount, advance > cap
+  const faceMax = maxAdvance / 0.995; //     even at min discount, advance ≤ liquid − margin
+  if (!(poolValue > 0) || faceMin > faceMax) {
+    return {
+      feasible: false,
+      singleCap,
+      maxAdvance,
+      reason: `Pool composition cannot produce a clean SingleInvoiceCapExceeded revert right now (liquid ${liquid.toFixed(1)} / deployed ${deployed.toFixed(1)} CSPR, cap ${(singleCap || 0).toFixed(1)} CSPR) — settle open positions or add liquidity first.`,
+    };
+  }
+  const face = Math.min(faceMax, Math.max(faceMin * 1.04, faceMin + 1));
+  return { feasible: true, faceCspr: Math.round(face * 100) / 100, singleCap, maxAdvance };
+}
+
 const PERSONAS = ["agent", "collector", "supplier", "investor", "debtor"] as const;
 const FLOORS: Record<string, number> = {
   agent: 8,
@@ -238,6 +316,36 @@ const FLOORS: Record<string, number> = {
   investor: 40,
   debtor: 40,
 };
+
+/**
+ * Which personas must be funded for each preset — a low collector balance must
+ * never pause the policy firewall (the collector doesn't even sign in it).
+ *   happy:        agent signs register/fund/attest; debtor pays x402 + settle
+ *   policy-block: only the agent signs (register + the reverting fund)
+ *   x402:         only the debtor signs (the buyer payment)
+ */
+const PRESET_NEEDS: Record<string, Array<(typeof PERSONAS)[number]>> = {
+  happy: ["agent", "debtor"],
+  "policy-block": ["agent"],
+  x402: ["debtor"],
+};
+
+function personaGate(
+  preset: string,
+  balances: Record<string, number | null>,
+): { ok: boolean; reason?: string } {
+  for (const p of PRESET_NEEDS[preset] ?? []) {
+    const bal = balances[p];
+    if (bal == null)
+      return {
+        ok: false,
+        reason: `balance check for the ${p} key is still pending — retry shortly`,
+      };
+    if (bal < FLOORS[p])
+      return { ok: false, reason: `the ${p} key needs a faucet top-up (${bal} CSPR)` };
+  }
+  return { ok: true };
+}
 
 async function health() {
   const balances: Record<string, number | null> = {};
@@ -258,21 +366,42 @@ async function health() {
   );
   const { snap: pool, ok: contractOk } = await cachedPool();
   const fundedIds = await cachedFundedIds().catch(() => [] as number[]);
+  const capBps = await cachedPolicyBps();
   const low = PERSONAS.filter((p) => balances[p] != null && (balances[p] as number) < FLOORS[p]);
-  const paused = !rpcOk || !contractOk || low.length > 0;
+  // Global pause is reserved for "the chain is unreachable" — per-preset
+  // problems (a low balance, an infeasible pool shape) only disable THAT preset.
+  const paused = !contractOk;
   const liquid = pool?.liquid ?? 0;
+  const plan = policyBlockPlan(pool, capBps);
+  const deployBudget = canSignDeploy();
+  const gate = (preset: string, extra: { ok: boolean; reason?: string }) => {
+    if (!deployBudget.ok) return deployBudget;
+    const personas = personaGate(preset, balances);
+    if (!personas.ok) return personas;
+    return extra;
+  };
   const canRun = {
-    happy:
+    happy: gate(
+      "happy",
       liquid >= 5
         ? { ok: true }
         : { ok: false, reason: "pool liquidity too low for a funded lifecycle" },
-    policyBlock:
-      liquid >= 20
+    ),
+    policyBlock: gate(
+      "policy-block",
+      plan.feasible ? { ok: true } : { ok: false, reason: plan.reason },
+    ),
+    x402: gate(
+      "x402",
+      fundedIds.length &&
+        db.invoices.some((r) => r.decision && r.id > 0 && fundedIds.includes(r.id))
         ? { ok: true }
-        : { ok: false, reason: "pool too shallow to demonstrate the cap" },
-    x402: fundedIds.length
-      ? { ok: true }
-      : { ok: false, reason: "no funded invoice on the book — run the Full lifecycle first" },
+        : {
+            ok: false,
+            reason:
+              "no funded invoice with a decision memo on the book — run the Full lifecycle first",
+          },
+    ),
   };
   const activeId = order.filter((id) => sessions.get(id)?.status === "active").at(-1);
   return {
@@ -358,13 +487,14 @@ async function doUnderwrite(s: Session): Promise<{ result: string; reverted?: bo
   // step never blocks on a cold ~60 s livenet read.
   let faceCspr = 2; // small on purpose: visitor payouts stay ~1.9 CSPR
   if (s.preset === "policy-block") {
-    const liquid = (await cachedPool()).snap?.liquid ?? s.poolBefore?.liquid ?? 100;
-    const capFrac = (await cachedPolicyBps()) / 10000;
-    faceCspr = Math.max(
-      Math.ceil(((capFrac + 0.12) * liquid) / 0.75) + 1,
-      Math.round(0.9 * liquid),
-    );
-    s.note = `Pool ${liquid} CSPR · single-invoice cap ${(capFrac * 100).toFixed(0)}% → face ${faceCspr} CSPR. The advance will exceed the on-chain cap, so funding must revert.`;
+    const pool = (await cachedPool()).snap ?? s.poolBefore ?? null;
+    const capBps = await cachedPolicyBps();
+    const plan = policyBlockPlan(pool, capBps);
+    if (!plan.feasible || !plan.faceCspr) {
+      throw new Error(plan.reason ?? "policy-block preset is not runnable right now");
+    }
+    faceCspr = plan.faceCspr;
+    s.note = `Pool ${((pool?.liquid ?? 0) + (pool?.deployed ?? 0)).toFixed(1)} CSPR (liquid ${(pool?.liquid ?? 0).toFixed(1)} + deployed ${(pool?.deployed ?? 0).toFixed(1)}) · single-invoice cap ${(capBps / 100).toFixed(0)}% = ${plan.singleCap.toFixed(1)} CSPR → face ${faceCspr} CSPR. The advance lands ABOVE the cap but BELOW liquidity, so fund_invoice must revert with User error: 15.`;
   }
   const input = intakeFor(s.preset, faceCspr, s.id);
   const docHash = `sha256:${sha256(JSON.stringify(input))}`;
@@ -381,9 +511,13 @@ async function doUnderwrite(s: Session): Promise<{ result: string; reverted?: bo
   });
 
   // Policy clamp (tightest of TS prefilter + on-chain policy for discount/risk).
+  // The policy-block preset narrows the discount band further ([0.5%, 4%]) so
+  // the advance is deterministic enough to clear the single-invoice cap no
+  // matter how the LLM prices it (see policyBlockPlan).
   const p = config.policy;
   let { approve, risk_score, discount_bps } = opinion;
-  discount_bps = Math.max(p.minDiscountBps, Math.min(p.maxDiscountBps, discount_bps));
+  const dMax = s.preset === "policy-block" ? Math.min(400, p.maxDiscountBps) : p.maxDiscountBps;
+  discount_bps = Math.max(p.minDiscountBps, Math.min(dMax, discount_bps));
   if (risk_score > p.maxRiskScore) approve = false;
 
   const decisionHash = `sha256:${sha256(
@@ -446,6 +580,13 @@ async function doUnderwrite(s: Session): Promise<{ result: string; reverted?: bo
 
 async function stepRegister(s: Session) {
   const r = s.ctx.record!;
+  // Retry after a timeout: the earlier deploy may have landed. Scan the ids
+  // minted since this session started for our docHash before signing again —
+  // otherwise a flaky RPC turns one invoice into two.
+  if (s.ctx.retrying && r.id === 0) {
+    const recovered = await reconcileRegister(s).catch(() => null);
+    if (recovered) return recovered;
+  }
   // If the visitor connected their Casper wallet, THEY are the supplier — the
   // advance lands in their own wallet. Otherwise the demo supplier receives it.
   const supplier = s.ctx.supplierOverride
@@ -473,29 +614,106 @@ async function stepRegister(s: Session) {
   return { result: `Invoice #${r.id} registered on Casper Testnet${who}`, txHash: tx };
 }
 
+async function reconcileRegister(s: Session): Promise<{ result: string; txHash?: string } | null> {
+  const r = s.ctx.record!;
+  const before = s.poolBefore?.invoiceCount ?? 0;
+  const stats = await chain.stats().catch(() => null);
+  if (!stats) return null;
+  for (let id = stats.invoiceCount; id > before && id > stats.invoiceCount - 4; id--) {
+    const inv = await chain.invoice(id).catch(() => null);
+    if (inv && inv.docHash === r.intake.docHash) {
+      r.id = inv.id;
+      r.chain.registerHash = r.chain.registerHash ?? s.ctx.pendingTx?.register;
+      r.status = "approved";
+      upsertInvoice(r);
+      s.ctx.invoiceId = inv.id;
+      const who = s.ctx.supplierOverride
+        ? ` — supplier: YOUR wallet ${s.ctx.supplierOverride.slice(0, 10)}…`
+        : "";
+      return {
+        result: `Invoice #${inv.id} registered on Casper Testnet${who} (recovered — the earlier deploy landed)`,
+        txHash: r.chain.registerHash,
+      };
+    }
+  }
+  return null;
+}
+
+/** Common post-fund bookkeeping — used by fresh funds AND timeout recovery. */
+function fundBookkeeping(s: Session, tx?: string) {
+  const r = s.ctx.record!;
+  r.chain.fundHash = tx ?? r.chain.fundHash;
+  r.status = "funded";
+  upsertInvoice(r);
+  fundedCache.ts = 0; // the book just changed
+  // Real capital left the pool — track the open position so an abandoned
+  // walkthrough gets auto-settled by the cleanup worker.
+  addPosition({
+    sessionId: s.id,
+    displayId: s.displayId,
+    invoiceId: r.id,
+    faceMotes: toMotes(r.intake.amountCspr),
+    fundedTs: Date.now(),
+  });
+  if (s.preset === "policy-block") {
+    // The demo's whole promise is a revert. A successful fund means the pool
+    // moved mid-run — void the walkthrough loudly; the cleanup worker will
+    // settle the position.
+    s.status = "failed";
+    throw new Error(
+      "Funding unexpectedly SUCCEEDED — the pool composition changed mid-run, so the cap demo is void. The desk will auto-settle this position; start a fresh walkthrough.",
+    );
+  }
+  let dest = `FUNDED — advance streamed from the pool to the supplier`;
+  if (s.ctx.supplierOverride && !s.ctx.payoutCommitted) {
+    dest = `FUNDED — the advance just landed in YOUR wallet (${s.ctx.supplierOverride.slice(0, 10)}…). Check your balance.`;
+    const advanceCspr = (r.intake.amountCspr * (10_000 - (r.decision?.discountBps ?? 0))) / 10_000;
+    commitPayout(s.id, advanceCspr);
+    s.ctx.payoutCommitted = true;
+  }
+  return { result: dest, txHash: r.chain.fundHash };
+}
+
 async function stepFund(s: Session) {
   const r = s.ctx.record!;
+  // Retry: if the earlier fund deploy landed while we timed out, the invoice
+  // is already FUNDED — recover instead of signing a second transfer.
+  if (s.ctx.retrying) {
+    const inv = await chain.invoice(r.id).catch(() => null);
+    if (inv?.state === 1) return fundBookkeeping(s, r.chain.fundHash ?? s.ctx.pendingTx?.fund);
+  }
   try {
     const funded = await chain.fund(r.id);
-    const tx = funded.deployHashes.at(-1);
-    r.chain.fundHash = tx;
-    r.status = "funded";
-    upsertInvoice(r);
-    fundedCache.ts = 0; // the book just changed
-    let dest = `FUNDED — advance streamed from the pool to the supplier`;
-    if (s.ctx.supplierOverride) {
-      dest = `FUNDED — the advance just landed in YOUR wallet (${s.ctx.supplierOverride.slice(0, 10)}…). Check your balance.`;
-      const advanceCspr =
-        (r.intake.amountCspr * (10_000 - (r.decision?.discountBps ?? 0))) / 10_000;
-      recordPayout(s.ctx.supplierOverride, s.ip, advanceCspr);
-    }
-    return { result: dest, txHash: tx };
+    return fundBookkeeping(s, funded.deployHashes.at(-1));
   } catch (e) {
-    const err = normalizeRevert((e as Error).message);
-    r.status = "policy_blocked";
-    r.chain.fundError = err;
-    upsertInvoice(r);
-    return { result: `Contract REVERTED funding — ${err}`, reverted: true };
+    if (s.preset === "policy-block" && s.status === "failed") throw e; // void-path from bookkeeping
+    const msg = (e as Error).message;
+    // Double-submit race: InvalidState(5) means "not LISTED any more" — read
+    // the truth before declaring anything.
+    if (/User error:\s*5\b/.test(msg)) {
+      const inv = await chain.invoice(r.id).catch(() => null);
+      if (inv?.state === 1) return fundBookkeeping(s, r.chain.fundHash ?? s.ctx.pendingTx?.fund);
+    }
+    const err = normalizeRevert(msg);
+    if (s.preset === "policy-block") {
+      if (/User error:\s*15\b/.test(msg)) {
+        r.status = "policy_blocked";
+        r.chain.fundError = err;
+        upsertInvoice(r);
+        return {
+          result: `Contract REVERTED funding — ${err}. The AI said yes; Casper said no.`,
+          reverted: true,
+        };
+      }
+      // Any OTHER revert breaks the demo's promise — fail loudly, void the run.
+      s.status = "failed";
+      throw new Error(
+        `Expected a clean User error: 15 (SingleInvoiceCapExceeded) revert, but the contract said: ${err}. The pool moved mid-run — this walkthrough is void; start a fresh one.`,
+      );
+    }
+    // Happy path: a fund revert is a real, retryable failure — do NOT continue
+    // the walkthrough around an unfunded invoice.
+    throw new Error(`fund_invoice did not confirm — ${err}`);
   }
 }
 
@@ -542,50 +760,88 @@ async function stepPickFunded(s: Session) {
 async function stepX402(s: Session) {
   const id = s.ctx.invoiceId!;
   const base = `http://127.0.0.1:${config.port}`;
-  const first = await fetch(`${base}/api/risk/${id}`);
-  if (first.status !== 402) throw new Error(`expected 402, got ${first.status}`);
-  const offer = ((await first.json()) as any).accepts[0];
-  const nonce: string = offer.extra.transferIdNonce;
-  const proof = await nativeTransfer({
-    fromKeyPath: config.keys.debtor,
-    to: offer.payTo,
-    motes: offer.maxAmountRequired,
-    id: nonce,
-  });
+  // A stored proof from a previous attempt that never verified within the
+  // nonce TTL is dead — pay fresh instead of spinning on it.
+  if (s.ctx.x402Proof && Date.now() - (s.ctx.x402PaidTs ?? 0) > 9 * 60_000) {
+    s.ctx.x402Proof = undefined;
+    s.ctx.x402Nonce = undefined;
+  }
+  // Retry after a timeout: the transfer may already be on-chain — verify the
+  // SAME proof first; never pay twice for one report.
+  if (!s.ctx.x402Proof) {
+    const first = await fetch(`${base}/api/risk/${id}`);
+    if (first.status !== 402) throw new Error(`expected 402, got ${first.status}`);
+    const offer = ((await first.json()) as any).accepts[0];
+    s.ctx.x402Nonce = String(offer.extra.transferIdNonce);
+    s.ctx.x402AmountMotes = String(offer.maxAmountRequired);
+    s.ctx.x402Proof = await nativeTransfer({
+      fromKeyPath: config.keys.debtor,
+      to: offer.payTo,
+      motes: offer.maxAmountRequired,
+      id: s.ctx.x402Nonce,
+    });
+    s.ctx.x402PaidTs = Date.now();
+  }
   for (let i = 0; i < 30; i++) {
     await sleep(5000);
     const retry = await fetch(`${base}/api/risk/${id}`, {
-      headers: { "PAYMENT-SIGNATURE": proof, "PAYMENT-NONCE": nonce },
+      headers: { "PAYMENT-SIGNATURE": s.ctx.x402Proof, "PAYMENT-NONCE": s.ctx.x402Nonce! },
     });
     if (retry.status === 200) {
       const rep = (await retry.json()) as any;
       return {
-        result: `Report delivered for ${cspr(offer.maxAmountRequired)} CSPR — risk ${rep.riskScore}, decision ${String(rep.decisionHash).slice(0, 18)}…`,
-        txHash: proof,
+        result: `Report delivered for ${cspr(s.ctx.x402AmountMotes ?? config.x402.priceMotes)} CSPR — risk ${rep.riskScore}, decision ${String(rep.decisionHash).slice(0, 18)}…`,
+        txHash: s.ctx.x402Proof,
       };
     }
   }
-  throw new Error("x402 payment did not settle in time");
+  throw new Error(
+    "x402 payment did not settle in time — Retry verifies the SAME transfer again, it never pays twice",
+  );
+}
+
+/** Common post-settle bookkeeping — used by fresh settles AND timeout recovery. */
+async function settleBookkeeping(s: Session, tx?: string, recovered = false) {
+  const r = s.ctx.record!;
+  r.chain.settleHash = tx ?? r.chain.settleHash;
+  r.status = "settled";
+  upsertInvoice(r);
+  resolvePosition(r.id); // the pool is whole again — nothing left to clean up
+  fundedCache.ts = 0; // the book just changed
+  s.poolAfter = await snap().catch(() => undefined);
+  return {
+    result:
+      `Debtor paid ${r.intake.amountCspr} CSPR face value — the pool realizes its yield` +
+      (recovered ? " (recovered — the earlier deploy landed)" : ""),
+    txHash: r.chain.settleHash,
+  };
 }
 
 async function stepSettle(s: Session) {
   const r = s.ctx.record!;
-  const st = await chain.settle(r.id, toMotes(r.intake.amountCspr));
-  const tx = st.deployHashes.at(-1);
-  r.chain.settleHash = tx;
-  r.status = "settled";
-  upsertInvoice(r);
-  fundedCache.ts = 0; // the book just changed
-  s.poolAfter = await snap().catch(() => undefined);
-  return {
-    result: `Debtor paid ${r.intake.amountCspr} CSPR face value — the pool realizes its yield`,
-    txHash: tx,
-  };
+  if (s.ctx.retrying) {
+    const inv = await chain.invoice(r.id).catch(() => null);
+    if (inv?.state === 2)
+      return settleBookkeeping(s, r.chain.settleHash ?? s.ctx.pendingTx?.settle, true);
+  }
+  try {
+    const st = await chain.settle(r.id, toMotes(r.intake.amountCspr));
+    return await settleBookkeeping(s, st.deployHashes.at(-1));
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (/User error:\s*5\b/.test(msg)) {
+      const inv = await chain.invoice(r.id).catch(() => null);
+      if (inv?.state === 2)
+        return settleBookkeeping(s, r.chain.settleHash ?? s.ctx.pendingTx?.settle, true);
+    }
+    throw new Error(`settle_invoice did not confirm — ${normalizeRevert(msg)}`);
+  }
 }
 
 function normalizeRevert(msg: string): string {
   const m = msg.match(/User error:\s*(\d+)/);
   const names: Record<string, string> = {
+    "5": "InvalidState",
     "6": "InsufficientLiquidity",
     "13": "RiskAbovePolicy",
     "14": "DiscountOutOfPolicy",
@@ -768,9 +1024,20 @@ const PRESETS = [
 // ---- rate limiting ----------------------------------------------------------
 
 const NEW_SESSION_COOLDOWN_MS = 8_000; // just debounces accidental double-submits
-const SESSION_STALE_MS = 10 * 60_000;
+/** Hard expiry on INACTIVITY — a judge reading explorer pages between steps
+ * must never lose their run (5 chain txs × up to 2 min each, plus reading). */
+const SESSION_STALE_MS = 40 * 60_000;
+/** A different visitor may claim the desk once the current run has been idle
+ * this long (nobody signing, nobody clicking). */
+const IDLE_TAKEOVER_MS = 5 * 60_000;
 const lastNewByIp = new Map<string, number>();
 let STEPPING = false; // single in-flight chain step across all sessions
+
+/** Smoke-test bypass for our own pre-freeze self-tests: skips rate limits
+ * (never the signing itself) when the secret header matches. Unset = disabled. */
+const SMOKE_SECRET = process.env.JUDGE_SMOKE_SECRET ?? "";
+const isSmoke = (req: Request) =>
+  !!SMOKE_SECRET && String(req.headers["x-judge-smoke"] ?? "") === SMOKE_SECRET;
 
 function clientIp(req: Request): string {
   // With app.set("trust proxy", 1) express derives this from the rightmost
@@ -778,16 +1045,18 @@ function clientIp(req: Request): string {
   return req.ip || "unknown";
 }
 
+function endSession(s: Session, status: "done" | "failed", note?: string) {
+  s.status = status;
+  s.endedTs = Date.now();
+  if (note) s.note = (s.note ? s.note + " " : "") + note;
+  if (!s.ctx.payoutCommitted) releaseReservation(s.id);
+}
+
 function activeSession(): Session | undefined {
   const id = order.filter((i) => sessions.get(i)?.status === "active").at(-1);
   const s = id ? sessions.get(id) : undefined;
-  if (
-    s &&
-    Date.now() - (s.steps[s.cursor]?.startedTs ?? s.startedTs) > SESSION_STALE_MS &&
-    !STEPPING
-  ) {
-    s.status = "failed";
-    s.note = (s.note ? s.note + " " : "") + "Session expired.";
+  if (s && Date.now() - s.lastActivityTs > SESSION_STALE_MS && !STEPPING) {
+    endSession(s, "failed", "Session expired after inactivity.");
     return undefined;
   }
   return s;
@@ -831,7 +1100,12 @@ export function makeJudgeRouter(): Router {
         ...h,
         activeSession: active ? { ...publicSession(active), token: active.token } : null,
         deskBusy: !!h.activeSession && !mine,
-        budget: { capCspr: DAILY_PAYOUT_CAP_CSPR, spentCspr: spentLast24h() },
+        budget: {
+          capCspr: DAILY_PAYOUT_CAP_CSPR,
+          spentCspr: spentLast24h(),
+          deploysToday: deploysLast24h(),
+          deployCap: CAPS.deploysPerDay,
+        },
       });
     } catch (e) {
       res.status(500).json({ error: (e as Error).message, mode: "live-testnet", paused: true });
@@ -871,7 +1145,19 @@ export function makeJudgeRouter(): Router {
       res.status(404).json({ error: "session not found" });
       return;
     }
+    // Resuming counts as activity — only for the owner (token or creator IP),
+    // so a stranger polling a leaked id cannot keep someone's session alive.
+    const tok = String(req.headers["x-judge-token"] ?? "");
+    if (s.status === "active" && (tok === s.token || s.ip === clientIp(req))) {
+      s.lastActivityTs = Date.now();
+      touchPosition(s.id);
+    }
     res.json(publicSession(s));
+  });
+
+  // The last few completed walkthroughs — public receipts (no tokens, no IPs).
+  r.get("/recent", (_req, res) => {
+    res.json({ runs: recentRuns(5) });
   });
 
   // Create a guided session (does not sign anything yet).
@@ -898,26 +1184,39 @@ export function makeJudgeRouter(): Router {
       if (preset === "happy") supplierOverride = rawWallet.toLowerCase();
     }
     const ip = clientIp(req);
+    const smoke = isSmoke(req);
     const existing = activeSession();
     // Same visitor (e.g. refreshed the page) — abandon their old session and
-    // start fresh, so they are never locked out. A DIFFERENT visitor mid-signing
-    // is the only reason to wait (steps are globally single-flight).
+    // start fresh, so they are never locked out. A DIFFERENT visitor holds the
+    // desk while they are actively clicking; once idle past the takeover
+    // window (and nothing is signing), the desk frees up.
     if (existing && existing.ip === ip) {
-      existing.status = "failed";
-      existing.note = "Replaced by a new walkthrough.";
-    } else if (existing && existing.ip !== ip && STEPPING) {
-      res.status(429).json({
-        error: "Another judge is signing a live step right now — try again in a few seconds.",
-      });
-      return;
+      endSession(existing, "failed", "Replaced by a new walkthrough.");
+    } else if (existing && existing.ip !== ip) {
+      const idleMs = Date.now() - existing.lastActivityTs;
+      if (STEPPING || idleMs < IDLE_TAKEOVER_MS) {
+        res.status(429).json({
+          error:
+            "Another judge is mid-walkthrough right now — the desk signs one story at a time. Try again in a few minutes.",
+        });
+        return;
+      }
+      endSession(existing, "failed", "Superseded after inactivity.");
     }
     const h = await cachedHealth().catch(() => null);
     if (!h || h.paused) {
       res.status(503).json({
-        error:
-          "Live judge mode is temporarily paused — a key needs a top-up or the node is unreachable.",
+        error: "Live judge mode is temporarily paused — the Casper node is unreachable.",
         paused: true,
       });
+      return;
+    }
+    // The UI disables un-runnable presets, but the SERVER is the enforcement
+    // point — deep links and raw curls hit the same wall.
+    const canKey = preset === "policy-block" ? "policyBlock" : preset;
+    const cr = (h.canRun as Record<string, { ok: boolean; reason?: string }>)[canKey];
+    if (cr && !cr.ok && !smoke) {
+      res.status(409).json({ error: cr.reason ?? "this walkthrough is not runnable right now" });
       return;
     }
     // Light guard against accidental double-submits (session creation is gas-free).
@@ -929,19 +1228,38 @@ export function makeJudgeRouter(): Router {
       return;
     }
     lastNewByIp.set(ip, Date.now());
+    // Persistent rate limits: per-IP hourly, per-preset and global daily.
+    if (!smoke) {
+      const rl = canStartRun(ip, preset);
+      if (!rl.ok) {
+        res.status(429).json({ error: rl.reason });
+        return;
+      }
+    }
 
-    // Wallet payouts burn the daily budget — check BEFORE any signing starts.
+    const uuid = crypto.randomUUID();
+    // Wallet payouts burn the daily budget — RESERVE it before any signing
+    // starts, so concurrent sessions can never overshoot the cap together.
+    // Fail closed: if the ledger cannot persist, no payout session starts.
     if (supplierOverride && preset === "happy") {
-      const gate = canPayout(supplierOverride, ip, 2);
-      if (!gate.ok) {
-        res.status(403).json({ error: gate.reason, payoutBlocked: true });
+      try {
+        const gate = reservePayout(uuid, supplierOverride, ip, 2, smoke);
+        if (!gate.ok) {
+          res.status(403).json({ error: gate.reason, payoutBlocked: true });
+          return;
+        }
+      } catch {
+        res.status(503).json({
+          error:
+            "The payout ledger is unavailable right now — wallet payouts are disabled. Run with the demo supplier instead.",
+          payoutBlocked: true,
+        });
         return;
       }
     }
 
     const defs = def.defs();
     const steps = defs.map((d, i) => publicStep(d, i === 0 ? "ready" : "locked"));
-    const uuid = crypto.randomUUID();
     const s: Session = {
       id: uuid,
       displayId: newDisplayId(uuid),
@@ -954,13 +1272,20 @@ export function makeJudgeRouter(): Router {
       cursor: 0,
       status: "active",
       startedTs: Date.now(),
+      lastActivityTs: Date.now(),
       ip,
+      smoke,
       poolBefore: (await cachedPool()).snap ?? undefined,
       ctx: { supplierOverride },
     };
     sessions.set(s.id, s);
     order.push(s.id);
-    if (order.length > 60) sessions.delete(order.shift() as string);
+    if (order.length > 60) {
+      const evicted = order.shift() as string;
+      releaseReservation(evicted);
+      sessions.delete(evicted);
+    }
+    recordRun(ip, preset);
     res.status(201).json({ ...publicSession(s), token: s.token });
   });
 
@@ -995,15 +1320,28 @@ export function makeJudgeRouter(): Router {
       res.status(409).json({ error: "no step ready to run", session: publicSession(s) });
       return;
     }
+    // Global daily gas budget for signed steps (reads are free).
+    if (def.kind === "chain" && !s.smoke) {
+      const gas = canSignDeploy();
+      if (!gas.ok) {
+        res.status(429).json({ error: gas.reason });
+        return;
+      }
+    }
 
     STEPPING = true;
+    s.lastActivityTs = Date.now();
+    touchPosition(s.id);
+    const isRetry = step.status === "failed";
     // Retrying a failed step: clear the previous attempt's outcome.
     step.result = undefined;
     step.txHash = undefined;
     step.explorerUrl = undefined;
     step.status = "running";
     step.startedTs = Date.now();
+    if (def.kind === "chain") recordDeploy(`${s.preset}:${def.key}`);
     try {
+      s.ctx.retrying = isRetry;
       const out = await def.run(s);
       step.result = out.result;
       if (out.txHash) {
@@ -1012,27 +1350,56 @@ export function makeJudgeRouter(): Router {
       }
       step.status = out.reverted ? "reverted" : "done";
       step.endedTs = Date.now();
+      s.lastActivityTs = Date.now();
       s.cursor = i + 1;
 
       // A revert on the fund step of policy-block is the intended finale.
       const intendedEnd = out.reverted && (s.preset === "policy-block" || !s.ctx.approved);
       if (s.cursor >= s.steps.length || intendedEnd) {
-        s.status = "done";
-        s.endedTs = Date.now();
+        endSession(s, "done");
         if (!s.poolAfter)
           s.poolAfter = (await cachedPool(1).catch(() => ({ snap: null }))).snap ?? undefined;
+        // Public receipt: the proof that a real walkthrough just happened.
+        recordRecentRun({
+          displayId: s.displayId,
+          preset: s.preset,
+          title: s.title,
+          endedTs: s.endedTs ?? Date.now(),
+          wallet: s.ctx.supplierOverride
+            ? `${s.ctx.supplierOverride.slice(0, 6)}…${s.ctx.supplierOverride.slice(-4)}`
+            : undefined,
+          steps: s.steps.map((st) => ({
+            key: st.key,
+            title: st.title,
+            status: st.status,
+            txHash: st.txHash,
+            explorerUrl: st.explorerUrl,
+            result: st.result,
+          })),
+        });
       } else {
         s.steps[s.cursor].status = "ready";
       }
       res.json(publicSession(s));
     } catch (e) {
       // Testnet hiccups happen — a failed step stays RETRYABLE and the
-      // walkthrough stays active. The judge decides: retry or abandon.
+      // walkthrough stays active (unless the executor voided the session).
+      // Keep the error TAIL: with long livenet output, the cause is at the end.
       const msg = (e as Error).message;
       const tail = msg.length > 320 ? `…${msg.slice(-320)}` : msg;
+      // A timeout may still land on-chain — remember the submitted hash so the
+      // retry reconciles instead of double-signing.
+      const submitted = msg.match(/submitted tx ([0-9a-f]{64})/);
+      if (submitted) s.ctx.pendingTx = { ...s.ctx.pendingTx, [step.key]: submitted[1] };
       step.status = "failed";
       step.result = tail;
       step.endedTs = Date.now();
+      s.lastActivityTs = Date.now();
+      if (s.status !== "active") {
+        // Executor declared the walkthrough void (e.g. policy-block lost its
+        // revert window) — settle the books for this session.
+        endSession(s, "failed");
+      }
       feed.publish({
         actor: "system",
         kind: "error",
@@ -1040,9 +1407,84 @@ export function makeJudgeRouter(): Router {
       });
       res.json(publicSession(s));
     } finally {
+      s.ctx.retrying = false;
       STEPPING = false;
     }
   });
 
+  startCleanupWorker();
   return r;
+}
+
+// ---- cleanup worker ---------------------------------------------------------
+
+/**
+ * Auto-settles funded invoices whose walkthrough went quiet (judge closed the
+ * tab after the fund step). The debtor demo key repays face value, the pool is
+ * whole again, and the next visitor starts from a clean book. Serialized with
+ * live steps via the same STEPPING flag; one position per tick.
+ */
+const CLEANUP_IDLE_MS = 20 * 60_000;
+const CLEANUP_TICK_MS = 3 * 60_000;
+let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+function startCleanupWorker() {
+  if (cleanupTimer) return;
+  cleanupTimer = setInterval(() => {
+    void cleanupTick();
+  }, CLEANUP_TICK_MS);
+  cleanupTimer.unref?.();
+}
+
+async function cleanupTick() {
+  if (STEPPING) return;
+  const stale = stalePositions(CLEANUP_IDLE_MS);
+  if (!stale.length) return;
+  const pos = stale[0];
+  const owner = sessions.get(pos.sessionId);
+  if (owner && owner.status === "active" && Date.now() - owner.lastActivityTs < CLEANUP_IDLE_MS) {
+    touchPosition(pos.sessionId); // owner is alive — give them time
+    return;
+  }
+  if (!canSignDeploy().ok) return; // gas budget exhausted — wait for the window
+  STEPPING = true;
+  try {
+    const inv = await chain.invoice(pos.invoiceId).catch(() => null);
+    if (!inv || inv.state !== 1) {
+      resolvePosition(pos.invoiceId); // already settled/defaulted elsewhere
+      return;
+    }
+    recordDeploy("cleanup:settle");
+    const st = await chain.settle(pos.invoiceId, pos.faceMotes);
+    resolvePosition(pos.invoiceId);
+    fundedCache.ts = 0;
+    const rec = db.invoices.find((x) => x.id === pos.invoiceId);
+    if (rec) {
+      rec.status = "settled";
+      rec.chain.settleHash = st.deployHashes.at(-1);
+      upsertInvoice(rec);
+    }
+    if (owner && owner.status === "active") {
+      endSession(
+        owner,
+        "done",
+        "Walkthrough went idle after funding — the desk auto-settled the invoice to close the position.",
+      );
+    }
+    feed.publish({
+      actor: "collector",
+      kind: "onchain",
+      message: `cleanup: auto-settled idle judge invoice #${pos.invoiceId} (${pos.displayId})`,
+      deployHash: st.deployHashes.at(-1),
+    });
+  } catch (e) {
+    feed.publish({
+      actor: "system",
+      kind: "error",
+      message: `cleanup settle failed for #${pos.invoiceId}: ${(e as Error).message.slice(-160)}`,
+    });
+    touchPosition(pos.sessionId); // back off one idle window before retrying
+  } finally {
+    STEPPING = false;
+  }
 }

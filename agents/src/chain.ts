@@ -34,7 +34,17 @@ export async function livenet<T = unknown>(
     let err = "";
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      reject(new Error(`livenet ${args[0]} timed out`));
+      // The deploy may already be submitted — surface any hash seen so far so
+      // the caller can reconcile instead of double-signing on retry.
+      const seen = [...new Set((out + err).match(/\b[0-9a-f]{64}\b/g) ?? [])].filter(
+        (h) => !config.contract.includes(h),
+      );
+      reject(
+        new Error(
+          `livenet ${args[0]} timed out` +
+            (seen.length ? ` (submitted tx ${seen[0]} may still land on-chain)` : ""),
+        ),
+      );
     }, opts.timeoutMs ?? 240_000);
 
     child.stdout.on("data", (d) => (out += d.toString()));
