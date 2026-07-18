@@ -611,7 +611,7 @@ async function stepRegister(s: Session) {
   const who = s.ctx.supplierOverride
     ? ` — supplier: YOUR wallet ${s.ctx.supplierOverride.slice(0, 10)}…`
     : "";
-  return { result: `Invoice #${r.id} registered on Casper Testnet${who}`, txHash: tx };
+  return { result: `Invoice #${r.id} registered on Casper${who}`, txHash: tx };
 }
 
 async function reconcileRegister(s: Session): Promise<{ result: string; txHash?: string } | null> {
@@ -631,7 +631,7 @@ async function reconcileRegister(s: Session): Promise<{ result: string; txHash?:
         ? ` — supplier: YOUR wallet ${s.ctx.supplierOverride.slice(0, 10)}…`
         : "";
       return {
-        result: `Invoice #${inv.id} registered on Casper Testnet${who} (recovered — the earlier deploy landed)`,
+        result: `Invoice #${inv.id} registered on Casper${who} (recovered — the earlier deploy landed)`,
         txHash: r.chain.registerHash,
       };
     }
@@ -875,7 +875,7 @@ function happyDefs(): StepDef[] {
       action: "Sign register_invoice",
       what: "register_invoice writes the receivable and its decision hash to the contract.",
       who: "Underwriter agent key",
-      why: "The receivable now exists on Casper Testnet, tamper-evident.",
+      why: "The receivable now exists on Casper, tamper-evident.",
       run: stepRegister,
     },
     {
