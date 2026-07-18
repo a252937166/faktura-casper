@@ -24,13 +24,37 @@ what comes next:
 - **x402** — a buyer agent pays over HTTP 402 with native CSPR for the verified
   risk report.
 
-Walkthroughs are preset-only and small-capped, signed by pre-funded
-testnet-only demo keys, so anyone can trigger real value safely. The page shows
-a live health check (key balances, RPC/contract reachability) and pauses itself
-to the safe showcase if a key needs a faucet top-up — a judge never hits a dead
-button. Design notes: [docs/judge-mode-design.md](docs/judge-mode-design.md).
+**Connect your Casper Wallet and the desk pays the advance to YOUR testnet
+address** — read-only (public key only, never a signature), verified with both
+ed25519 (`01…`) and secp256k1 (`02…`) keys. Walkthroughs are preset-only and
+small-capped, signed by pre-funded testnet-only demo keys; payouts are reserved
+against a persisted daily budget, every signed step draws on a daily gas
+budget, abandoned funded runs are auto-settled by a cleanup worker, and the
+page shows a live health check with per-preset runnability — a judge never
+hits a dead button. Design notes:
+[docs/judge-mode-design.md](docs/judge-mode-design.md).
 
 The transactions in this file were produced by exactly these code paths.
+
+### Pre-freeze smoke matrix — the guided walkthrough, verified end to end (2026-07-18)
+
+Every preset was driven through the PUBLIC guided API against the production
+desk, the way a judge would click it. Freshly generated visitor wallets (not
+our demo personas) received the payouts:
+
+| Run | Steps | Key transactions |
+|---|---|---|
+| **Policy firewall** `JUDGE-20260718-EA56` — asserted the revert is EXACTLY `User error: 15` | 3/3 ✓ | register [`55fc0afc…`](https://testnet.cspr.live/deploy/55fc0afcb960acc60949d8afb9a3e5cef0406593848f98e0bd334c18209399fc) → fund **REVERTED (err 15, SingleInvoiceCapExceeded)** |
+| **Full lifecycle + ed25519 visitor wallet** `JUDGE-20260718-B9FE` (`0155d6cc…`) — balance 0 → **1.96 CSPR** | 6/6 ✓ | register #20 [`6c0bc0eb…`](https://testnet.cspr.live/deploy/6c0bc0ebda991e9de45817f717f9985e676618cd19493b580763de2a10edaadc) · fund→wallet [`a1640661…`](https://testnet.cspr.live/deploy/a164066156dee02d7444e3895031dc5861377fe14ea1167ef6197810ff6c3d6b) · attest [`f503aba9…`](https://testnet.cspr.live/deploy/f503aba9608d6988fe3a7c4a2d8d985edbd00a92c2a7180812bd107708ef4f9b) · x402 [`ab9b4a65…`](https://testnet.cspr.live/deploy/ab9b4a650ea385a286f34f4a8485da45099da4190752a62fe337891ae783c09d) · settle [`6a75a808…`](https://testnet.cspr.live/deploy/6a75a808c694697ea027fc9b295aa7803b9d9c751693a42c2697dfa08f33ed50) |
+| **Full lifecycle + secp256k1 visitor wallet** `JUDGE-20260718-8F86` (`02021271…`) — balance 0 → **1.97 CSPR** | 6/6 ✓ | register #21 [`f93cf16b…`](https://testnet.cspr.live/deploy/f93cf16bdf2ab32afd9dee0dc988c433f2d675d93d58144ccc35e597331b187b) · fund→wallet [`4a1d85f9…`](https://testnet.cspr.live/deploy/4a1d85f9b178958b4016d314d3ba1a4319b19438807371abb5e56d8ad8612ad5) · attest [`df88384f…`](https://testnet.cspr.live/deploy/df88384f2bb1257175b2464e0f97a672421f48192759f22ad349adcb39df465d) · x402 [`7f4ec8ac…`](https://testnet.cspr.live/deploy/7f4ec8ac1a2cc7c94c39f904afeea595e46aca58fa10a90d2ae8656662119228) · settle [`a7814fe2…`](https://testnet.cspr.live/deploy/a7814fe22fea16c552ad9e0051169bd7c335bb93223e982474dc1afb6718edf3) |
+| **Standalone x402 purchase** `JUDGE-20260718-477D` (reuses a funded invoice — zero new exposure) | 2/2 ✓ | payment [`bb7f1a71…`](https://testnet.cspr.live/deploy/bb7f1a7137f16fd11c44ceee3736bcf565e05ae91b6b8a43a3c9b8c256b90a26) → verified report |
+
+Both wallet runs prove the public-key → account-hash normalization on both
+Casper key schemes. The budgets did their job during the matrix: payouts
+3.93 / 10 CSPR daily cap, signed steps 13 / 60 daily gas budget — all persisted
+(see [docs/judge-mode-design.md](docs/judge-mode-design.md)). The latest
+completed run is always visible on the homepage ("LATEST LIVE TESTNET RUN")
+and at `/api/judge/recent`.
 
 ## The deployment
 
