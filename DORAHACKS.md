@@ -55,7 +55,16 @@ desk, real transactions:
 
 | Run | Steps | Key transactions |
 |---|---|---|
-| _This matrix is refreshed by the post-deploy smoke of v0.2.4-final — see the tables below for the v0.2.1–v0.2.3 evidence trail._ | | |
+| **Policy firewall** `JUDGE-20260718-36416F04` — asserted the revert is EXACTLY `User error: 15` | 3/3 ✓ | register #29 [`a773619c…`](https://testnet.cspr.live/deploy/a773619c589b0160b0ca6a6ed2674f73a1804cc7d89642d5389552fc12cb9253) → fund **REVERTED (err 15, SingleInvoiceCapExceeded)** [`f18656bc…`](https://testnet.cspr.live/deploy/f18656bcc88603a5d53984b752108692a07dead0f9f05dd34223b0daed39afa2) |
+| **AI declines (new)** `JUDGE-20260718-E9DA6A6F` — the model REJECTED a shell-debtor invoice (risk 90/100, five red flags) and the NO was anchored | 2/2 ✓ | attest `UNDERWRITE_REJECT` #20 [`69f0fe60…`](https://testnet.cspr.live/deploy/69f0fe60336a8bd34082ce7f58b37faa122a2550e146d5d1278f54a9b9db61a3) — the hash covers the full memo, rationale and red flags included |
+| **x402 + consumer verdict** `JUDGE-20260718-839EAC6B` — buyer paid 2.5 CSPR, re-hashed the shipped memo, bound risk/discount to the anchor, ACCEPTed (risk 20 ≤ 35) | 3/3 ✓ | payment [`39cf0390…`](https://testnet.cspr.live/deploy/39cf03903cf536339cdb0aedb0c7758f08d58434a33639c19203e6446f1afa78) · verdict attest #21 [`b133492b…`](https://testnet.cspr.live/deploy/b133492b3c24e5ff4fd7740c27fb24ac72c3251dd8c8824c92a45d796566c4e2) |
+| **Default workout** `JUDGE-20260718-3A55347C` — overdue invoice #24 written off by the collector key | 2/2 ✓ | mark_default [`58f50031…`](https://testnet.cspr.live/deploy/58f50031f47e68053d16b9123692de3619260a154f000a104c158a4f97b9a9c5) |
+| **Full lifecycle** `JUDGE-20260718-5942F871` — underwrite → register #30 → fund → attest → settle; its downloadable receipt verifies offline (`npm run verify-receipt` → RESULT: VERIFIED) | 5/5 ✓ | register [`77a6dd5e…`](https://testnet.cspr.live/deploy/77a6dd5eb2e6a285bd836d68623150e556a19900388b81ad49c92947d9226292) · fund [`8bc8194d…`](https://testnet.cspr.live/deploy/8bc8194db8b313dfc9933146d43cb61520816cde55528d375c5b62b1a7d52eab) · attest #22 [`343592bd…`](https://testnet.cspr.live/deploy/343592bd39953c017cd164cf73652fab070f6a58692e0fcfd5ceac9970f4a957) · settle [`f6ac7dba…`](https://testnet.cspr.live/deploy/f6ac7dba3a6316c7bdedc14099e98f697ba463ba7372ec1048943badabe1e69f) |
+
+Running build during the matrix: `v0.2.4-final @ d75c5d6c` (surfaced on
+`/api/meta`, `/api/judge/health` and inside every receipt). Budgets after the
+run: payouts 3.93 / 10 CSPR, signed steps 42 / 60 — the desk stayed inside its
+own rails while re-proving all five stories.
 
 ### Legacy matrix (v0.2.1 evidence) — the guided walkthrough, verified end to end (2026-07-18)
 
