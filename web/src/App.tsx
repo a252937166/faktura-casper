@@ -770,9 +770,10 @@ export default function App() {
             <div>
               <h2>Don't take our word for it. Trigger it yourself. Verify every transaction.</h2>
               <p>
-                Three guided walkthroughs — the full lifecycle, the policy firewall and an x402
-                purchase. One click per step, one real agent-signed Casper transaction per click,
-                explorer links as they confirm. Your wallet never signs anything.
+                Four guided walkthroughs — the full lifecycle, the policy firewall, an x402 purchase
+                where the buyer acts on the report, and a default workout. One click per step, one
+                real agent-signed Casper transaction per click, explorer links as they confirm. Your
+                wallet never signs anything.
               </p>
             </div>
             <button className="btn-primary big" onClick={() => openRunner()}>
