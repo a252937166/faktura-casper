@@ -31,7 +31,7 @@ export const EVIDENCE = {
   /** Submission artifacts. */
   repoUrl: "https://github.com/a252937166/faktura-casper",
   evidencePackUrl: "https://github.com/a252937166/faktura-casper/blob/master/DORAHACKS.md",
-  releaseTag: "v0.2.1-final-live-testnet",
-  releaseUrl: "https://github.com/a252937166/faktura-casper/releases/tag/v0.2.1-final-live-testnet",
+  releaseTag: "v0.2.2-final",
+  releaseUrl: "https://github.com/a252937166/faktura-casper/releases/tag/v0.2.2-final",
   videoUrl: "https://youtu.be/47ZNPZlRXVA",
 } as const;
