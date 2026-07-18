@@ -80,6 +80,17 @@ export interface RecentRun {
   /** shortened wallet ("0202…9f1c") when the visitor connected one */
   wallet?: string;
   steps: RecentRunStep[];
+  // ---- credit-receipt.v1 enrichment (records from older builds may lack these)
+  /** On-chain invoice id (0 = never registered, e.g. the ai-reject preset). */
+  invoiceId?: number;
+  faceCspr?: number;
+  /** The FULL canonical decision memo — the document whose SHA-256 is anchored. */
+  memo?: unknown;
+  decisionHash?: string;
+  /** The consumer agent's verdict memo + hash (x402 preset). */
+  consumerVerdict?: { memo: unknown; hash: string };
+  poolBefore?: unknown;
+  poolAfter?: unknown;
 }
 
 interface LimitsFile {
@@ -111,6 +122,7 @@ export const CAPS = {
     "policy-block": Number(process.env.JUDGE_POLICY_PER_DAY ?? 10),
     x402: Number(process.env.JUDGE_X402_PER_DAY ?? 15),
     default: Number(process.env.JUDGE_DEFAULT_PER_DAY ?? 8),
+    "ai-reject": Number(process.env.JUDGE_AI_REJECT_PER_DAY ?? 8),
   } as Record<string, number>,
 };
 
@@ -257,17 +269,26 @@ export function clearOrphanReservations() {
   }
 }
 
-/** Convert the session's reservation into a committed payout (fund confirmed). */
-export function commitPayout(sessionId: string, actualCspr: number) {
+/**
+ * Convert the session's reservation into a committed payout (fund confirmed).
+ * If the reservation is gone (e.g. the session was superseded while the fund
+ * deploy was settling), the caller MUST supply the session's own immutable
+ * evidence — the 24 h ledger must never book a real transfer to "unknown".
+ */
+export function commitPayout(
+  sessionId: string,
+  actualCspr: number,
+  evidence?: { wallet?: string; ip?: string },
+) {
   prune();
   const i = state.reservations.findIndex((r) => r.sessionId === sessionId);
   const r = i >= 0 ? state.reservations.splice(i, 1)[0] : undefined;
-  state.payouts.push({
-    wallet: r?.wallet ?? "unknown",
-    ip: r?.ip ?? "unknown",
-    cspr: actualCspr,
-    ts: Date.now(),
-  });
+  const wallet = r?.wallet ?? evidence?.wallet;
+  const ip = r?.ip ?? evidence?.ip;
+  if (!wallet || !ip) {
+    throw new Error("payout committed without reservation or session evidence");
+  }
+  state.payouts.push({ wallet, ip, cspr: actualCspr, ts: Date.now() });
   // The transfer already happened on-chain — persistence here is best-effort,
   // but the record stays in memory either way.
   saveBestEffort();
@@ -316,9 +337,12 @@ export function deploysLast24h(): number {
   return state.deploys.length;
 }
 
-export function canSignDeploy(): { ok: boolean; reason?: string } {
+/** @param count how many deploys the caller is about to sign (a seeder needs
+ * register + fund = 2; approving one when only one slot is left would strand
+ * a half-seeded invoice). */
+export function canSignDeploy(count = 1): { ok: boolean; reason?: string } {
   prune();
-  if (state.deploys.length >= CAPS.deploysPerDay)
+  if (state.deploys.length + count > CAPS.deploysPerDay)
     return {
       ok: false,
       reason:

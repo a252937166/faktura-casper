@@ -4266,3 +4266,407 @@ button.field-wallet {
   line-height: 1.5;
   color: #6d4a0a;
 }
+
+/* ---------- agent CTA (hero) ---------- */
+.btn-agent {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  padding: 13px 20px;
+  background: rgba(122, 77, 208, 0.06);
+  color: #5b32a8;
+  border: 1.5px solid #7a4dd0;
+  border-radius: 4px;
+  cursor: pointer;
+  box-shadow: 4px 4px 0 rgba(122, 77, 208, 0.3);
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease;
+}
+.btn-agent:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 rgba(122, 77, 208, 0.45);
+}
+.btn-agent.solid {
+  background: #7a4dd0;
+  color: #fff;
+}
+
+/* ---------- MCP band (front and center) ---------- */
+.mcp-band {
+  margin: 30px 0;
+  padding: 26px 30px;
+  border: 2px solid #7a4dd0;
+  border-radius: 6px;
+  background:
+    linear-gradient(rgba(122, 77, 208, 0.045), rgba(122, 77, 208, 0.045)), var(--card, #fffdf7);
+  box-shadow: 7px 7px 0 rgba(122, 77, 208, 0.22);
+}
+.mcp-band-kicker {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2.2px;
+  color: #7a4dd0;
+}
+.mcp-band-head h2 {
+  font-family: var(--serif);
+  font-size: clamp(24px, 3.2vw, 34px);
+  margin: 8px 0 10px;
+}
+.mcp-band-head p {
+  max-width: 720px;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: rgba(23, 19, 13, 0.75);
+}
+.mcp-band-tools {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin: 18px 0;
+}
+.mcp-band-tool {
+  text-align: left;
+  padding: 11px 14px;
+  background: var(--card, #fffdf7);
+  border: 1.5px solid rgba(122, 77, 208, 0.5);
+  border-radius: 4px;
+  cursor: pointer;
+  transition:
+    transform 0.1s ease,
+    box-shadow 0.1s ease;
+}
+.mcp-band-tool:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 rgba(122, 77, 208, 0.35);
+}
+.mcp-band-tool b {
+  display: block;
+  font-size: 12.5px;
+  color: #5b32a8;
+  margin-bottom: 3px;
+}
+.mcp-band-tool span {
+  font-size: 12px;
+  color: rgba(23, 19, 13, 0.65);
+  line-height: 1.4;
+}
+.mcp-band-cta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.mcp-band-cmd {
+  flex: 1;
+  min-width: 280px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 10px 13px;
+  background: rgba(23, 19, 13, 0.05);
+  border: 1px solid rgba(23, 19, 13, 0.25);
+  border-radius: 4px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+/* ---------- MCP drawer v2 — agent-native, terminal-flavored ---------- */
+.mcp2 {
+  border-color: #7a4dd0 !important;
+  box-shadow: -8px 0 0 rgba(122, 77, 208, 0.18) !important;
+}
+.mcp2-hero {
+  padding-bottom: 18px;
+  border-bottom: 1.5px dashed rgba(122, 77, 208, 0.4);
+}
+.mcp2-kicker {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2.2px;
+  color: #7a4dd0;
+}
+.mcp2-hero h2 {
+  margin: 8px 0 8px;
+}
+.mcp2-hero > p {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: rgba(23, 19, 13, 0.78);
+  max-width: 640px;
+}
+.mcp2-modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.mcp2-mode {
+  padding: 10px 12px;
+  border: 1.5px solid rgba(122, 77, 208, 0.45);
+  border-radius: 4px;
+  background: rgba(122, 77, 208, 0.05);
+}
+.mcp2-mode b {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.6px;
+  color: #5b32a8;
+  margin-bottom: 4px;
+}
+.mcp2-mode span {
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(23, 19, 13, 0.7);
+}
+
+/* terminal blocks */
+.mcp2-term {
+  margin-top: 10px;
+  border: 1.5px solid #2a2140;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #171126;
+  box-shadow: 3px 3px 0 rgba(122, 77, 208, 0.25);
+}
+.mcp2-term-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  background: #211936;
+  border-bottom: 1px solid #2f2549;
+}
+.mcp2-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  opacity: 0.9;
+}
+.mcp2-dot.r {
+  background: #f8615e;
+}
+.mcp2-dot.y {
+  background: #f5bd4f;
+}
+.mcp2-dot.g {
+  background: #53c748;
+}
+.mcp2-term-title {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.8px;
+  color: #b7a8e0;
+  margin-left: 6px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcp2-term-tag {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  color: #8e7cc0;
+  border: 1px solid #443668;
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+.mcp2-term-tag.live {
+  color: #6ee7a0;
+  border-color: #2e6e4b;
+}
+.mcp2-term pre {
+  margin: 0;
+  padding: 12px 14px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #cdbff2;
+  overflow-x: auto;
+  max-height: 340px;
+  overflow-y: auto;
+  white-space: pre;
+}
+.mcp2-term-cmd pre {
+  color: #d9f2d0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.mcp2-prompt {
+  color: #6ee7a0;
+  font-weight: 700;
+}
+.mcp2-copy {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: #cdbff2;
+  background: rgba(122, 77, 208, 0.25);
+  border: 1px solid #5b467e;
+  border-radius: 3px;
+  padding: 3px 8px;
+  cursor: pointer;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+.mcp2-copy:hover {
+  background: rgba(122, 77, 208, 0.45);
+  color: #fff;
+}
+.mcp2-copy:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.mcp2-qs {
+  display: grid;
+  gap: 10px;
+}
+
+/* tool cards */
+.mcp2-tool {
+  margin-top: 16px;
+  padding: 14px 16px 16px;
+  border: 1.5px solid rgba(122, 77, 208, 0.5);
+  border-left: 4px solid #7a4dd0;
+  border-radius: 5px;
+  background: var(--card, #fffdf7);
+}
+.mcp2-tool.k-read {
+  border-left-color: #7a4dd0;
+}
+.mcp2-tool.k-write {
+  border-left-color: #b8860b;
+}
+.mcp2-tool.k-pay {
+  border-left-color: #0f766e;
+}
+.mcp2-tool.k-audit {
+  border-left-color: #b3564d;
+}
+.mcp2-tool-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.mcp2-tool-num {
+  font-size: 11px;
+  color: rgba(122, 77, 208, 0.75);
+  font-weight: 700;
+}
+.mcp2-tool-head b {
+  font-size: 14.5px;
+  color: #17130d;
+}
+.mcp2-badge {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 1.1px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid;
+}
+.mcp2-badge.k-read {
+  color: #5b32a8;
+  border-color: rgba(122, 77, 208, 0.6);
+  background: rgba(122, 77, 208, 0.07);
+}
+.mcp2-badge.k-write {
+  color: #8a6508;
+  border-color: rgba(184, 134, 11, 0.55);
+  background: rgba(184, 134, 11, 0.07);
+}
+.mcp2-badge.k-pay {
+  color: #0f766e;
+  border-color: rgba(15, 118, 110, 0.5);
+  background: rgba(15, 118, 110, 0.06);
+}
+.mcp2-badge.k-audit {
+  color: #a4433a;
+  border-color: rgba(179, 86, 77, 0.55);
+  background: rgba(179, 86, 77, 0.07);
+}
+.mcp2-tool-headline {
+  font-family: var(--serif);
+  font-size: 16.5px;
+  font-weight: 700;
+  margin: 8px 0 4px;
+}
+.mcp2-tool-detail {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: rgba(23, 19, 13, 0.72);
+  max-width: 620px;
+}
+.mcp2-params {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0 2px;
+}
+.mcp2-param {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+}
+.mcp2-param code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #5b32a8;
+  background: rgba(122, 77, 208, 0.08);
+  border: 1px solid rgba(122, 77, 208, 0.3);
+  border-radius: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+.mcp2-param span {
+  color: rgba(23, 19, 13, 0.65);
+}
+.mcp2-ask {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.mcp2-ask-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: rgba(23, 19, 13, 0.5);
+}
+.mcp2-ask-text {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 13.5px;
+  color: rgba(23, 19, 13, 0.85);
+}
+.mcp2-foot {
+  margin-top: 22px;
+  padding: 14px 16px;
+  border: 2px solid #7a4dd0;
+  border-radius: 5px;
+  background: rgba(122, 77, 208, 0.06);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.mcp2-foot-works {
+  font-size: 12.5px;
+  color: rgba(23, 19, 13, 0.75);
+}
+.mcp2-foot-note {
+  flex-basis: 100%;
+  font-size: 11.5px;
+  color: rgba(23, 19, 13, 0.6);
+}

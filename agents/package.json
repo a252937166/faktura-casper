@@ -14,6 +14,7 @@
     "format": "prettier --write \"src/**/*.ts\" \"scripts/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"scripts/**/*.ts\"",
     "typecheck": "tsc --noEmit",
+    "verify-receipt": "tsx scripts/verify-receipt.ts",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {

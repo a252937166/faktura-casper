@@ -40,6 +40,8 @@ import {
 import { config } from "./config.js";
 import { chain, LivenetError } from "./chain.js";
 import { underwrite as llmUnderwrite } from "./llm.js";
+import { buildDecisionMemo, hashDecisionMemo } from "./decision-memo.js";
+import { RELEASE } from "./release.js";
 import { db, upsertInvoice, type InvoiceRecord } from "./store.js";
 import { feed } from "./feed.js";
 import {
@@ -133,6 +135,8 @@ interface Session {
   poolAfter?: PoolSnap;
   /** Created via the smoke-test bypass header (self-test tooling). */
   smoke?: boolean;
+  /** HttpOnly client-cookie id — session OWNERSHIP (IP is rate-limit only). */
+  ownerCid?: string;
   ctx: {
     record?: InvoiceRecord;
     invoiceId?: number;
@@ -146,7 +150,15 @@ interface Session {
     /** Visitor's connected Casper wallet — the advance is paid HERE when set. */
     supplierOverride?: string;
     /** The purchased x402 risk report — consumed by the consumer-verdict step. */
-    report?: { invoiceId: number; riskScore: number; decisionHash: string };
+    report?: {
+      invoiceId: number;
+      riskScore: number;
+      discountBps: number;
+      decisionHash: string;
+      memo?: unknown;
+    };
+    /** The consumer agent's own verdict memo + hash — kept for the receipt. */
+    consumerVerdict?: { memo: unknown; hash: string };
     /** True while re-running a previously failed step — executors reconcile
      * against the chain first instead of blindly signing again. */
     retrying?: boolean;
@@ -183,7 +195,9 @@ function newDisplayId(id: string): string {
     d.getUTCDate(),
   ).padStart(2, "0")}`;
   seq += 1;
-  return `JUDGE-${ymd}-${id.slice(0, 4).toUpperCase()}`;
+  // 8 hex chars of the session uuid — 4 was short enough to collide across a
+  // long judging day, and this id is the receipt's public lookup key.
+  return `JUDGE-${ymd}-${id.slice(0, 8).toUpperCase()}`;
 }
 
 function publicStep(d: StepDef, status: StepStatus): JudgeStep {
@@ -243,7 +257,11 @@ async function cachedPool(ttlMs = 45_000): Promise<{ snap: PoolSnap | null; ok: 
       .catch(() => {
         // Cache a FAILURE for only ~10 s (not the full TTL) — one flaky read
         // must not pin the desk "paused" for 45 s.
-        poolCache = { ts: Date.now() - Math.max(0, ttlMs - 10_000), snap: poolCache.snap, ok: false };
+        poolCache = {
+          ts: Date.now() - Math.max(0, ttlMs - 10_000),
+          snap: poolCache.snap,
+          ok: false,
+        };
       })
       .finally(() => {
         poolInflight = null;
@@ -392,6 +410,7 @@ const PRESET_NEEDS: Record<string, Array<(typeof PERSONAS)[number]>> = {
   "policy-block": ["agent"],
   x402: ["agent", "debtor"], // buyer pays with the debtor key; the verdict anchors with the agent key
   default: ["collector"],
+  "ai-reject": ["agent"], // only the agent signs (the rejection attestation)
 };
 
 function personaGate(
@@ -497,6 +516,8 @@ async function health() {
             };
           })(),
     ),
+    // Only needs the agent key + deploy budget: nothing is registered or funded.
+    "ai-reject": gate("ai-reject", { ok: true }),
   };
   const activeId = order.filter((id) => sessions.get(id)?.status === "active").at(-1);
   return {
@@ -514,6 +535,7 @@ async function health() {
     pool,
     x402Price: config.x402.priceMotes,
     uptimeSec: Math.round((Date.now() - BOOT_TS) / 1000),
+    release: RELEASE,
     canRun,
     activeSession: activeId ? publicSession(sessions.get(activeId)!) : null,
   };
@@ -565,6 +587,20 @@ function intakeFor(preset: string, faceCspr: number, runId: string) {
       history: "8 prior invoices, all paid within terms, long-standing counterparty",
     };
   }
+  if (preset === "ai-reject") {
+    // Deliberately bad paper: a shell-company debtor with a disputed history
+    // and vague deliverables. The EXPECTED outcome is a rejection.
+    return {
+      supplierName: "QuickCash Factoring Ltd",
+      debtorName: "Meridian Shelf Holdings BV",
+      amountCspr: faceCspr,
+      dueTs: Date.now() + 90 * day,
+      invoiceNumber: runId,
+      description: "Consulting services, scope unspecified, delivered per verbal agreement",
+      history:
+        "new counterparty, incorporated 5 weeks ago; one prior invoice disputed and unpaid; registered address is a mail-forwarding office",
+    };
+  }
   return {
     supplierName: "Nordwind Logistics GmbH",
     debtorName: "Aurora Retail AG",
@@ -598,35 +634,65 @@ async function doUnderwrite(
   const docHash = `sha256:${sha256(JSON.stringify(input))}`;
   const debtorTag = `debtor:${sha256(input.debtorName.toLowerCase()).slice(0, 16)}`;
 
-  const { opinion, provider, model } = await llmUnderwrite({
-    supplierName: input.supplierName,
-    debtorName: input.debtorName,
-    amountCspr: input.amountCspr,
-    dueTs: input.dueTs,
+  // One underwriting attempt: LLM call + policy clamp (tightest of TS prefilter
+  // + on-chain policy for discount/risk). The policy-block preset narrows the
+  // discount band further ([0.5%, 4%]) so the advance is deterministic enough
+  // to clear the single-invoice cap no matter how the LLM prices it.
+  const attemptOnce = async () => {
+    const { opinion } = await llmUnderwrite({
+      supplierName: input.supplierName,
+      debtorName: input.debtorName,
+      amountCspr: input.amountCspr,
+      dueTs: input.dueTs,
+      invoiceNumber: input.invoiceNumber,
+      description: input.description,
+      history: input.history,
+    });
+    const p = config.policy;
+    const policyNotes: string[] = [];
+    let { approve, risk_score, discount_bps } = opinion;
+    const dMax = s.preset === "policy-block" ? Math.min(400, p.maxDiscountBps) : p.maxDiscountBps;
+    const clamped = Math.max(p.minDiscountBps, Math.min(dMax, discount_bps));
+    if (clamped !== discount_bps)
+      policyNotes.push(`discount clamped ${discount_bps} → ${clamped} bps`);
+    discount_bps = clamped;
+    if (risk_score > p.maxRiskScore) {
+      approve = false;
+      policyNotes.push(`risk ${risk_score} > prefilter max ${p.maxRiskScore}`);
+    }
+    return { opinion, approve, risk_score, discount_bps, policyNotes };
+  };
+
+  // Every preset has an EXPECTED verdict (ai-reject expects the NO; the others
+  // expect a YES). LLMs are not deterministic: an off-script verdict gets one
+  // silent same-input retry; twice off-script fails the step RETRYABLE — the
+  // walkthrough must never end as a false "done".
+  const expectReject = s.preset === "ai-reject";
+  const asExpected = (v: { approve: boolean }) => (expectReject ? !v.approve : v.approve);
+  let verdict = await attemptOnce();
+  if (!asExpected(verdict)) verdict = await attemptOnce();
+  if (!asExpected(verdict)) {
+    throw new Error(
+      expectReject
+        ? "The model approved this deliberately bad invoice — twice in a row. Testnet models have moods; hit Retry to ask again."
+        : "The model declined this clean invoice — twice in a row. Testnet models have moods; hit Retry to ask again.",
+    );
+  }
+  const { opinion, approve, risk_score, discount_bps, policyNotes } = verdict;
+
+  // The SAME canonical memo + hash as the production pipeline — the anchor
+  // covers the WHOLE opinion (rationale, red flags), so rewriting any of it
+  // after the fact breaks the on-chain match. Vendor-neutral identity.
+  const memo = buildDecisionMemo({
+    intakeId: s.id,
     invoiceNumber: input.invoiceNumber,
-    description: input.description,
-    history: input.history,
+    provider: "desk",
+    model: "autonomous-ai-underwriter",
+    opinion,
+    applied: { approve, risk_score, discount_bps },
+    policyNotes,
   });
-
-  // Policy clamp (tightest of TS prefilter + on-chain policy for discount/risk).
-  // The policy-block preset narrows the discount band further ([0.5%, 4%]) so
-  // the advance is deterministic enough to clear the single-invoice cap no
-  // matter how the LLM prices it (see policyBlockPlan).
-  const p = config.policy;
-  let { approve, risk_score, discount_bps } = opinion;
-  const dMax = s.preset === "policy-block" ? Math.min(400, p.maxDiscountBps) : p.maxDiscountBps;
-  discount_bps = Math.max(p.minDiscountBps, Math.min(dMax, discount_bps));
-  if (risk_score > p.maxRiskScore) approve = false;
-
-  const decisionHash = `sha256:${sha256(
-    JSON.stringify({
-      id: s.id,
-      input,
-      applied: { approve, risk_score, discount_bps },
-      provider,
-      model,
-    }),
-  )}`;
+  const decisionHash = hashDecisionMemo(memo);
 
   const record: InvoiceRecord = {
     id: 0,
@@ -650,11 +716,12 @@ async function doUnderwrite(
       discountBps: discount_bps,
       rationale: opinion.rationale,
       redFlags: opinion.red_flags,
-      policyNotes: [],
+      policyNotes,
       model: "autonomous-ai-underwriter",
       decisionHash,
       decidedTs: Date.now(),
     },
+    memo,
     chain: { attestHashes: [] },
   };
   upsertInvoice(record);
@@ -675,9 +742,10 @@ async function doUnderwrite(
   };
 
   if (!approve) {
+    // Only the ai-reject preset reaches this branch (an unexpected NO throws
+    // above): the rejection IS the story, and the next step anchors it on-chain.
     return {
-      result: `AI REJECTED — risk ${risk_score}/100 (${opinion.red_flags.join("; ") || "over policy"})`,
-      reverted: true,
+      result: `AI REJECTED — risk ${risk_score}/100 (${opinion.red_flags.join("; ") || "over policy"}). Decision hash ${decisionHash.slice(0, 20)}…`,
       decision: card,
     };
   }
@@ -781,7 +849,7 @@ function fundBookkeeping(s: Session, tx?: string) {
   if (s.ctx.supplierOverride && !s.ctx.payoutCommitted) {
     dest = `FUNDED — the advance just landed in YOUR wallet (${s.ctx.supplierOverride.slice(0, 10)}…). Check your balance.`;
     const advanceCspr = (r.intake.amountCspr * (10_000 - (r.decision?.discountBps ?? 0))) / 10_000;
-    commitPayout(s.id, advanceCspr);
+    commitPayout(s.id, advanceCspr, { wallet: s.ctx.supplierOverride, ip: s.ip });
     s.ctx.payoutCommitted = true;
   }
   return { result: dest, txHash: r.chain.fundHash };
@@ -894,6 +962,37 @@ async function stepAttest(s: Session) {
   };
 }
 
+/** ai-reject finale: anchor the REJECTION memo. subject_id is 0 on purpose —
+ * the invoice was declined before registration, so it never minted an id. */
+async function stepAttestReject(s: Session) {
+  const r = s.ctx.record!;
+  const pending = s.ctx.pendingTx?.["attest-reject"];
+  if (s.ctx.retrying && pending) {
+    const status = await checkTxSuccess(pending);
+    if (status === "success") {
+      r.chain.attestHashes.push(pending);
+      upsertInvoice(r);
+      return {
+        result: `Rejection memo hash anchored on-chain (recovered — the earlier deploy landed)`,
+        txHash: pending,
+      };
+    }
+  }
+  const att = await chain.attest(
+    "UNDERWRITE_REJECT",
+    0,
+    r.decision!.decisionHash,
+    "autonomous-ai-underwriter",
+  );
+  const tx = att.deployHashes.at(-1);
+  r.chain.attestHashes.push(tx ?? "");
+  upsertInvoice(r);
+  return {
+    result: `Rejection anchored on-chain (attestation #${att.result.attestationId}) — the memo hash covers the rationale and every red flag, so even the NO is auditable`,
+    txHash: tx,
+  };
+}
+
 /**
  * Risk reports are priced per UNDERWRITTEN invoice, not per funded one — a
  * settled or even defaulted receivable still has a verifiable decision memo
@@ -953,7 +1052,9 @@ async function stepX402(s: Session) {
       s.ctx.report = {
         invoiceId: id,
         riskScore: Number(rep.riskScore),
+        discountBps: Number(rep.discountBps),
         decisionHash: String(rep.decisionHash),
+        memo: rep.memo ?? null,
       };
       return {
         result: `Report delivered for ${cspr(s.ctx.x402AmountMotes ?? config.x402.priceMotes)} CSPR — risk ${rep.riskScore}, decision ${String(rep.decisionHash).slice(0, 18)}…`,
@@ -972,49 +1073,140 @@ async function stepX402(s: Session) {
  * applies its own acceptance policy, and anchors its verdict on-chain —
  * closing the loop: produce → sell → verify → act.
  */
+/** The consumer's OWN verification policy — every check it performs, hashed
+ * and anchored as ITS verdict (not a re-anchor of the underwriter's hash). */
+export function consumerChecks(
+  rep: {
+    invoiceId: number;
+    riskScore: number;
+    discountBps: number;
+    decisionHash: string;
+    memo?: unknown;
+  },
+  local: { decisionHash: string; riskScore: number; discountBps: number } | null,
+  onchain: { decisionHash: string; riskScore: number; discountBps: number } | null,
+) {
+  // Strongest check first: re-hash the memo DOCUMENT the oracle shipped —
+  // trusting the oracle's own hash claim would be circular.
+  const recomputed = rep.memo ? hashDecisionMemo(rep.memo as never) === rep.decisionHash : null;
+  const localHash = !!local && local.decisionHash === rep.decisionHash;
+  const chainHash = !!onchain && onchain.decisionHash === rep.decisionHash;
+  // Field binding: the numbers in the report must be THE numbers the memo and
+  // the contract carry — a "keep the hash, tweak the score" oracle fails here.
+  const localRisk = !!local && local.riskScore === rep.riskScore;
+  const chainRisk = !!onchain && onchain.riskScore === rep.riskScore;
+  const localDiscount = !!local && local.discountBps === rep.discountBps;
+  const chainDiscount = !!onchain && onchain.discountBps === rep.discountBps;
+  const riskOk = rep.riskScore <= 35;
+  const accepted =
+    recomputed !== false &&
+    localHash &&
+    chainHash &&
+    localRisk &&
+    chainRisk &&
+    localDiscount &&
+    chainDiscount &&
+    riskOk;
+  return {
+    recomputed,
+    localHash,
+    chainHash,
+    localRisk,
+    chainRisk,
+    localDiscount,
+    chainDiscount,
+    riskOk,
+    accepted,
+  };
+}
+
 async function stepConsumerVerdict(s: Session) {
   const rep = s.ctx.report;
   if (!rep) throw new Error("no purchased report in this session — run the x402 step first");
-  // THREE-WAY verification — the whole point of an auditable oracle:
-  //   1. the hash inside the purchased report
-  //   2. the desk's local decision memo
-  //   3. the anchor the CONTRACT stores for this invoice (read on-chain now)
-  const local = db.invoices.find((r) => r.id === rep.invoiceId && r.decision);
-  const localMatch = !!local && local.decision!.decisionHash === rep.decisionHash;
-  const onchainInv = await chain.invoice(rep.invoiceId).catch(() => null);
-  const chainMatch = !!onchainInv && onchainInv.decisionHash === rep.decisionHash;
-  const riskOk = rep.riskScore <= 35;
-  const accepted = localMatch && chainMatch && riskOk;
-  const verdict = accepted ? "ACCEPT" : "REJECT";
-  let tx: string | undefined;
-  let anchored = "";
-  if (accepted) {
-    const att = await chain.attest(
-      "CREDIT_REPORT_ACCEPTED",
-      rep.invoiceId,
-      rep.decisionHash,
-      "consumer-agent",
-    );
-    tx = att.deployHashes.at(-1);
-    anchored = ` — acceptance anchored by the desk's attestation relay (attestation #${att.result.attestationId})`;
+  // Idempotent retry: if the earlier verdict attest landed, recover it.
+  const pending = s.ctx.pendingTx?.consumer;
+  if (s.ctx.retrying && pending) {
+    const status = await checkTxSuccess(pending);
+    if (status === "success") {
+      return {
+        result: `Consumer verdict anchored (recovered — the earlier deploy landed)`,
+        txHash: pending,
+      };
+    }
   }
-  const checks = `report↔memo ${localMatch ? "MATCH" : "MISMATCH"} · report↔on-chain ${chainMatch ? "MATCH" : "MISMATCH"} · risk ${rep.riskScore} ${riskOk ? "≤" : ">"} 35`;
+  const local = db.invoices.find((r) => r.id === rep.invoiceId && r.decision);
+  const onchainInv = await chain.invoice(rep.invoiceId).catch(() => null);
+  const c = consumerChecks(
+    rep,
+    local?.decision
+      ? {
+          decisionHash: local.decision.decisionHash,
+          riskScore: local.decision.riskScore,
+          discountBps: local.decision.discountBps,
+        }
+      : null,
+    onchainInv
+      ? {
+          decisionHash: onchainInv.decisionHash,
+          riskScore: onchainInv.riskScore,
+          discountBps: onchainInv.discountBps,
+        }
+      : null,
+  );
+  const verdict = c.accepted ? "ACCEPT" : "REJECT";
+  // The consumer anchors ITS OWN verdict memo — its checks, its policy, its
+  // decision — not merely a re-anchor of the underwriter's hash.
+  const verdictMemo = {
+    schema: "faktura.consumer-verdict.v1",
+    reportDecisionHash: rep.decisionHash,
+    memoRecomputedMatch: c.recomputed,
+    localHashMatch: c.localHash,
+    onchainHashMatch: c.chainHash,
+    riskFieldMatch: c.localRisk && c.chainRisk,
+    discountFieldMatch: c.localDiscount && c.chainDiscount,
+    riskScore: rep.riskScore,
+    consumerMaxRisk: 35,
+    verdict,
+    decidedAt: new Date().toISOString(),
+  };
+  const verdictHash = `sha256:${sha256(JSON.stringify(verdictMemo))}`;
+  s.ctx.consumerVerdict = { memo: verdictMemo, hash: verdictHash };
+  // BOTH outcomes go on-chain — a rejection is a decision too.
+  const att = await chain.attest(
+    c.accepted ? "CREDIT_REPORT_ACCEPTED" : "CREDIT_REPORT_REJECTED",
+    rep.invoiceId,
+    verdictHash,
+    "consumer-agent",
+  );
+  const tx = att.deployHashes.at(-1);
+  const checks = [
+    c.recomputed === null ? null : `memo re-hash ${c.recomputed ? "MATCH" : "MISMATCH"}`,
+    `report↔memo ${c.localHash ? "MATCH" : "MISMATCH"}`,
+    `report↔on-chain ${c.chainHash ? "MATCH" : "MISMATCH"}`,
+    `risk/discount fields ${c.localRisk && c.chainRisk && c.localDiscount && c.chainDiscount ? "BOUND" : "MISMATCH"}`,
+    `risk ${rep.riskScore} ${c.riskOk ? "≤" : ">"} 35`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return {
-    result: `Consumer verdict: ${verdict} — ${checks}${anchored}`,
+    result: `Consumer verdict: ${verdict} — ${checks} — verdict memo anchored (attestation #${att.result.attestationId})`,
     txHash: tx,
     decision: {
-      verdict: (accepted ? "APPROVE" : "REJECT") as DecisionCard["verdict"],
+      verdict: (c.accepted ? "APPROVE" : "REJECT") as DecisionCard["verdict"],
       riskScore: rep.riskScore,
-      discountBps: 0,
-      rationale: accepted
-        ? "The purchased report's hash matches BOTH the desk's local memo and the anchor stored by the Casper contract, and the risk score clears the consumer's own policy (≤ 35). The consumer agent decides; the desk's attestation relay records the acceptance on-chain."
-        : `The purchased report failed the consumer agent's checks (${checks}) — no acceptance is recorded.`,
+      discountBps: rep.discountBps,
+      rationale: c.accepted
+        ? "The consumer re-hashed the shipped memo document, matched it against the desk's copy AND the anchor read from the Casper contract, verified the risk/discount fields are hash-bound, and cleared its own policy (risk ≤ 35). Its verdict memo is anchored on-chain by the attestation relay."
+        : `The purchased report failed the consumer agent's checks (${checks}) — the REJECTION is anchored on-chain too.`,
       redFlags: [
-        ...(localMatch ? [] : ["local memo hash mismatch"]),
-        ...(chainMatch ? [] : ["on-chain anchor mismatch"]),
+        ...(c.recomputed === false ? ["memo re-hash mismatch"] : []),
+        ...(c.localHash ? [] : ["local memo hash mismatch"]),
+        ...(c.chainHash ? [] : ["on-chain anchor mismatch"]),
+        ...(c.localRisk && c.chainRisk ? [] : ["risk score not hash-bound"]),
+        ...(c.localDiscount && c.chainDiscount ? [] : ["discount not hash-bound"]),
       ],
       model: "consumer-agent",
-      decisionHash: rep.decisionHash,
+      decisionHash: verdictHash,
     },
   };
 }
@@ -1304,11 +1496,39 @@ function defaultDefs(): StepDef[] {
   ];
 }
 
+function aiRejectDefs(): StepDef[] {
+  return [
+    {
+      key: "underwrite",
+      actor: "underwriter",
+      kind: "compute",
+      title: "AI underwrites a suspicious invoice",
+      action: "Score & price it",
+      what: "A shell-company debtor, a disputed payment history, vague deliverables — the model reads the paper and declines it, with reasons.",
+      who: "Autonomous underwriter agent",
+      why: "Gate 1 has two exits. This is the other one: an autonomous desk is only credible if it can say NO. Instant — no gas.",
+      run: (s) => doUnderwrite(s),
+    },
+    {
+      key: "attest-reject",
+      actor: "underwriter",
+      kind: "chain",
+      title: "Anchor the REJECTION on-chain",
+      action: "Sign attest",
+      what: "attest writes UNDERWRITE_REJECT with the SHA-256 of the full decision memo — rationale and red flags included.",
+      who: "Underwriter agent key",
+      why: "An auditable desk proves what it declined, not only what it funded. Nothing was registered, nothing was paid — only the refusal is on the record.",
+      run: stepAttestReject,
+    },
+  ];
+}
+
 function defsFor(preset: string): StepDef[] {
   if (preset === "happy") return happyDefs();
   if (preset === "policy-block") return policyBlockDefs();
   if (preset === "x402") return x402Defs();
   if (preset === "default") return defaultDefs();
+  if (preset === "ai-reject") return aiRejectDefs();
   throw new Error(`unknown preset ${preset}`);
 }
 
@@ -1341,6 +1561,13 @@ const PRESETS = [
     steps: 2,
     defs: defaultDefs,
   },
+  {
+    id: "ai-reject",
+    title: "AI declines",
+    subtitle: "The model says no to bad paper — and even the no is anchored",
+    steps: 2,
+    defs: aiRejectDefs,
+  },
 ];
 
 // ---- rate limiting ----------------------------------------------------------
@@ -1365,6 +1592,34 @@ function clientIp(req: Request): string {
   // With app.set("trust proxy", 1) express derives this from the rightmost
   // proxy hop — not from a client-forgeable header we parse ourselves.
   return req.ip || "unknown";
+}
+
+/**
+ * Session OWNERSHIP rides an HttpOnly cookie, not the IP: office/hotel NATs
+ * put many people behind one address, and none of them should be able to see
+ * or supersede each other's runs. The IP stays for rate limiting only. When
+ * the cookie is absent (older clients, cross-origin dev), ownership falls
+ * back to the IP — strictly no worse than before.
+ */
+function clientCid(req: Request, res?: { setHeader(n: string, v: string): void }): string {
+  const m = /(?:^|;\s*)fj_cid=([a-f0-9-]{8,64})/.exec(String(req.headers.cookie ?? ""));
+  if (m) return m[1];
+  if (res) {
+    const cid = crypto.randomUUID();
+    res.setHeader(
+      "Set-Cookie",
+      `fj_cid=${cid}; Path=/api/judge; HttpOnly; SameSite=Strict; Max-Age=86400`,
+    );
+    return cid;
+  }
+  return "";
+}
+
+/** True when the request provably belongs to the session's creator. */
+function isOwner(s: Session, req: Request): boolean {
+  const cid = clientCid(req);
+  if (s.ownerCid && cid) return s.ownerCid === cid;
+  return s.ip === clientIp(req);
 }
 
 function endSession(s: Session, status: "done" | "failed", note?: string) {
@@ -1422,8 +1677,9 @@ export function makeJudgeRouter(): Router {
       const h = await cachedHealth();
       // The active walkthrough (with its resume token) is only shown to the IP
       // that created it — strangers see a busy flag, not someone else's run.
-      const mine = h.activeSession && sessions.get(h.activeSession.id)?.ip === clientIp(req);
-      const active = mine ? sessions.get(h.activeSession!.id)! : null;
+      const mineSess = h.activeSession ? sessions.get(h.activeSession.id) : undefined;
+      const mine = !!mineSess && isOwner(mineSess, req);
+      const active = mine ? mineSess! : null;
       res.json({
         ...h,
         activeSession: active ? { ...publicSession(active), token: active.token } : null,
@@ -1476,7 +1732,7 @@ export function makeJudgeRouter(): Router {
     // Resuming counts as activity — only for the owner (token or creator IP),
     // so a stranger polling a leaked id cannot keep someone's session alive.
     const tok = String(req.headers["x-judge-token"] ?? "");
-    if (s.status === "active" && (tok === s.token || s.ip === clientIp(req))) {
+    if (s.status === "active" && (tok === s.token || isOwner(s, req))) {
       s.lastActivityTs = Date.now();
       touchPosition(s.id);
     }
@@ -1489,20 +1745,39 @@ export function makeJudgeRouter(): Router {
   });
 
   // One receipt as a downloadable proof document (curl-able by a judge).
+  // Canonical faktura.credit-receipt.v1: receiptHash is the SHA-256 of the
+  // JSON body WITHOUT the receiptHash field (which is appended last, so
+  // `const { receiptHash, ...body } = doc` reproduces the hashed bytes).
+  // `npm run verify-receipt -- file.json` re-checks it offline, memo included.
   r.get("/recent/:displayId", (req, res) => {
     const run = recentRuns(10).find((x) => x.displayId === req.params.displayId);
     if (!run) {
       res.status(404).json({ error: "no receipt with that id in the recent window" });
       return;
     }
-    res.setHeader("Content-Disposition", `attachment; filename="${run.displayId}.json"`);
-    res.json({
-      ...run,
+    const body = {
+      schema: "faktura.credit-receipt.v1",
+      displayId: run.displayId,
+      preset: run.preset,
+      title: run.title,
+      endedTs: run.endedTs,
+      wallet: run.wallet ?? null,
+      invoiceId: run.invoiceId ?? null,
+      faceCspr: run.faceCspr ?? null,
+      decisionHash: run.decisionHash ?? null,
+      memo: run.memo ?? null,
+      consumerVerdict: run.consumerVerdict ?? null,
+      poolBefore: run.poolBefore ?? null,
+      poolAfter: run.poolAfter ?? null,
+      steps: run.steps,
       contract: config.contract,
       chain: config.chainName,
       explorer,
-      generatedAt: new Date().toISOString(),
-    });
+      release: RELEASE,
+    };
+    const receiptHash = `sha256:${sha256(JSON.stringify(body))}`;
+    res.setHeader("Content-Disposition", `attachment; filename="${run.displayId}.json"`);
+    res.json({ ...body, receiptHash });
   });
 
   // Create a guided session (does not sign anything yet).
@@ -1510,7 +1785,9 @@ export function makeJudgeRouter(): Router {
     const preset = String(req.body?.preset ?? "").trim();
     const def = PRESETS.find((p) => p.id === preset);
     if (!def) {
-      res.status(400).json({ error: "preset must be happy | policy-block | x402" });
+      res
+        .status(400)
+        .json({ error: "preset must be happy | policy-block | x402 | default | ai-reject" });
       return;
     }
     // Optional: the visitor's connected Casper wallet public key. Only the
@@ -1529,15 +1806,27 @@ export function makeJudgeRouter(): Router {
       if (preset === "happy") supplierOverride = rawWallet.toLowerCase();
     }
     const ip = clientIp(req);
+    const cid = clientCid(req, res);
     const smoke = isSmoke(req);
     const existing = activeSession();
+    const mine =
+      !!existing && (existing.ownerCid && cid ? existing.ownerCid === cid : existing.ip === ip);
     // Same visitor (e.g. refreshed the page) — abandon their old session and
-    // start fresh, so they are never locked out. A DIFFERENT visitor holds the
-    // desk while they are actively clicking; once idle past the takeover
-    // window (and nothing is signing), the desk frees up.
-    if (existing && existing.ip === ip) {
+    // start fresh, so they are never locked out. EXCEPT while a transaction
+    // is signing or settling: superseding then would release a payout
+    // reservation whose transfer may still land (ledger corruption).
+    if (existing && mine) {
+      const settling = STEPPING || existing.steps.some((st) => st.status === "running");
+      if (settling) {
+        res.status(409).json({
+          error:
+            "Your existing walkthrough has a transaction still settling — resume it instead of starting a new one.",
+          session: publicSession(existing),
+        });
+        return;
+      }
       endSession(existing, "failed", "Replaced by a new walkthrough.");
-    } else if (existing && existing.ip !== ip) {
+    } else if (existing && !mine) {
       const idleMs = Date.now() - existing.lastActivityTs;
       if (STEPPING || idleMs < IDLE_TAKEOVER_MS) {
         res.status(429).json({
@@ -1623,6 +1912,7 @@ export function makeJudgeRouter(): Router {
       startedTs: Date.now(),
       lastActivityTs: Date.now(),
       ip,
+      ownerCid: cid || undefined,
       smoke,
       poolBefore: (await cachedPool()).snap ?? undefined,
       ctx: { supplierOverride },
@@ -1726,6 +2016,14 @@ export function makeJudgeRouter(): Router {
             explorerUrl: st.explorerUrl,
             result: st.result,
           })),
+          // credit-receipt.v1 enrichment — everything a verifier re-hashes
+          invoiceId: s.ctx.record?.id ?? s.ctx.report?.invoiceId,
+          faceCspr: s.ctx.record?.intake.amountCspr,
+          memo: s.ctx.record?.memo ?? s.ctx.report?.memo ?? null,
+          decisionHash: s.ctx.record?.decision?.decisionHash ?? s.ctx.report?.decisionHash,
+          consumerVerdict: s.ctx.consumerVerdict,
+          poolBefore: s.poolBefore ?? null,
+          poolAfter: s.poolAfter ?? null,
         });
       } else {
         s.steps[s.cursor].status = "ready";
@@ -1797,7 +2095,9 @@ const SEED_COOLDOWN_MS = 10 * 60_000;
 
 async function replenishDefaultInventory(): Promise<boolean> {
   if (Date.now() - lastSeedTs < SEED_COOLDOWN_MS) return false;
-  if (!canSignDeploy().ok) return false;
+  // Seeding signs TWO deploys (register + fund) — starting it with one budget
+  // slot left would strand a registered-but-unfunded invoice.
+  if (!canSignDeploy(2).ok) return false;
   const book = await cachedBook().catch(() => [] as BookInvoice[]);
   const hasOverdue = overdueFunded(book).length > 0;
   const hasRipening = book.some(
@@ -1807,25 +2107,95 @@ async function replenishDefaultInventory(): Promise<boolean> {
       i.dueTs < Date.now() + 5 * 60_000,
   );
   if (hasOverdue || hasRipening) return false;
-  lastSeedTs = Date.now();
   STEPPING = true;
   try {
     const supplier = await chain.caller("supplier");
     const now = Date.now();
+    // REAL hashes, same canonical pipeline as every other invoice: a seed doc
+    // that says exactly what this is, and a decision memo whose SHA-256 is the
+    // on-chain decisionHash — so x402 buyers of THIS invoice's report get a
+    // memo that re-hashes to the anchor, like any customer receivable.
+    const seedDoc = {
+      schema: "faktura.default-seed.v1",
+      supplierName: "Faktura Desk — inventory seed",
+      debtorName: "Overdue Demo Debtor Sp. z o.o.",
+      amountCspr: 2,
+      dueTs: now + 60_000,
+      invoiceNumber: `seed-${now}`,
+      description:
+        "Short-dated 2 CSPR seed receivable: keeps the default-workout walkthrough playable by ripening into an overdue position within a minute.",
+      history: "deliberately short-dated; expected to expire unpaid and be written off",
+      createdAt: new Date(now).toISOString(),
+    };
+    const docHash = `sha256:${sha256(JSON.stringify(seedDoc))}`;
+    const memo = buildDecisionMemo({
+      intakeId: seedDoc.invoiceNumber,
+      invoiceNumber: seedDoc.invoiceNumber,
+      provider: "desk",
+      model: "inventory-seeder",
+      opinion: {
+        approve: true,
+        risk_score: 20,
+        discount_bps: 200,
+        rationale:
+          "Inventory seed, not a customer receivable: a deliberately short-dated 2 CSPR invoice funded so the default-workout preset always has an overdue position for the collector to write off.",
+        red_flags: ["short-dated by design", "expected to default"],
+      },
+      applied: { approve: true, risk_score: 20, discount_bps: 200 },
+      policyNotes: ["inventory seed — auto-approved by the desk, sized at the demo minimum"],
+    });
+    const decisionHash = hashDecisionMemo(memo);
     recordDeploy("seed:register");
     const reg = await chain.register({
       supplier,
       debtorTag: "debtor:defaultseed",
-      docHash: `sha256:seed-default-${now}`,
+      docHash,
       faceMotes: toMotes(2),
-      dueTs: now + 60_000,
+      dueTs: seedDoc.dueTs,
       risk: 20,
       discountBps: 200,
-      decisionHash: `sha256:seed-default-decision-${now}`,
+      decisionHash,
     });
     recordDeploy("seed:fund");
-    await chain.fund(reg.result.invoiceId);
+    const fund = await chain.fund(reg.result.invoiceId);
+    // The local record makes the seed EXPLAINABLE: risk reports, receipts and
+    // consumer verification read the memo + rationale from here.
+    upsertInvoice({
+      id: reg.result.invoiceId,
+      intakeId: seedDoc.invoiceNumber,
+      status: "funded",
+      intake: {
+        supplierName: seedDoc.supplierName,
+        debtorName: seedDoc.debtorName,
+        debtorTag: "debtor:defaultseed",
+        amountCspr: seedDoc.amountCspr,
+        dueTs: seedDoc.dueTs,
+        invoiceNumber: seedDoc.invoiceNumber,
+        description: seedDoc.description,
+        history: seedDoc.history,
+        docHash,
+        receivedTs: now,
+      },
+      memo,
+      decision: {
+        approve: true,
+        riskScore: 20,
+        discountBps: 200,
+        rationale: memo.opinion.rationale,
+        redFlags: memo.opinion.red_flags,
+        policyNotes: memo.policyNotes,
+        model: "inventory-seeder",
+        decisionHash,
+        decidedTs: now,
+      },
+      chain: {
+        registerHash: reg.deployHashes.at(-1),
+        fundHash: fund.deployHashes.at(-1),
+        attestHashes: [],
+      },
+    });
     bookCache.ts = 0;
+    lastSeedTs = Date.now(); // full cooldown only after a SUCCESSFUL seed
     feed.publish({
       actor: "collector",
       kind: "onchain",
@@ -1834,6 +2204,9 @@ async function replenishDefaultInventory(): Promise<boolean> {
     });
     return true;
   } catch (e) {
+    // Short backoff (2 min) instead of the full cooldown: a transient RPC blip
+    // must not leave the default preset unplayable for 10 minutes.
+    lastSeedTs = Date.now() - SEED_COOLDOWN_MS + 2 * 60_000;
     feed.publish({
       actor: "system",
       kind: "error",

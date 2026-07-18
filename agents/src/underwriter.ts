@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { chain } from "./chain.js";
 import { config } from "./config.js";
+import { buildDecisionMemo, hashDecisionMemo } from "./decision-memo.js";
 import { feed } from "./feed.js";
 import { underwrite as llmUnderwrite } from "./llm.js";
 import { db, upsertInvoice, type InvoiceRecord } from "./store.js";
@@ -174,17 +175,19 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
     }
   }
 
-  const memo = {
+  // ONE canonical memo shape + hash, shared with the Live Judge path — the
+  // anchor covers the FULL opinion (rationale, red flags), not just numbers.
+  const memo = buildDecisionMemo({
     intakeId,
     invoiceNumber: input.invoiceNumber,
-    decidedAt: new Date().toISOString(),
     provider,
     model,
     opinion,
     applied: { approve, risk_score, discount_bps },
     policyNotes,
-  };
-  const decisionHash = `sha256:${sha256(JSON.stringify(memo))}`;
+  });
+  const decisionHash = hashDecisionMemo(memo);
+  record.memo = memo;
 
   if (!approve) {
     return finalizeReject(record, {

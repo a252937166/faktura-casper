@@ -44,7 +44,20 @@ hits a dead button. Design notes:
 
 The transactions in this file were produced by exactly these code paths.
 
-### Pre-freeze smoke matrix — the guided walkthrough, verified end to end (2026-07-18)
+### v0.2.4-final verification matrix — all five presets (2026-07-18)
+
+Re-verified after the audit-5 hardening: the anchored decision hash now covers
+the FULL memo (rationale + red flags — tamper with one character and the
+on-chain match breaks), the x402 consumer re-hashes the shipped memo document
+and binds the risk/discount fields, rejections anchor too, and the fifth
+preset shows the AI declining bad paper. Same public guided API, production
+desk, real transactions:
+
+| Run | Steps | Key transactions |
+|---|---|---|
+| _This matrix is refreshed by the post-deploy smoke of v0.2.4-final — see the tables below for the v0.2.1–v0.2.3 evidence trail._ | | |
+
+### Legacy matrix (v0.2.1 evidence) — the guided walkthrough, verified end to end (2026-07-18)
 
 Every preset was driven through the PUBLIC guided API against the production
 desk, the way a judge would click it. Freshly generated visitor wallets (not
@@ -64,8 +77,8 @@ Casper key schemes. The budgets did their job during the matrix: payouts
 completed run is always visible on the homepage ("LATEST LIVE RUN")
 and at `/api/judge/recent`.
 
-The same evening, three more guided runs verified the credit-lifecycle
-completions — **the revert you trigger now links itself**, the x402 buyer
+The same evening (v0.2.2–v0.2.3 evidence), three more guided runs verified
+the credit-lifecycle completions — **the revert you trigger now links itself**, the x402 buyer
 **acts** on what it bought, and the collector processes a real loss:
 
 | Run | Steps | Key transactions |

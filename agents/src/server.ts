@@ -11,6 +11,7 @@ import { startCollector } from "./collector.js";
 import { x402Gate } from "./x402.js";
 import { getSeed } from "./chain-showcase.js";
 import { makeJudgeRouter } from "./judge.js";
+import { RELEASE } from "./release.js";
 import type { FeedEvent } from "./feed.js";
 import type { InvoiceRecord } from "./store.js";
 
@@ -214,6 +215,9 @@ app.get("/api/risk/:id", requireRiskReport, x402Gate(), async (req, res) => {
     redFlags: decision.redFlags,
     rationale: decision.rationale,
     decisionHash: decision.decisionHash,
+    // The FULL canonical memo (faktura.decision.v1) when available — buyers
+    // re-hash this document themselves instead of trusting our hash claim.
+    memo: record.memo ?? null,
     onchain: {
       state: inv.state,
       faceValue: inv.faceValue,
@@ -315,6 +319,7 @@ app.get("/api/meta", async (_req, res) => {
         maxPoolShareBps: config.policy.maxPoolShareBps,
       },
       supplier,
+      release: RELEASE,
     };
   }
   res.json(metaCache);

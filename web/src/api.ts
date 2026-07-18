@@ -85,6 +85,8 @@ export interface Meta {
     maxPoolShareBps: number;
   };
   supplier: string | null;
+  /** Deploy-time provenance: pin any observed behavior to an exact commit. */
+  release?: { release: string; gitSha: string; builtAt: string };
 }
 
 export interface X402Challenge {
