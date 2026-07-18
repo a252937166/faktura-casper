@@ -143,12 +143,15 @@ Three ways to see Faktura, honestly labeled (the UI shows the active mode in a
 banner):
 
 - **🟢 Live Testnet Judge Mode** — on [faktura.axiqo.xyz](https://faktura.axiqo.xyz)
-  click **Run Real Testnet Workflow**. Each preset drives the *full* lifecycle as
+  click **▶ Use the real AI desk**. Each preset drives the *full* lifecycle as
   **real Casper Testnet transactions** with a CSPR.live link on every step —
-  no simulation. Three presets: the happy path (submit → AI underwrite →
+  no simulation. Four presets: the happy path (submit → AI underwrite →
   register → fund → attest → x402 purchase → settle), the **policy firewall**
   (the AI approves an oversized invoice and the *contract* reverts funding with
-  `SingleInvoiceCapExceeded`), and a standalone x402 report purchase. Walkthroughs are
+  `SingleInvoiceCapExceeded` — the failed transaction links right there), an
+  x402 story where the buyer agent pays, **verifies and acts** on the report
+  (anchoring `CREDIT_REPORT_ACCEPTED`), and a **default workout** where the
+  collector key writes off an overdue invoice and LPs absorb the loss. Walkthroughs are
   preset-only and small-capped, signed by pre-funded testnet-only demo keys;
   wallet payouts are budgeted (reserved before signing; one per wallet & per IP
   each 24 h plus a global daily cap), every signed step draws on a daily gas

@@ -56,6 +56,8 @@ export interface OpenPosition {
   displayId: string;
   invoiceId: number;
   faceMotes: string;
+  /** invoice due date — overdue positions are default-workout inventory, not cleanup targets */
+  dueTs?: number;
   fundedTs: number;
   /** bumped whenever the owning session shows signs of life */
   lastTouchTs: number;
@@ -108,6 +110,7 @@ export const CAPS = {
     happy: Number(process.env.JUDGE_HAPPY_PER_DAY ?? 12),
     "policy-block": Number(process.env.JUDGE_POLICY_PER_DAY ?? 10),
     x402: Number(process.env.JUDGE_X402_PER_DAY ?? 15),
+    default: Number(process.env.JUDGE_DEFAULT_PER_DAY ?? 8),
   } as Record<string, number>,
 };
 

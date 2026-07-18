@@ -19,6 +19,7 @@ make test              # everything CI runs
 make x402-facilitator-demo   # x402 purchase via the reference facilitator (needs funded keys)
 ```
 
-And on the live showcase: press **▶ Run a real Testnet story**, then submit the
-**Policy-cap rejection** preset — the AI approves it, and the contract's
-single-invoice cap blocks the funding in front of you.
+And on the live site: press **▶ Use the real AI desk**, then run the
+**Policy firewall** preset — the AI approves it, the contract's single-invoice
+cap blocks the funding in front of you, and the reverted transaction links
+right there.
