@@ -45,26 +45,152 @@ const ACTOR_ICON: Record<string, string> = {
   system: "⚙",
 };
 
-/** A minimal ring-C mark honouring the Casper brand — inline, themeable. */
-function CasperMark({ size = 16 }: { size?: number }) {
+/**
+ * The OFFICIAL Casper Network wordmark (red RGB variant from casper.network),
+ * served from /public so the brand reads exactly as Casper draws it — the
+ * homepage highlights the chain, not our imitation of it.
+ */
+function CasperWordmark({ height = 18 }: { height?: number }) {
   return (
-    <svg
-      viewBox="0 0 32 32"
-      width={size}
-      height={size}
-      role="img"
-      aria-label="Casper"
-      className="casper-mark"
-    >
-      <circle cx="16" cy="16" r="13.4" fill="none" stroke="currentColor" strokeWidth="3.4" />
-      <path
-        d="M22.8 10.9a8.6 8.6 0 1 0 .1 10.1"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="3.4"
-        strokeLinecap="round"
-      />
-    </svg>
+    <img
+      className="casper-wordmark"
+      src="/casper-wordmark-red.png"
+      alt="Casper"
+      style={{ height }}
+    />
+  );
+}
+
+/**
+ * The header wallet chip, grown up: clicking it opens a small wallet menu
+ * (copy address, refresh balance, explorer account view, faucet, disconnect)
+ * instead of instantly disconnecting — the read-only promise stays: the site
+ * only ever holds the PUBLIC key.
+ */
+function WalletChip({
+  wallet,
+  bal,
+  onBal,
+}: {
+  wallet: WalletState;
+  bal: number | null;
+  onBal: (b: number | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  if (!wallet.connected || !wallet.publicKey) {
+    return (
+      <button
+        className="wallet-btn"
+        title={
+          wallet.available
+            ? "Connect your Casper Wallet — the desk can pay advances to YOUR address"
+            : "Get the Casper Wallet extension"
+        }
+        onClick={() => void connectWallet()}
+      >
+        ⛓ {wallet.available ? "CONNECT WALLET" : "GET CASPER WALLET"}
+      </button>
+    );
+  }
+
+  const pk = wallet.publicKey;
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      onBal((await judge.balance(pk)).cspr);
+    } catch {
+      /* keep the last reading — the chip is informational */
+    } finally {
+      setRefreshing(false);
+    }
+  };
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(pk);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable — the key is visible to select manually */
+    }
+  };
+
+  return (
+    <div className="wallet-wrap" ref={boxRef}>
+      <button
+        className="wallet-btn on"
+        title="Connected Casper Wallet — open the wallet menu"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="wallet-dot" />
+        {shortKey(pk)}
+        {bal != null && <span className="wallet-bal">{bal.toFixed(0)} CSPR</span>}
+        <span className="wallet-caret">{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <div className="wallet-menu">
+          <div className="wm-head">
+            <span className="wallet-dot" /> CONNECTED · CASPER WALLET
+          </div>
+          <div className="wm-row">
+            <span className="wm-key mono" title={pk}>
+              {pk.slice(0, 12)}…{pk.slice(-8)}
+            </span>
+            <button className="wm-mini" onClick={() => void copy()}>
+              {copied ? "COPIED ✓" : "COPY"}
+            </button>
+          </div>
+          <div className="wm-row">
+            <span className="wm-lbl">Balance</span>
+            <b className="mono">{bal != null ? `${bal.toFixed(2)} CSPR` : "—"}</b>
+            <button className="wm-mini" onClick={() => void refresh()} disabled={refreshing}>
+              {refreshing ? "…" : "↻ REFRESH"}
+            </button>
+          </div>
+          <div className="wm-note">
+            Read from Casper <b>Testnet</b>. If your extension shows a different number, switch its
+            network to Testnet. Connection is read-only — this site never asks for a signature.
+          </div>
+          <a
+            className="wm-link"
+            target="_blank"
+            rel="noreferrer"
+            href={`https://testnet.cspr.live/account/${pk}`}
+          >
+            ↗ Account &amp; transactions on CSPR.live
+          </a>
+          <a
+            className="wm-link"
+            target="_blank"
+            rel="noreferrer"
+            href="https://testnet.cspr.live/tools/faucet"
+          >
+            ↗ Get testnet CSPR (faucet)
+          </a>
+          <button
+            className="wm-link danger"
+            onClick={() => {
+              setOpen(false);
+              void disconnectWallet();
+            }}
+          >
+            ⏏ Disconnect wallet
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -160,7 +286,7 @@ function HeroInvoice() {
       {(funded || settled) && <div className="stamp s2">{settled ? "SETTLED" : "FUNDED"}</div>}
       {blocked && <div className="stamp s2 blocked">BLOCKED BY CONTRACT</div>}
       <div className="doc-caption">
-        Illustrative loop — the guided walkthrough runs both endings with real Testnet transactions.
+        Illustrative loop — the guided walkthrough runs both endings with real transactions.
       </div>
     </div>
   );
@@ -307,36 +433,7 @@ export default function App() {
           <div className="tagline">The autonomous invoice-financing desk on Casper</div>
         </div>
         <div className="spacer" />
-        {wallet.connected && wallet.publicKey ? (
-          <button
-            className="wallet-btn on"
-            title="Connected Casper Wallet — click to disconnect"
-            onClick={() => void disconnectWallet()}
-          >
-            <span className="wallet-dot" />
-            {shortKey(wallet.publicKey)}
-            {walletBal != null && (
-              <span
-                className="wallet-bal"
-                title="Casper TESTNET balance — switch your wallet extension to the Testnet network to see the same number there"
-              >
-                {walletBal.toFixed(0)} CSPR · testnet
-              </span>
-            )}
-          </button>
-        ) : (
-          <button
-            className="wallet-btn"
-            title={
-              wallet.available
-                ? "Connect your Casper Wallet — the desk can pay advances to YOUR address"
-                : "Get the Casper Wallet extension"
-            }
-            onClick={() => void connectWallet()}
-          >
-            ⛓ {wallet.available ? "CONNECT WALLET" : "GET CASPER WALLET"}
-          </button>
-        )}
+        <WalletChip wallet={wallet} bal={walletBal} onBal={setWalletBal} />
         {meta?.mcp && (
           <button
             className="chip chip-btn"
@@ -365,7 +462,7 @@ export default function App() {
                   <i /> LIVE DESK ONLINE
                 </span>
                 <span className="ds-text">
-                  Trigger <b>real, agent-signed Casper Testnet transactions</b> in the{" "}
+                  Trigger <b>real, agent-signed Casper transactions</b> in the{" "}
                   <button className="linklike" onClick={() => openRunner()}>
                     guided walkthrough
                   </button>
@@ -386,8 +483,8 @@ export default function App() {
                   <i /> LIVE TESTNET
                 </span>
                 <span className="ds-text">
-                  Every action on this page is a <b>real Casper Testnet transaction</b> signed by
-                  the agent keys.
+                  Every action on this page is a <b>real Casper transaction</b> signed by the agent
+                  keys.
                 </span>
               </>
             )}
@@ -433,12 +530,8 @@ export default function App() {
           </h1>
           <p className="hero-sub">
             Faktura turns unpaid invoices into working capital. An autonomous AI agent evaluates the
-            receivable, a{" "}
-            <span className="casper-word">
-              <CasperMark size={17} /> Casper
-            </span>{" "}
-            contract enforces the risk limits, and a native-CSPR pool pays the supplier. Every
-            decision stays verifiable.
+            receivable, a <span className="casper-word">Casper</span> contract enforces the risk
+            limits, and a native-CSPR pool pays the supplier. Every decision stays verifiable.
           </p>
           <p className="hero-tagline">
             An AI can approve the invoice. <b>Only Casper can move the money.</b>
@@ -447,7 +540,7 @@ export default function App() {
             {liveJudge ? (
               <>
                 <button className="btn-primary" onClick={() => openRunner("happy")}>
-                  ▶ Run a real Testnet story
+                  ▶ Use the real AI desk
                 </button>
                 <button className="btn-outline" onClick={() => openRunner("policy-block")}>
                   ⛔ Watch the AI get blocked
@@ -461,7 +554,7 @@ export default function App() {
           </div>
           {liveJudge && (
             <p className="hero-cost">
-              6 guided steps · 5 real Testnet transactions · about 4–8 minutes
+              6 guided steps · 5 real on-chain transactions · about 4–8 minutes
             </p>
           )}
           <p className="hero-links">
@@ -477,7 +570,7 @@ export default function App() {
               <span className={`live-dot ${jhealth?.paused ? "amber" : "green"}`} />
               {jhealth?.paused
                 ? "Live workflow paused — the Casper node is unreachable right now; the desk preview below still works."
-                : "Guided workflow: real Testnet transactions. Desk preview below: safe showcase data."}
+                : "Guided workflow: real on-chain transactions. Desk preview below: safe showcase data."}
             </div>
           ) : (
             judgeProbed && (
@@ -487,11 +580,21 @@ export default function App() {
               </div>
             )
           )}
+          <a
+            className="hero-builton"
+            href="https://www.casper.network/"
+            target="_blank"
+            rel="noreferrer"
+            title="Casper Network — the chain that enforces this desk's risk policy"
+          >
+            <span>BUILT ON</span>
+            <CasperWordmark height={34} />
+          </a>
           {/* Trust facts, not business metrics — TVL & share price live on the desk below. */}
           <div className="hero-metrics">
             <div className="hm-red">
               <b>5</b>
-              <span>real Testnet txs per full run</span>
+              <span>real on-chain txs per full run</span>
             </div>
             <div>
               <b>On-chain</b>
@@ -512,10 +615,7 @@ export default function App() {
         <p className="story-lede">
           Nordwind shipped the freight; Aurora pays in 30 days. Nordwind needs the cash <i>now</i>,
           so the desk's AI reads the invoice, prices the risk and approves it. Then{" "}
-          <span className="casper-word">
-            <CasperMark size={14} /> Casper
-          </span>{" "}
-          decides what an approval is worth:
+          <span className="casper-word">Casper</span> decides what an approval is worth:
         </p>
         <div className="story-acts endings">
           <div className="story-act">
@@ -542,7 +642,7 @@ export default function App() {
               </a>
               {liveJudge && (
                 <button className="linklike" onClick={() => openRunner("policy-block")}>
-                  Reproduce it on Testnet →
+                  Reproduce it live →
                 </button>
               )}
             </div>
@@ -571,7 +671,7 @@ export default function App() {
             <h3>💸 Get paid to your own wallet</h3>
             <p>
               Connect Casper Wallet and the desk pays the invoice advance to <b>your address</b> on
-              the real testnet. Read-only — we ask for a public key, never a signature.
+              the real chain. Read-only — we ask for a public key, never a signature.
             </p>
           </div>
           <div className="cap">
@@ -599,12 +699,12 @@ export default function App() {
               <h2>Don't take our word for it. Trigger it yourself. Verify every transaction.</h2>
               <p>
                 Three guided walkthroughs — the full lifecycle, the policy firewall and an x402
-                purchase. One click per step, one real agent-signed Casper Testnet transaction per
-                click, explorer links as they confirm. Your wallet never signs anything.
+                purchase. One click per step, one real agent-signed Casper transaction per click,
+                explorer links as they confirm. Your wallet never signs anything.
               </p>
             </div>
             <button className="btn-primary big" onClick={() => openRunner()}>
-              ▶ RUN REAL TESTNET WORKFLOW
+              ▶ USE THE REAL AI DESK
             </button>
           </div>
         </section>
@@ -685,7 +785,7 @@ export default function App() {
                   Receivables pipeline
                   <span className="hint">
                     {meta?.mode === "live-testnet"
-                      ? "every state transition is a Casper Testnet transaction"
+                      ? "every state transition is a real Casper transaction"
                       : "seeded from real Casper Testnet · new writes simulated"}
                   </span>
                   <span className="right hint">{invoices.length} intakes</span>
@@ -1022,7 +1122,7 @@ function LatestRunReceipt({ runs, onOpen }: { runs: RecentRun[]; onOpen: () => v
     <section className="latest-run">
       <div className="latest-run-card">
         <div className="latest-run-head">
-          <span className="latest-run-kicker">LATEST LIVE TESTNET RUN</span>
+          <span className="latest-run-kicker">LATEST LIVE RUN</span>
           <span className="latest-run-id mono">{run.displayId}</span>
           <span className="latest-run-when">{timeAgo(run.endedTs)}</span>
         </div>
@@ -1590,7 +1690,7 @@ function Drawer({
                 ? "Settling…"
                 : showcase
                   ? `Simulate debtor settlement (${fmtCspr(record.intake.amountCspr)} CSPR)`
-                  : `Submit debtor settlement on Casper Testnet (${fmtCspr(record.intake.amountCspr)} CSPR)`}
+                  : `Submit debtor settlement on Casper (${fmtCspr(record.intake.amountCspr)} CSPR)`}
             </button>
             <div className="note" style={{ marginTop: 6 }}>
               {showcase
@@ -1950,7 +2050,7 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
             </div>
             <div className="jd-hint">
               {live
-                ? "Every step below is a real Casper Testnet transaction — follow the tx links in the pipeline and activity feed."
+                ? "Every step below is a real Casper transaction — follow the tx links in the pipeline and activity feed."
                 : "In this showcase the steps replay in memory (nothing is signed). The seeded records link to the real Casper Testnet transactions; run the stack locally in live mode to sign every step for real."}
             </div>
           </div>
@@ -2225,7 +2325,7 @@ function GuidedStep({
         {running && !isAi && (
           <div className="lj-signing">
             <div className="lj-signing-top">
-              <span className="lj-spinner" /> Signing on Casper Testnet…
+              <span className="lj-spinner" /> Signing on Casper…
               <ElapsedTimer startTs={runStartTs} />
             </div>
             <div className="lj-wait-bar">
@@ -2444,7 +2544,7 @@ function JudgeGuided({
     <div className="lj-page">
       <header className="lj-top">
         <div className="lj-brand">
-          FAKTU<em>RA</em> <span className="lj-live">● LIVE TESTNET JUDGE MODE</span>
+          FAKTU<em>RA</em> <span className="lj-live">● LIVE JUDGE MODE</span>
         </div>
         <button className="lj-close" onClick={onClose}>
           ✕ close
@@ -2466,9 +2566,9 @@ function JudgeGuided({
           <h1>Move real capital on Casper — one step, one signature at a time.</h1>
           <p className="lj-intro-lede">
             Choose a story below. You trigger each step yourself: the AI underwriter thinks out
-            loud, then every on-chain move signs a <b>real Casper Testnet transaction</b> you can
-            open on the explorer the instant it confirms. Each screen tells you what just happened,
-            why it matters, and what comes next.
+            loud, then every on-chain move signs a <b>real Casper transaction</b> you can open on
+            the explorer the instant it confirms. Each screen tells you what just happened, why it
+            matters, and what comes next.
           </p>
 
           {resumable && resumable.status === "active" && (
@@ -2662,8 +2762,8 @@ function JudgeGuided({
           {session.status === "done" && (
             <div className="lj-finish">
               <div className="lj-finish-head">
-                ✓ Walkthrough complete — every on-chain step above is a real Casper Testnet
-                transaction you can open on CSPR.live.
+                ✓ Walkthrough complete — every on-chain step above is a real Casper transaction you
+                can open on CSPR.live.
               </div>
               {session.wallet && session.preset === "happy" && (
                 <div className="lj-finish-wallet">
