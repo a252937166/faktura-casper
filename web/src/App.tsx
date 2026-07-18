@@ -426,12 +426,17 @@ export default function App() {
   return (
     <div className="shell">
       <header className="header">
-        <div>
-          <div className="wordmark">
-            FAKTU<em>RA</em>
-          </div>
-          <div className="tagline">The autonomous invoice-financing desk on Casper</div>
-        </div>
+        <a
+          href="/"
+          className="site-logo-link"
+          title="Faktura — autonomous invoice financing on Casper"
+        >
+          <img
+            className="site-logo"
+            src="/faktura-logo.png"
+            alt="Faktura — autonomous invoice financing protocol on chain"
+          />
+        </a>
         <div className="spacer" />
         <WalletChip wallet={wallet} bal={walletBal} onBal={setWalletBal} />
         {meta?.mcp && (
