@@ -21,6 +21,7 @@ import {
   DAILY_PAYOUT_CAP_CSPR,
   addPosition,
   canPayout,
+  clearOrphanReservations,
   canSignDeploy,
   canStartRun,
   commitPayout,
@@ -1404,6 +1405,9 @@ export function makeJudgeRouter(): Router {
   // Warm the FULL health snapshot too — otherwise the first ~70 s after a
   // restart answer every session-create with a misleading "node unreachable".
   cachedHealth().catch(() => {});
+  // Any reservation that survived the restart is an orphan — free it so its
+  // owner isn't locked out of wallet payouts by their own abandoned run.
+  clearOrphanReservations();
 
   r.get("/health", async (req, res) => {
     try {

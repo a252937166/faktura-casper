@@ -4254,3 +4254,15 @@ button.field-wallet {
   flex-wrap: wrap;
   margin-top: 12px;
 }
+
+/* payout quota notice — guidance, not an error */
+.lj-payout-notice {
+  margin: 10px 0 14px;
+  padding: 11px 14px;
+  background: rgba(201, 138, 27, 0.1);
+  border: 1.5px solid #c98a1b;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #6d4a0a;
+}

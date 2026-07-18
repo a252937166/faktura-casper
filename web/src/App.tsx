@@ -2731,6 +2731,8 @@ function JudgeGuided({
   /** Wallet balance snapshots for the payout delta card. */
   const [walletBefore, setWalletBefore] = useState<number | null>(null);
   const [walletAfter, setWalletAfter] = useState<number | null>(null);
+  /** Payout quota hit — shown as guidance at the gate, never as an error. */
+  const [payoutNotice, setPayoutNotice] = useState<string | null>(null);
   /** Preset chosen while no wallet was connected — held at the wallet gate. */
   const [pendingPreset, setPendingPreset] = useState<string | null>(null);
   /** An active server-side walkthrough offered for resume (never auto-entered). */
@@ -2774,8 +2776,17 @@ function JudgeGuided({
     try {
       // With a wallet connected, the desk pays the advance to THEIR address.
       setSession(await judge.createSession(preset, supplierAddress));
+      setPayoutNotice(null);
       setBusy(false);
     } catch (e) {
+      // Payout quota hit: this is GUIDANCE, not an error — send the visitor
+      // back to the gate with the demo-supplier option front and center.
+      if ((e as ApiError).body?.payoutBlocked) {
+        setPayoutNotice((e as Error).message);
+        setPendingPreset(preset);
+        setBusy(false);
+        return;
+      }
       // The server debounces rapid session creation (double-click / deep-link
       // followed by a manual click). That is a WAIT, not a failure — keep the
       // button in its busy state and retry automatically when the window opens.
@@ -2827,7 +2838,7 @@ function JudgeGuided({
 
   // Wallet connected while waiting at the gate — continue automatically.
   useEffect(() => {
-    if (pendingPreset && wallet.connected && wallet.publicKey && !busy) {
+    if (pendingPreset && wallet.connected && wallet.publicKey && !busy && !payoutNotice) {
       void doStart(pendingPreset, wallet.publicKey);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2881,6 +2892,7 @@ function JudgeGuided({
     setPredictions({});
     setWalletBefore(null);
     setWalletAfter(null);
+    setPayoutNotice(null);
     judge
       .health()
       .then(onHealth)
@@ -2985,6 +2997,7 @@ function JudgeGuided({
                 before we run
               </div>
               <h2>Who should receive the invoice advance?</h2>
+              {payoutNotice && <div className="lj-payout-notice">{payoutNotice}</div>}
               <div className="lj-gate-options">
                 <button className="lj-gate-opt primary" onClick={() => void connectWallet()}>
                   <span className="lj-gate-opt-title">
