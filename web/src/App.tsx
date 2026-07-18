@@ -191,19 +191,6 @@ export default function App() {
             ⛓ {wallet.available ? "CONNECT WALLET" : "GET CASPER WALLET"}
           </button>
         )}
-        <span className="chip">
-          <span className="dot" /> casper-test
-        </span>
-        {meta && (
-          <span className="chip" title="Underwriting model provider (from /api/meta)">
-            AI · {meta.llmProvider === "mock" ? "deterministic scorer" : "live inference"}
-          </span>
-        )}
-        {meta && (
-          <span className="chip" title="Machine-payable risk oracle price">
-            x402 · {(Number(meta.x402Price) / 1e9).toFixed(1)} CSPR
-          </span>
-        )}
         {meta?.mcp && (
           <button
             className="chip chip-btn"
@@ -212,16 +199,6 @@ export default function App() {
           >
             MCP · 5 tools ▾
           </button>
-        )}
-        {pool?.contract && (
-          <a
-            className="chip"
-            target="_blank"
-            rel="noreferrer"
-            href={`${pool.explorer}/contract/${pool.contract.replace("hash-", "")}`}
-          >
-            ⛓ {contractShort}
-          </a>
         )}
         <a
           className="chip"
@@ -269,35 +246,40 @@ export default function App() {
               </>
             )}
           </div>
-          {meta.policy && (
-            <details className="ds-more">
-              <summary>Rules of the desk</summary>
-              <div className="ds-more-body">
-                On-chain hard caps — risk ≤ {meta.policy.maxRiskScore} · discount{" "}
-                {(meta.policy.minDiscountBps / 100).toFixed(1)}–
-                {(meta.policy.maxDiscountBps / 100).toFixed(0)}% · single invoice ≤{" "}
-                {(meta.policy.maxSingleInvoiceBps / 100).toFixed(0)}% of pool · per debtor ≤{" "}
-                {(meta.policy.maxDebtorExposureBps / 100).toFixed(0)}%.
-                {meta.prefilter && (
-                  <>
-                    {" "}
-                    The agent pre-filters stricter (risk ≤ {meta.prefilter.maxRiskScore}) to save
-                    gas; <b>the contract is the final authority</b>.
-                  </>
-                )}
-              </div>
-            </details>
-          )}
+          <div className="ds-tools">
+            {pool && (
+              <details className="ds-more">
+                <summary>Casper proof</summary>
+                <div className="ds-more-body">
+                  <ProofStrip pool={pool} invoices={invoices} meta={meta} />
+                </div>
+              </details>
+            )}
+            {meta.policy && (
+              <details className="ds-more">
+                <summary>Rules of the desk</summary>
+                <div className="ds-more-body">
+                  On-chain hard caps — risk ≤ {meta.policy.maxRiskScore} · discount{" "}
+                  {(meta.policy.minDiscountBps / 100).toFixed(1)}–
+                  {(meta.policy.maxDiscountBps / 100).toFixed(0)}% · single invoice ≤{" "}
+                  {(meta.policy.maxSingleInvoiceBps / 100).toFixed(0)}% of pool · per debtor ≤{" "}
+                  {(meta.policy.maxDebtorExposureBps / 100).toFixed(0)}%.
+                  {meta.prefilter && (
+                    <>
+                      {" "}
+                      The agent pre-filters stricter (risk ≤ {meta.prefilter.maxRiskScore}) to save
+                      gas; <b>the contract is the final authority</b>.
+                    </>
+                  )}
+                </div>
+              </details>
+            )}
+          </div>
         </div>
       )}
 
-      {pool && <ProofStrip pool={pool} invoices={invoices} meta={meta} />}
-
       <section className="hero">
         <div>
-          <span className="hero-badge">
-            <i /> Autonomous underwriting desk — Casper testnet
-          </span>
           <h1>
             Invoices in.
             <br />
