@@ -2,7 +2,7 @@
 
 | # | What | Link |
 |---|---|---|
-| 1 | **Live showcase** (honest mode banner; simulated writes are labeled, never explorer-linked) | [faktura.axiqo.xyz](https://faktura.axiqo.xyz) |
+| 1 | **Live Testnet Judge Mode — guided real Casper Testnet transactions (walkthroughs sign one tx per click); the safe showcase remains the fallback view** (honest mode banner; simulated writes are labeled, never explorer-linked) | [faktura.axiqo.xyz](https://faktura.axiqo.xyz) |
 | 2 | **Demo video** (3 min) | [youtu.be/47ZNPZlRXVA](https://youtu.be/47ZNPZlRXVA) |
 | 3 | **Contract package** on Casper Testnet | [testnet.cspr.live/contract-package/fb209bb1d3a1d5e675841f…](https://testnet.cspr.live/contract-package/fb209bb1d3a1d5e675841f7d184ab7fa96d65adc099f6fd0105f29115fb49d7e) |
 | 4 | **Evidence pack** — every judging claim as a testnet tx | [DORAHACKS.md](DORAHACKS.md) |
@@ -19,6 +19,6 @@ make test              # everything CI runs
 make x402-facilitator-demo   # x402 purchase via the reference facilitator (needs funded keys)
 ```
 
-And on the live showcase: press **▶ RUN JUDGE DEMO**, then submit the
+And on the live showcase: press **▶ Run a real Testnet story**, then submit the
 **Policy-cap rejection** preset — the AI approves it, and the contract's
 single-invoice cap blocks the funding in front of you.

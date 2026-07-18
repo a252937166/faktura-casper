@@ -196,6 +196,9 @@ export interface JudgeStep {
 
 export interface JudgeSession {
   id: string;
+  displayId?: string;
+  /** Bearer for mutations — present at creation and on same-IP resume. */
+  token?: string;
   preset: string;
   title: string;
   subtitle: string;
@@ -233,11 +236,31 @@ export interface JudgeHealth {
   paused: boolean;
   pool: Record<string, number> | null;
   x402Price: string;
+  canRun?: Record<string, { ok: boolean; reason?: string }>;
+  budget?: { capCspr: number; spentCspr: number };
+  deskBusy?: boolean;
   activeSession: JudgeSession | null;
 }
 
 /** The judge backend is a separate origin (:4034) behind nginx at /api/judge. */
 const JUDGE_BASE = `${import.meta.env.BASE_URL}api/judge`.replace(/\/\/api\/judge$/, "/api/judge");
+
+/** Session mutation bearers survive a refresh via sessionStorage. */
+const tokenKey = (id: string) => `faktura-judge-token:${id}`;
+export const rememberJudgeToken = (id: string, token?: string | null) => {
+  try {
+    if (token) sessionStorage.setItem(tokenKey(id), token);
+  } catch {
+    /* storage unavailable — resume still works via same-IP health */
+  }
+};
+const judgeToken = (id: string): string => {
+  try {
+    return sessionStorage.getItem(tokenKey(id)) ?? "";
+  } catch {
+    return "";
+  }
+};
 
 export const judge = {
   health: () => fetch(`${JUDGE_BASE}/health`).then((r) => j<JudgeHealth>(r)),
@@ -247,9 +270,17 @@ export const judge = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(supplierAddress ? { preset, supplierAddress } : { preset }),
-    }).then((r) => j<JudgeSession>(r)),
+    })
+      .then((r) => j<JudgeSession>(r))
+      .then((sess) => {
+        rememberJudgeToken(sess.id, sess.token);
+        return sess;
+      }),
   nextStep: (id: string) =>
-    fetch(`${JUDGE_BASE}/session/${id}/next`, { method: "POST" }).then((r) => j<JudgeSession>(r)),
+    fetch(`${JUDGE_BASE}/session/${id}/next`, {
+      method: "POST",
+      headers: { "X-Judge-Token": judgeToken(id) },
+    }).then((r) => j<JudgeSession>(r)),
   getSession: (id: string) => fetch(`${JUDGE_BASE}/session/${id}`).then((r) => j<JudgeSession>(r)),
   balance: (pubkey: string) =>
     fetch(`${JUDGE_BASE}/balance/${pubkey}`).then((r) =>

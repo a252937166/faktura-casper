@@ -5,6 +5,7 @@ import {
   isSimulatedHash,
   judge,
   motesToCspr,
+  rememberJudgeToken,
   stateName,
   type FeedEvent,
   type InvoiceRecord,
@@ -41,6 +42,29 @@ const ACTOR_ICON: Record<string, string> = {
   system: "⚙",
 };
 
+/** A minimal ring-C mark honouring the Casper brand — inline, themeable. */
+function CasperMark({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      viewBox="0 0 32 32"
+      width={size}
+      height={size}
+      role="img"
+      aria-label="Casper"
+      className="casper-mark"
+    >
+      <circle cx="16" cy="16" r="13.4" fill="none" stroke="currentColor" strokeWidth="3.4" />
+      <path
+        d="M22.8 10.9a8.6 8.6 0 1 0 .1 10.1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3.4"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 const riskColor = (r: number) => (r <= 30 ? "#0f8a5f" : r <= 55 ? "#c98a1b" : "#d92d2d");
 
 function fmtCspr(n: number) {
@@ -65,6 +89,11 @@ export default function App() {
   const [depositAmt, setDepositAmt] = useState("100");
   const [judgeOpen, setJudgeOpen] = useState(false);
   const [runnerOpen, setRunnerOpen] = useState(false);
+  const [runnerPreset, setRunnerPreset] = useState<string | null>(null);
+  const openRunner = (preset?: string) => {
+    setRunnerPreset(preset ?? null);
+    setRunnerOpen(true);
+  };
   const [jhealth, setJhealth] = useState<JudgeHealth | null>(null);
   const [judgeProbed, setJudgeProbed] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
@@ -176,7 +205,14 @@ export default function App() {
           >
             <span className="wallet-dot" />
             {shortKey(wallet.publicKey)}
-            {walletBal != null && <span className="wallet-bal">{walletBal.toFixed(0)} CSPR</span>}
+            {walletBal != null && (
+              <span
+                className="wallet-bal"
+                title="Casper TESTNET balance — switch your wallet extension to the Testnet network to see the same number there"
+              >
+                {walletBal.toFixed(0)} CSPR · testnet
+              </span>
+            )}
           </button>
         ) : (
           <button
@@ -220,7 +256,7 @@ export default function App() {
                 </span>
                 <span className="ds-text">
                   Sign <b>real Casper Testnet transactions</b> in the{" "}
-                  <button className="linklike" onClick={() => setRunnerOpen(true)}>
+                  <button className="linklike" onClick={() => openRunner()}>
                     guided walkthrough
                   </button>
                   {" — "}this page below is the safe showcase (simulated writes, real proof).
@@ -281,62 +317,61 @@ export default function App() {
       <section className="hero">
         <div>
           <h1>
-            Invoices in.
+            AI underwrites.
             <br />
-            Capital out. <span className="accent">No humans.</span>
+            Casper decides. <span className="accent">Suppliers get paid.</span>
           </h1>
           <p className="hero-sub">
-            Faktura is an autonomous invoice-financing desk on Casper: an AI agent underwrites each
-            receivable, a native-CSPR pool funds it, and every decision is hash-anchored on-chain
-            {meta?.mode === "live-testnet"
-              ? " — fully auditable."
-              : " in live mode — this showcase seeds real proof and simulates new writes."}
+            Faktura turns unpaid invoices into working capital. An autonomous AI agent evaluates the
+            receivable, a{" "}
+            <span className="casper-word">
+              <CasperMark size={17} /> Casper
+            </span>{" "}
+            contract enforces the risk limits, and a native-CSPR pool pays the supplier. Every
+            decision stays verifiable.
           </p>
-          <p className="hero-note">
-            {meta?.mode === "live-testnet"
-              ? "LLM proposes → policy disposes → registered, funded & attested on-chain."
-              : "LLM proposes → policy disposes → seeded on-chain proof, new writes simulated."}
+          <p className="hero-tagline">
+            An AI can approve the invoice. <b>Only Casper can move the money.</b>
           </p>
           <div className="hero-cta">
             {liveJudge ? (
-              <button className="btn-primary" onClick={() => setRunnerOpen(true)}>
-                ▶ RUN REAL TESTNET WORKFLOW
-              </button>
+              <>
+                <button className="btn-primary" onClick={() => openRunner("happy")}>
+                  ▶ Run a real Testnet story
+                </button>
+                <button className="btn-outline" onClick={() => openRunner("policy-block")}>
+                  ⛔ Watch the AI get blocked
+                </button>
+              </>
             ) : (
               <button className="btn-primary" onClick={() => setJudgeOpen(true)}>
                 ▶ RUN JUDGE DEMO
               </button>
             )}
-            <a
-              className="btn-outline"
-              href="https://youtu.be/47ZNPZlRXVA"
-              target="_blank"
-              rel="noreferrer"
-            >
-              WATCH 3-MIN DEMO ↗
-            </a>
-            <a
-              className="btn-outline"
-              target="_blank"
-              rel="noreferrer"
-              href={
-                pool?.contract
-                  ? `${pool.explorer}/contract/${pool.contract.replace("hash-", "")}`
-                  : "https://testnet.cspr.live"
-              }
-            >
-              OPEN EVIDENCE PACK ↗
-            </a>
           </div>
+          {liveJudge && (
+            <p className="hero-cost">
+              6 guided steps · 5 real Testnet transactions · about 4–8 minutes
+            </p>
+          )}
+          <p className="hero-links">
+            <a
+              target="_blank"
+              rel="noreferrer"
+              href="https://github.com/a252937166/faktura-casper/blob/master/DORAHACKS.md"
+            >
+              View contract &amp; transaction evidence →
+            </a>
+            <a href="https://youtu.be/47ZNPZlRXVA" target="_blank" rel="noreferrer">
+              Watch the 3-min demo ↗
+            </a>
+          </p>
           {liveJudge ? (
             <div className="hero-live">
               <span className={`live-dot ${jhealth?.paused ? "amber" : "green"}`} />
               {jhealth?.paused
-                ? "Live judge mode is paused (topping up testnet keys) — explore the safe showcase below."
-                : "Live Testnet Judge Mode is online — every step you run signs a real Casper Testnet transaction."}{" "}
-              <button className="linklike" onClick={() => setJudgeOpen(true)}>
-                Prefer the 30-second story?
-              </button>
+                ? "Live workflow paused (topping up testnet keys) — the desk preview below still works."
+                : "Guided workflow: real Testnet transactions. Desk preview below: safe showcase data."}
             </div>
           ) : (
             judgeProbed && (
@@ -404,6 +439,119 @@ export default function App() {
         </div>
       </section>
 
+      {/* ---- One invoice, two endings — the whole product in one story ---- */}
+      <section className="story">
+        <h2 className="section-title">One invoice. Two possible endings.</h2>
+        <p className="story-lede">
+          Nordwind shipped the freight; Aurora pays in 30 days. Nordwind needs the cash <i>now</i>,
+          so the desk's AI reads the invoice, prices the risk and approves it. Then{" "}
+          <span className="casper-word">
+            <CasperMark size={14} /> Casper
+          </span>{" "}
+          decides what an approval is worth:
+        </p>
+        <div className="story-acts endings">
+          <div className="story-act">
+            <div className="story-stamp green">ENDING A · FUNDED</div>
+            <h3>The policy checks pass</h3>
+            <p>
+              Risk ceiling, discount band, concentration caps — all within limits. The pool streams
+              the advance to the supplier in one transaction, the AI memo is hash-anchored, and the
+              debtor settles at maturity. The credit loop closes.
+            </p>
+          </div>
+          <div className="story-act blocked">
+            <div className="story-stamp red">ENDING B · BLOCKED</div>
+            <h3>The AI approved it. Casper still said no.</h3>
+            <p>
+              The same valid agent key submits an invoice above the single-invoice cap — and the
+              contract reverts the funding with{" "}
+              <span className="mono-sm">User error: 15 (SingleInvoiceCapExceeded)</span>.
+              Autonomous, but never unbounded.
+            </p>
+            <div className="story-links">
+              <a
+                target="_blank"
+                rel="noreferrer"
+                href="https://testnet.cspr.live/transaction/830ebd77ee7a06e6a35709ed2ff958e3135db6bd231bec4a4c90ae12879ff9d1"
+              >
+                Open a real reverted transaction ↗
+              </a>
+              {liveJudge && (
+                <button className="linklike" onClick={() => openRunner("policy-block")}>
+                  Reproduce it on Testnet →
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ---- Capabilities, each backed by something real ---- */}
+      <section className="caps">
+        <h2 className="section-title">What makes it different</h2>
+        <div className="caps-grid">
+          <div className="cap">
+            <h3>⛔ AI proposes, contract disposes</h3>
+            <p>
+              The on-chain policy is the final authority: an AI-approved invoice above the
+              concentration cap gets <b>rejected by the contract itself</b> — watch a real revert (
+              <span className="mono-sm">User error: 15</span>) in the walkthrough.
+            </p>
+          </div>
+          <div className="cap">
+            <h3>💸 Get paid to your own wallet</h3>
+            <p>
+              Connect Casper Wallet and the desk pays the invoice advance to <b>your address</b> on
+              the real testnet. Read-only — we ask for a public key, never a signature.
+            </p>
+          </div>
+          <div className="cap">
+            <h3>🤝 Machine-payable risk data (x402)</h3>
+            <p>
+              Another agent buys the verified risk report over <b>HTTP 402</b>, settling with a
+              native CSPR transfer — the agent economy, working end to end.
+            </p>
+          </div>
+          <div className="cap">
+            <h3>🔑 Five keys, least privilege</h3>
+            <p>
+              Underwriter, collector, supplier, LP and debtor each hold their own key. The
+              underwriter cannot write off defaults; the collector can do <i>only</i> that.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* ---- Run it yourself ---- */}
+      {liveJudge && (
+        <section className="runit">
+          <div className="runit-card">
+            <div>
+              <h2>Don't take our word for it. Sign it yourself.</h2>
+              <p>
+                Three guided walkthroughs — the full lifecycle, the policy firewall and an x402
+                purchase. One click per step, one real Casper Testnet transaction per click,
+                explorer links as they confirm.
+              </p>
+            </div>
+            <button className="btn-primary big" onClick={() => openRunner()}>
+              ▶ RUN REAL TESTNET WORKFLOW
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* ---- The live desk (book & controls) ---- */}
+      <section className="desk-head" id="desk">
+        <h2 className="section-title">The desk — live book &amp; controls</h2>
+        <p className="desk-head-sub">
+          {meta?.mode === "showcase"
+            ? "Reads come from a captured snapshot of the real testnet contract; new writes here are simulated (the guided walkthrough is the live surface)."
+            : "Everything below reads and writes the live testnet contract."}
+        </p>
+      </section>
+
       <section className="stats">
         <div className="stat">
           <div className="label">Pool TVL</div>
@@ -414,22 +562,22 @@ export default function App() {
           </div>
         </div>
         <div className="stat">
-          <div className="label">LP Share Price</div>
+          <div className="label">Pool value / share</div>
           <div className={`value ${sharePrice > 1 ? "good" : ""}`}>{sharePrice.toFixed(4)}</div>
           <div className="sub">1.0000 at genesis — yield accrues here</div>
         </div>
         <div className="stat">
-          <div className="label">Advances Funded</div>
+          <div className="label">Lifetime advances</div>
           <div className="value accent">{fmtCspr(motesToCspr(stats?.totalFunded))} CSPR</div>
           <div className="sub">{stats?.invoiceCount ?? 0} invoices registered</div>
         </div>
         <div className="stat">
-          <div className="label">Collected</div>
+          <div className="label">Lifetime collected</div>
           <div className="value">{fmtCspr(motesToCspr(stats?.totalSettled))} CSPR</div>
           <div className="sub">face value settled by debtors</div>
         </div>
         <div className="stat">
-          <div className="label">Defaults</div>
+          <div className="label">Lifetime defaults</div>
           <div className={`value ${motesToCspr(stats?.totalDefaulted) > 0 ? "bad" : ""}`}>
             {fmtCspr(motesToCspr(stats?.totalDefaulted))} CSPR
           </div>
@@ -677,6 +825,7 @@ export default function App() {
           health={jhealth}
           onHealth={setJhealth}
           wallet={wallet}
+          initialPreset={runnerPreset}
           onClose={() => {
             setRunnerOpen(false);
             refresh();
@@ -1651,6 +1800,9 @@ function GuidedStep({
   running,
   runStartTs,
   nextTitle,
+  walletLock,
+  onReconnect,
+  onAbandon,
 }: {
   step: JudgeStep;
   index: number;
@@ -1660,6 +1812,10 @@ function GuidedStep({
   running: boolean;
   runStartTs: number;
   nextTitle?: string;
+  /** Set when this session pays a wallet that is no longer connected. */
+  walletLock?: string | null;
+  onReconnect: () => void;
+  onAbandon: () => void;
 }) {
   const done = step.status === "done" || step.status === "reverted";
   const isAi = step.kind === "compute";
@@ -1756,7 +1912,39 @@ function GuidedStep({
           </div>
         )}
 
-        {step.status === "ready" && !running && (
+        {isCurrent && step.status === "failed" && !running && (
+          <div className="lj-failbox">
+            <div className="lj-failbox-title">
+              ⚠ This step hit a testnet hiccup — nothing was lost.
+            </div>
+            {step.result && <div className="lj-failbox-err">{step.result}</div>}
+            <div className="lj-relock-actions">
+              <button className="lj-run-btn" onClick={onRun}>
+                ↻ Retry this step
+              </button>
+              <button className="lj-back" onClick={onAbandon}>
+                Abandon walkthrough
+              </button>
+            </div>
+          </div>
+        )}
+        {step.status === "ready" && !running && walletLock && (
+          <div className="lj-relock">
+            <div className="lj-relock-text">
+              ⚠ This walkthrough pays <b>your wallet {shortKey(walletLock)}</b>, which is no longer
+              connected. Reconnect it to continue — or abandon and start a new run.
+            </div>
+            <div className="lj-relock-actions">
+              <button className="lj-wallet-btn" onClick={onReconnect}>
+                ⛓ Reconnect wallet
+              </button>
+              <button className="lj-back" onClick={onAbandon}>
+                Abandon walkthrough
+              </button>
+            </div>
+          </div>
+        )}
+        {step.status === "ready" && !running && !walletLock && (
           <div className="lj-step-run">
             <button className={`lj-run-btn ${isAi ? "ai" : ""}`} onClick={onRun}>
               {isAi ? "✦" : "▶"} {step.action}
@@ -1780,11 +1968,14 @@ function JudgeGuided({
   health,
   onHealth,
   wallet,
+  initialPreset,
   onClose,
 }: {
   health: JudgeHealth | null;
   onHealth: (h: JudgeHealth | null) => void;
   wallet: WalletState;
+  /** Preset the caller wants started immediately (hero CTA deep-link). */
+  initialPreset?: string | null;
   onClose: () => void;
 }) {
   const [presets, setPresets] = useState<JudgePreset[]>([]);
@@ -1794,6 +1985,8 @@ function JudgeGuided({
   const [runStartTs, setRunStartTs] = useState(0);
   /** Preset chosen while no wallet was connected — held at the wallet gate. */
   const [pendingPreset, setPendingPreset] = useState<string | null>(null);
+  /** An active server-side walkthrough offered for resume (never auto-entered). */
+  const [resumable, setResumable] = useState<JudgeSession | null>(null);
   const explorer = health?.explorer ?? "https://testnet.cspr.live";
 
   useEffect(() => {
@@ -1801,12 +1994,16 @@ function JudgeGuided({
       .presets()
       .then(setPresets)
       .catch(() => {});
-    // Resume an in-progress walkthrough after a refresh instead of stranding it.
+    // An in-progress walkthrough is OFFERED for resume on the intro — never
+    // silently jumped into (a visitor who picked nothing must land on the picker).
     judge
       .health()
       .then((h) => {
         onHealth(h);
-        if (h.activeSession && h.activeSession.status === "active") setSession(h.activeSession);
+        if (h.activeSession && h.activeSession.status === "active") {
+          rememberJudgeToken(h.activeSession.id, h.activeSession.token);
+          setResumable(h.activeSession);
+        }
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1831,14 +2028,36 @@ function JudgeGuided({
   };
 
   /**
-   * Soft wallet gate: connecting is the RECOMMENDED path (the advance lands in
-   * your own wallet), but never a hard wall — a judge without the extension
-   * can always continue with the demo supplier account.
+   * Soft wallet gate — ONLY for the happy path (the one preset that pays out).
+   * Policy-block reverts by design and x402 reuses an existing invoice, so a
+   * wallet adds nothing there; asking would be friction without meaning.
    */
   const start = (preset: string) => {
+    if (preset !== "happy") {
+      void doStart(preset);
+      return;
+    }
     if (wallet.connected && wallet.publicKey) void doStart(preset, wallet.publicKey);
     else setPendingPreset(preset);
   };
+
+  // Hero deep-link: start the requested preset once presets are in and nothing
+  // is already running or offered for resume.
+  const initialConsumed = useRef(false);
+  useEffect(() => {
+    if (
+      initialPreset &&
+      !initialConsumed.current &&
+      presets.length &&
+      !session &&
+      !resumable &&
+      !busy
+    ) {
+      initialConsumed.current = true;
+      start(initialPreset);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPreset, presets, resumable]);
 
   // Wallet connected while waiting at the gate — continue automatically.
   useEffect(() => {
@@ -1848,8 +2067,13 @@ function JudgeGuided({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wallet.connected, wallet.publicKey]);
 
+  // A walkthrough that pays the visitor's wallet is BOUND to that wallet:
+  // disconnecting (or switching accounts) locks further steps until reconnect.
+  const walletMismatch =
+    !!session?.wallet && (!wallet.connected || wallet.publicKey !== session.wallet);
+
   const runNext = async () => {
-    if (!session) return;
+    if (!session || walletMismatch) return;
     setErr(null);
     setRunStartTs(Date.now());
     setBusy(true);
@@ -1917,6 +2141,33 @@ function JudgeGuided({
             open on the explorer the instant it confirms. Each screen tells you what just happened,
             why it matters, and what comes next.
           </p>
+
+          {resumable && resumable.status === "active" && (
+            <div className="lj-resume">
+              <div className="lj-resume-text">
+                <b>You have a walkthrough in progress:</b> {resumable.title} (
+                {
+                  resumable.steps.filter((st) => st.status === "done" || st.status === "reverted")
+                    .length
+                }
+                /{resumable.steps.length} steps done)
+              </div>
+              <div className="lj-resume-actions">
+                <button
+                  className="lj-wallet-btn"
+                  onClick={() => {
+                    setSession(resumable);
+                    setResumable(null);
+                  }}
+                >
+                  Resume →
+                </button>
+                <button className="lj-back" onClick={() => setResumable(null)}>
+                  Start fresh instead
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Wallet story — make it YOUR money. Only ever asks for a public key. */}
           {wallet.connected && wallet.publicKey ? (
@@ -1986,11 +2237,23 @@ function JudgeGuided({
                 <button
                   key={p.id}
                   className={`lj-preset ${p.id === "policy-block" ? "ace" : ""}`}
-                  disabled={paused || busy}
+                  disabled={
+                    paused ||
+                    busy ||
+                    health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.ok === false
+                  }
+                  title={
+                    health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.reason ??
+                    undefined
+                  }
                   onClick={() => start(p.id)}
                 >
                   <div className="lj-preset-title">{p.title}</div>
-                  <div className="lj-preset-sub">{p.subtitle}</div>
+                  <div className="lj-preset-sub">
+                    {health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.ok === false
+                      ? health?.canRun?.[p.id === "policy-block" ? "policyBlock" : p.id]?.reason
+                      : p.subtitle}
+                  </div>
                   <div className="lj-preset-meta">
                     {p.steps.length} steps · {p.steps.filter((s) => s.kind === "chain").length} real
                     transactions
@@ -2015,7 +2278,12 @@ function JudgeGuided({
           <div className="lj-run-top">
             <div>
               <div className="lj-run-kicker">
-                {session.id} · {session.subtitle}
+                {session.displayId ?? session.id.slice(0, 8)} · {session.subtitle}
+              </div>
+              <div className={`lj-payout ${session.wallet ? "own" : ""}`}>
+                {session.wallet
+                  ? `◈ advance pays YOUR wallet ${shortKey(session.wallet)}`
+                  : "advance pays the demo supplier"}
               </div>
               <h1>{session.title}</h1>
             </div>
@@ -2048,6 +2316,9 @@ function JudgeGuided({
                 running={busy && i === session.cursor}
                 runStartTs={runStartTs}
                 nextTitle={session.steps[i + 1]?.title}
+                walletLock={walletMismatch ? session.wallet : null}
+                onReconnect={() => void connectWallet()}
+                onAbandon={reset}
               />
             ))}
           </div>
@@ -2057,8 +2328,8 @@ function JudgeGuided({
           {session.status === "done" && (
             <div className="lj-finish">
               <div className="lj-finish-head">
-                ✓ Walkthrough complete — every step above is a real Casper Testnet transaction you
-                can open on CSPR.live.
+                ✓ Walkthrough complete — every on-chain step above is a real Casper Testnet
+                transaction you can open on CSPR.live.
               </div>
               {session.wallet && session.preset === "happy" && (
                 <div className="lj-finish-wallet">

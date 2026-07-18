@@ -148,10 +148,11 @@ banner):
   no simulation. Three presets: the happy path (submit → AI underwrite →
   register → fund → attest → x402 purchase → settle), the **policy firewall**
   (the AI approves an oversized invoice and the *contract* reverts funding with
-  `SingleInvoiceCapExceeded`), and a standalone x402 report purchase. Runs are
-  preset-only, small-capped and rate-limited (one run / 10 min), signed by
-  pre-funded testnet-only demo keys — a controlled way to let anyone trigger
-  real value safely. See [docs/judge-mode-design.md](docs/judge-mode-design.md).
+  `SingleInvoiceCapExceeded`), and a standalone x402 report purchase. Walkthroughs are
+  preset-only and small-capped, signed by pre-funded testnet-only demo keys;
+  wallet payouts are budgeted (one per wallet & per IP each 24 h, plus a global
+  daily cap) and sessions are token-guarded — a controlled way to let anyone
+  trigger real value safely. See [docs/judge-mode-design.md](docs/judge-mode-design.md).
 - **Safe showcase** — the same site, secondary entry: on-chain *reads* come from
   a captured snapshot of the real testnet contract (verifiable on cspr.live) and
   the AI underwriter runs *live*, but *writes* are simulated in server memory so

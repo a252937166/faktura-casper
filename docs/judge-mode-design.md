@@ -6,6 +6,21 @@
 > site, click one button, and each step signs a real Testnet transaction with an
 > explorer link — while the safe public showcase stays untouched and always up.
 
+
+> **Implementation status — v0.2 (2026-07-18).** The shipped design evolved from
+> the batch `/run` orchestrator described below into a **guided session model**:
+> `POST /api/judge/session {preset, supplierAddress?}` → `{id, displayId, token}`,
+> then `POST /api/judge/session/:id/next` (header `X-Judge-Token`) signs exactly
+> **one transaction per click**; failed steps stay retryable. Additions since
+> this document was first written: connect-your-wallet payouts (public key →
+> `account-hash-…` via the JS SDK; happy-path only), persisted anti-abuse quotas
+> (one payout per wallet & per IP per 24 h + a global daily CSPR cap in
+> `agents/data/judge-limits.json`), unguessable session ids + bearer tokens,
+> CORS allow-list, `trust proxy` IP handling, and per-preset `canRun` health.
+> The free-form demo write routes are disabled on the live backend — the
+> walkthrough is the only signing surface. Sections below are kept for the
+> architectural rationale; where they conflict, the code and this note win.
+
 ## 1. Topology (two independent backends, one nginx)
 
 ```
@@ -132,12 +147,12 @@ existing UI is undisturbed.
 
 ## 5. Deliverables checklist
 
-- [ ] `agents/src/judge.ts` — router + orchestrator + health + rate-limit
-- [ ] `server.ts` — mount judge router when `FAKTURA_JUDGE=1`
-- [ ] `web/src/api.ts` — judge client (health/presets/run/poll)
-- [ ] `web/src/App.tsx` — hero CTAs + interactive JudgeRunner + health panel
-- [ ] Linux glibc-2.17 livenet binary built + shipped to server
-- [ ] server: keys uploaded (600), `faktura-live` systemd unit on :4034, nginx route
-- [ ] balances funded via faucet; health green
-- [ ] 3 self-test runs (happy / policy-block / x402) green, tx links verified
-- [ ] new video, BUIDL page tx table, release v0.2-final-live-testnet
+- [x] `agents/src/judge.ts` — router + orchestrator + health + rate-limit
+- [x] `server.ts` — mount judge router when `FAKTURA_JUDGE=1`
+- [x] `web/src/api.ts` — judge client (health/presets/run/poll)
+- [x] `web/src/App.tsx` — hero CTAs + interactive JudgeRunner + health panel
+- [x] Linux glibc-2.17 livenet binary built + shipped to server
+- [x] server: keys uploaded (600), `faktura-live` systemd unit on :4034, nginx route
+- [x] balances funded via faucet; health green
+- [x] 3 self-test runs (happy / policy-block / x402) green, tx links verified
+- [x] new video, BUIDL page tx table, release v0.2-final-live-testnet
