@@ -269,17 +269,30 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
       deployHash: record.chain.fundHash,
     });
   } catch (e) {
-    record.status = "policy_blocked";
-    record.chain.fundError = normalizeRevert((e as Error).message);
-    upsertInvoice(record);
-    feed.publish({
-      actor: "underwriter",
-      kind: "policy_block",
-      message: SIM()
-        ? `SHOWCASE policy simulation blocked funding for invoice #${record.id}: ${record.chain.fundError}`
-        : `Casper policy blocked funding for invoice #${record.id}: ${record.chain.fundError}`,
-      invoiceId: record.id,
-    });
+    const norm = normalizeRevert((e as Error).message);
+    record.chain.fundError = norm;
+    if (classifyFundError(norm) === "policy") {
+      record.status = "policy_blocked";
+      upsertInvoice(record);
+      feed.publish({
+        actor: "underwriter",
+        kind: "policy_block",
+        message: SIM()
+          ? `SHOWCASE policy simulation blocked funding for invoice #${record.id}: ${norm}`
+          : `Casper policy blocked funding for invoice #${record.id}: ${norm}`,
+        invoiceId: record.id,
+      });
+    } else {
+      // Infrastructure failure — NOT a policy verdict. Say so.
+      record.status = "error";
+      upsertInvoice(record);
+      feed.publish({
+        actor: "system",
+        kind: "error",
+        message: `Funding attempt for invoice #${record.id} failed (infrastructure, not a policy verdict): ${norm} — the invoice stays registered; funding can be retried`,
+        invoiceId: record.id,
+      });
+    }
     return record;
   }
 
@@ -329,6 +342,16 @@ function normalizeRevert(msg: string): string {
   };
   if (m) return `User error: ${m[1]} (${names[m[1]] ?? "see contracts/src/lib.rs"})`;
   return msg.slice(0, 160);
+}
+
+/**
+ * A funding failure is only a POLICY BLOCK when the contract itself said so
+ * (typed policy errors 13–16). Everything else — RPC timeouts, node hiccups,
+ * livenet process errors — is infrastructure and must never be narrated as
+ * "Casper policy blocked funding": that would be a false story.
+ */
+export function classifyFundError(normalized: string): "policy" | "infra" {
+  return /User error:\s*(13|14|15|16)\b/.test(normalized) ? "policy" : "infra";
 }
 
 async function finalizeReject(

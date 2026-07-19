@@ -163,3 +163,23 @@ transaction is in flight; a *different* visitor can take the desk only after
 - [x] balances funded via faucet; health green; canRun feasibility verified
 - [x] self-tests: happy (+wallet 01/02), policy-block (exact error 15), x402
 - [x] releases `v0.2.0` → `v0.2.4-final` (current); evidence pack in DORAHACKS.md
+
+## Canonical serialization spec (faktura.decision.v1)
+
+Cross-language verifiers re-hash the memo DOCUMENT, so the byte layout is a
+contract:
+
+- Encoding: UTF-8 JSON with **no whitespace** (`JSON.stringify` defaults).
+- Field order is FIXED (insertion order, exactly as `buildDecisionMemo`
+  emits): `schema, intakeId, invoiceNumber, decidedAt, provider, model,
+  opinion, applied, policyNotes`; inside `opinion`: `approve, risk_score,
+  discount_bps, rationale, red_flags[, confidence]` (confidence omitted when
+  absent, never null); inside `applied`: `approve, risk_score, discount_bps`.
+- Hash: lowercase hex SHA-256 of those bytes, prefixed `sha256:`.
+- `JSON.parse` in any mainstream runtime preserves this key order, so
+  "parse the shipped memo → stringify → SHA-256" reproduces the anchored
+  hash without any canonicalization library. A verifier in another language
+  must construct the object in the order above (or preserve parse order)
+  before serializing. The same rules apply to `faktura.consumer-verdict.v1`
+  and the receipt body of `faktura.credit-receipt.v1` (hash covers the body
+  without the trailing `receiptHash` field).

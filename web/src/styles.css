@@ -890,8 +890,22 @@ td:first-child {
   .hero {
     grid-template-columns: 1fr;
   }
+  /* the animated invoice is the strongest visual explainer — compact it on
+     tablets instead of hiding it */
   .doc-wrap {
+    margin: 26px auto 0;
+    max-width: 340px;
+    transform: none;
+  }
+  .doc-wrap .doc {
+    transform: none;
+    padding: 16px 18px;
+  }
+  .doc-wrap .doc-row-optional {
     display: none;
+  }
+  .doc-wrap .doc-caption {
+    font-size: 10.5px;
   }
   .stats {
     grid-template-columns: repeat(3, 1fr);
@@ -4147,7 +4161,8 @@ button.field-wallet {
 }
 @media (min-width: 720px) {
   .lj-presets.challenge {
-    grid-template-columns: repeat(3, 1fr);
+    /* four challenge cards read as a stable 2x2, never a 3+1 orphan row */
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 .lj-preset-head {
@@ -4758,4 +4773,206 @@ button.field-wallet {
 .mcp2-param-none span {
   font-style: italic;
   color: rgba(23, 19, 13, 0.5);
+}
+
+/* ---------- audit 7: interaction-state hardening ---------- */
+
+/* fixed-size CTA placeholder — no layout jump while health resolves */
+.hero-cta-checking {
+  min-width: 240px;
+  opacity: 0.65;
+  cursor: default;
+}
+.hero-agent-link {
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+.hero-agent-link .linklike {
+  color: #5b32a8;
+  font-weight: 600;
+}
+.ds-pill.live.amber i {
+  background: #c98a1b;
+}
+
+/* busy banner on the picker */
+.lj-busy {
+  margin: 14px 0;
+  padding: 12px 16px;
+  border: 1.5px solid #c98a1b;
+  border-left-width: 5px;
+  border-radius: 4px;
+  background: rgba(201, 138, 27, 0.07);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.lj-busy-actions {
+  display: flex;
+  gap: 16px;
+  margin-top: 6px;
+}
+
+/* collapsed health bar toggle */
+.lj-health-toggle {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.6px;
+  background: none;
+  border: 1px solid rgba(23, 19, 13, 0.3);
+  border-radius: 3px;
+  padding: 2px 8px;
+  margin-left: 10px;
+  cursor: pointer;
+  color: inherit;
+}
+.lj-health-toggle:hover {
+  border-color: rgba(23, 19, 13, 0.6);
+}
+
+/* close-confirmation layer inside the runner */
+.lj-confirm-bd {
+  position: fixed;
+  inset: 0;
+  z-index: 320;
+  background: rgba(23, 19, 13, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.lj-confirm {
+  max-width: 460px;
+  background: var(--card, #fffdf7);
+  border: 2px solid var(--ink, #17130d);
+  border-radius: 6px;
+  box-shadow: 8px 8px 0 rgba(217, 45, 45, 0.25);
+  padding: 20px 22px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.lj-confirm p {
+  margin: 8px 0 14px;
+  color: rgba(23, 19, 13, 0.75);
+}
+.lj-confirm-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.lj-back.danger {
+  border-color: #d92d2d;
+  color: #d92d2d;
+}
+
+/* proofs-collected trophy block on the finish screen */
+.lj-proofs {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1.5px dashed rgba(23, 19, 13, 0.4);
+  border-radius: 5px;
+}
+.lj-proofs-rows {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 12px;
+}
+.lj-proof-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+}
+.lj-proof-mark {
+  font-weight: 700;
+  color: #0f8a5f;
+}
+.lj-proof-label {
+  flex: 1;
+}
+
+/* MCP drawer sticky topbar */
+.mcp2-topbar {
+  position: sticky;
+  top: 0;
+  margin: -36px -46px 14px;
+  padding: 12px 46px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--card, #fffdf7);
+  border-bottom: 1.5px solid rgba(122, 77, 208, 0.4);
+  z-index: 5;
+}
+.mcp2-topbar > span {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #7a4dd0;
+}
+.mcp2-close {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 14px;
+  background: #7a4dd0;
+  color: #fff;
+  border: 1.5px solid #5b32a8;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.mcp2-close:hover {
+  filter: brightness(1.1);
+}
+
+/* invoice drawer close button */
+.drawer-x {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  font-size: 15px;
+  font-weight: 700;
+  background: none;
+  border: 1.5px solid rgba(23, 19, 13, 0.35);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: inherit;
+  z-index: 2;
+}
+.drawer-x:hover {
+  border-color: var(--ink, #17130d);
+}
+.drawer {
+  position: fixed; /* re-assert for stacking context of .drawer-x */
+}
+
+/* fallback judge-demo steps become real buttons */
+.judge-list .jrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.judge-list .jrow:focus-visible {
+  outline: 2px solid #d92d2d;
+  outline-offset: 2px;
+}
+
+/* mobile header: logo + wallet only */
+@media (max-width: 720px) {
+  .header {
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .header a.chip,
+  .header button.chip-btn {
+    display: none;
+  }
 }

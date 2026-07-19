@@ -33,6 +33,7 @@ import {
 import { ClickUI, CsprClickThemes, ThemeModeType, useClickRef } from "@make-software/csprclick-ui";
 import { ThemeProvider as ClickThemeProvider } from "styled-components";
 import { EVIDENCE } from "./evidence";
+import { useModalA11y } from "./useModalA11y";
 
 /**
  * Bridges CSPR.click into the wallet module: account events feed the shared
@@ -150,11 +151,18 @@ function WalletChip({
 
   useEffect(() => {
     if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
     const close = (e: MouseEvent) => {
       if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [open]);
 
   if (!wallet.connected || !wallet.publicKey) {
@@ -318,11 +326,11 @@ function HeroInvoice() {
         <header>
           INVOICE <span>№ 2026-0{347 + run}</span>
         </header>
-        <div className="doc-row">
+        <div className="doc-row doc-row-optional">
           <span>Supplier</span>
           <b>{r.supplier}</b>
         </div>
-        <div className="doc-row">
+        <div className="doc-row doc-row-optional">
           <span>Debtor</span>
           <b>Aurora Retail AG</b>
         </div>
@@ -369,6 +377,55 @@ function timeAgo(ts: number) {
   if (s < 3600) return `${(s / 60).toFixed(0)}m ago`;
   return `${(s / 3600).toFixed(1)}h ago`;
 }
+
+// ---- ONE live-desk state machine — hero, status strip, picker and runner all
+// read the SAME six states, so the site never says "warming" in one corner
+// and "node down" in another.
+export type LiveState = "checking" | "ready" | "warming" | "busy" | "paused" | "offline";
+
+export function deriveLiveState(probed: boolean, h: JudgeHealth | null): LiveState {
+  if (!probed) return "checking";
+  if (!h) return "offline";
+  if (h.paused) return (h.uptimeSec ?? 999) < 150 ? "warming" : "paused";
+  if (h.deskBusy) return "busy";
+  return "ready";
+}
+
+const LIVE_COPY: Record<
+  LiveState,
+  { dot: "green" | "amber" | "muted"; pill: string; sub: string }
+> = {
+  checking: {
+    dot: "muted",
+    pill: "CHECKING LIVE DESK…",
+    sub: "Checking the live signing desk…",
+  },
+  ready: {
+    dot: "green",
+    pill: "LIVE AI DESK READY",
+    sub: "Guided workflow: real on-chain transactions. Desk preview below: safe showcase data.",
+  },
+  warming: {
+    dot: "amber",
+    pill: "DESK RESTARTING",
+    sub: "The live desk just restarted and is warming up — ready in under a minute.",
+  },
+  busy: {
+    dot: "amber",
+    pill: "DESK SIGNING",
+    sub: "Another visitor's walkthrough is signing right now — the desk signs one story at a time. Watch the latest verified run, or try again in a minute or two.",
+  },
+  paused: {
+    dot: "amber",
+    pill: "LIVE SIGNING PAUSED",
+    sub: "Live signing is temporarily paused — the Casper node is unreachable right now; the desk preview below still works.",
+  },
+  offline: {
+    dot: "muted",
+    pill: "SAFE SHOWCASE",
+    sub: "Safe Showcase — no gas, writes simulated from a real testnet snapshot. Run the stack in live mode to sign every step.",
+  },
+};
 
 export default function App() {
   const [pool, setPool] = useState<PoolResponse | null>(null);
@@ -466,6 +523,8 @@ export default function App() {
   }, []);
 
   const liveJudge = !!jhealth; // the dedicated live-testnet backend answered
+  const liveState = deriveLiveState(judgeProbed, jhealth);
+  const liveCopy = LIVE_COPY[liveState];
 
   const stats = pool?.stats;
   const tvl = stats ? motesToCspr(stats.liquid) + motesToCspr(stats.deployed) : 0;
@@ -530,8 +589,8 @@ export default function App() {
           <div className="desk-status-main">
             {liveJudge ? (
               <>
-                <span className="ds-pill live">
-                  <i /> LIVE DESK ONLINE
+                <span className={`ds-pill live ${liveState !== "ready" ? "amber" : ""}`}>
+                  <i /> {liveCopy.pill}
                 </span>
                 <span className="ds-text">
                   Trigger <b>real, agent-signed Casper transactions</b> in the{" "}
@@ -609,7 +668,13 @@ export default function App() {
             An AI can approve the invoice. <b>Only Casper can move the money.</b>
           </p>
           <div className="hero-cta">
-            {liveJudge ? (
+            {liveState === "checking" ? (
+              // Fixed-size placeholder — the CTA row must never flash a wrong
+              // entry point and then jump when the health probe lands.
+              <button className="btn-primary hero-cta-checking" disabled>
+                ● Checking live desk…
+              </button>
+            ) : liveState === "ready" ? (
               <>
                 <button className="btn-primary" onClick={() => openRunner("happy")}>
                   ▶ Use the real AI desk
@@ -618,16 +683,43 @@ export default function App() {
                   ⛔ Watch the AI get blocked
                 </button>
               </>
+            ) : liveState === "busy" ? (
+              <>
+                <button
+                  className="btn-primary"
+                  onClick={() =>
+                    document
+                      .querySelector(".latest-run")
+                      ?.scrollIntoView({ behavior: "smooth", block: "center" })
+                  }
+                >
+                  ▶ View the latest verified run
+                </button>
+                <button className="btn-outline" onClick={() => openRunner()}>
+                  Browse the five stories →
+                </button>
+              </>
+            ) : liveState === "warming" || liveState === "paused" ? (
+              <>
+                <button className="btn-primary" disabled>
+                  ▶ Use the real AI desk
+                </button>
+                <button className="btn-outline" disabled>
+                  ⛔ Watch the AI get blocked
+                </button>
+              </>
             ) : (
               <button className="btn-primary" onClick={() => setJudgeOpen(true)}>
                 ▶ RUN JUDGE DEMO
               </button>
             )}
-            <button className="btn-agent" onClick={() => setMcpOpen(true)}>
-              🤖 Plug in your agent · MCP
-            </button>
           </div>
-          {liveJudge && (
+          <p className="hero-agent-link">
+            <button className="linklike" onClick={() => setMcpOpen(true)}>
+              🤖 Building an agent? Open the MCP interface →
+            </button>
+          </p>
+          {liveState === "ready" && (
             <p className="hero-cost">
               5 guided steps · 4 real on-chain transactions · about 3–6 minutes
             </p>
@@ -640,22 +732,10 @@ export default function App() {
               Watch the 3-min demo ↗
             </a>
           </p>
-          {liveJudge ? (
+          {liveState !== "checking" && (
             <div className="hero-live">
-              <span className={`live-dot ${jhealth?.paused ? "amber" : "green"}`} />
-              {jhealth?.paused
-                ? (jhealth?.uptimeSec ?? 999) < 150
-                  ? "The live desk just restarted and is warming up — ready in under a minute."
-                  : "Live workflow paused — the Casper node is unreachable right now; the desk preview below still works."
-                : "Guided workflow: real on-chain transactions. Desk preview below: safe showcase data."}
+              <span className={`live-dot ${liveCopy.dot}`} /> {liveCopy.sub}
             </div>
-          ) : (
-            judgeProbed && (
-              <div className="hero-live">
-                <span className="live-dot muted" /> Safe Showcase — no gas, writes simulated from a
-                real testnet snapshot. Run the stack in live mode to sign every step.
-              </div>
-            )
           )}
           <a
             className="hero-builton"
@@ -866,10 +946,10 @@ export default function App() {
             <div>
               <h2>Don't take our word for it. Trigger it yourself. Verify every transaction.</h2>
               <p>
-                Five guided walkthroughs — the full lifecycle, the policy firewall, an x402 purchase
-                where the buyer acts on the report, and a default workout. One click per step, one
-                real agent-signed Casper transaction per click, explorer links as they confirm. Your
-                wallet never signs anything.
+                Five guided walkthroughs — the full lifecycle, the policy firewall, an x402
+                purchase, an AI rejection where the buyer acts on the report, and a default workout.
+                One click per step, one real agent-signed Casper transaction per click, explorer
+                links as they confirm. Your wallet never signs anything.
               </p>
             </div>
             <button className="btn-primary big" onClick={() => openRunner()}>
@@ -881,14 +961,22 @@ export default function App() {
 
       {/* ---- The live desk (book & controls) ---- */}
       <section className="desk-head" id="desk">
-        <h2 className="section-title">The desk — live book &amp; controls</h2>
+        <h2 className="section-title">
+          {meta?.mode === "showcase"
+            ? "Desk preview — safe interactive showcase"
+            : "The desk — live book & controls"}
+        </h2>
         <p className="desk-head-sub">
           {meta?.mode === "showcase"
             ? "Reads come from a captured snapshot of the real testnet contract; new writes here are simulated (the guided walkthrough is the live surface)."
             : "Everything below reads and writes the live testnet contract."}
         </p>
         <button className="desk-toggle" onClick={() => setDeskOpen(!deskOpen)}>
-          {deskOpen ? "▴ Collapse the full desk" : "▾ Open the full live desk"}
+          {deskOpen
+            ? "▴ Collapse the full desk"
+            : meta?.mode === "showcase"
+              ? "▾ Open the full desk preview"
+              : "▾ Open the full live desk"}
         </button>
       </section>
 
@@ -1284,7 +1372,67 @@ function DeskSummary({
  * More convincing than any static metric: it names the run, lists every step
  * and links every transaction.
  */
+/** The trophies of a finished run — what was PROVEN, each with its tx. */
+const PROOF_LABELS: Record<string, string> = {
+  underwrite: "AI decision memo (hashed)",
+  register: "Invoice registered on-chain",
+  fund: "Supplier payout",
+  attest: "Decision attestation anchored",
+  settle: "Settlement — pool made whole",
+  default: "Write-off — loss absorbed by LPs",
+  "pick-expired": "Overdue inventory located",
+  pick: "Verified invoice selected",
+  x402: "Machine payment (HTTP 402)",
+  consumer: "Consumer verdict anchored",
+  "attest-reject": "Rejection anchored on-chain",
+};
+
+function ProofsCollected({ session }: { session: JudgeSession }) {
+  const [copied, setCopied] = useState(false);
+  const done = session.steps.filter((st) => st.status === "done" || st.status === "reverted");
+  if (!done.length) return null;
+  return (
+    <div className="lj-proofs">
+      <div className="lj-pe-kicker">PROOFS COLLECTED</div>
+      <div className="lj-proofs-rows">
+        {done.map((st) => (
+          <div className="lj-proof-row" key={st.key}>
+            <span className="lj-proof-mark">{st.status === "reverted" ? "⛔" : "✓"}</span>
+            <span className="lj-proof-label">
+              {st.status === "reverted" && st.key === "fund"
+                ? "Policy revert — contract said no"
+                : (PROOF_LABELS[st.key] ?? st.title)}
+            </span>
+            {st.txHash && (
+              <a className="lr-tx mono" target="_blank" rel="noreferrer" href={st.explorerUrl}>
+                {st.txHash.slice(0, 8)}… ↗
+              </a>
+            )}
+          </div>
+        ))}
+      </div>
+      {session.displayId && (
+        <button
+          className="linklike"
+          onClick={() => {
+            void navigator.clipboard
+              ?.writeText(`${location.origin}/api/judge/recent/${session.displayId}`)
+              .then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              })
+              .catch(() => {});
+          }}
+        >
+          {copied ? "✓ Copied" : "⧉ Copy proof link"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function LatestRunReceipt({ runs, onOpen }: { runs: RecentRun[]; onOpen: () => void }) {
+  const [copied, setCopied] = useState(false);
   const run = runs[0];
   if (!run) return null;
   const txs = run.steps.filter((s) => s.txHash);
@@ -1331,11 +1479,15 @@ function LatestRunReceipt({ runs, onOpen }: { runs: RecentRun[]; onOpen: () => v
             onClick={() => {
               void navigator.clipboard
                 ?.writeText(`${location.origin}/api/judge/recent/${run.displayId}`)
+                .then(() => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                })
                 .catch(() => {});
             }}
             title="Copy a curl-able proof link to this run"
           >
-            ⧉ Copy proof link
+            {copied ? "✓ Copied" : "⧉ Copy proof link"}
           </button>
           <button className="linklike" onClick={onOpen}>
             Run the next one yourself →
@@ -1722,11 +1874,15 @@ function Drawer({
       ].filter(([, h]) => h),
     [record],
   );
+  const invoiceDialogRef = useModalA11y<HTMLDivElement>(true, onClose);
 
   return (
     <>
       <div className="drawer-backdrop" onClick={onClose} />
-      <div className="drawer">
+      <div className="drawer" role="dialog" aria-modal="true" ref={invoiceDialogRef}>
+        <button className="drawer-x" onClick={onClose} aria-label="Close invoice details">
+          ✕
+        </button>
         <h2>
           {record.intake.invoiceNumber}{" "}
           <span className={`badge ${status}`}>{status.toUpperCase()}</span>
@@ -2175,10 +2331,17 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
   const step = JUDGE_STEPS[i];
   const last = i === JUDGE_STEPS.length - 1;
   const live = meta?.mode === "live-testnet";
+  const judgeDemoRef = useModalA11y<HTMLDivElement>(true, onClose);
   return (
     <>
       <div className="drawer-backdrop" onClick={onClose} />
-      <div className="judge">
+      <div
+        className="judge"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Judge demo — the 30-second story"
+        ref={judgeDemoRef}
+      >
         <div className="judge-head">
           <div>
             <div className="judge-kicker">JUDGE DEMO · the 30-second story</div>
@@ -2196,14 +2359,17 @@ function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }
         <div className="judge-body">
           <ol className="judge-list">
             {JUDGE_STEPS.map((s, n) => (
-              <li
-                key={n}
-                className={n === i ? "active" : n < i ? "done" : ""}
-                onClick={() => setI(n)}
-              >
-                <span className="jn">{n < i ? "✓" : n + 1}</span>
-                <span className="jt">{s.title}</span>
-                <span className="ja">{s.actor}</span>
+              <li key={n} className={n === i ? "active" : n < i ? "done" : ""}>
+                <button
+                  type="button"
+                  className="jrow"
+                  onClick={() => setI(n)}
+                  aria-current={n === i ? "step" : undefined}
+                >
+                  <span className="jn">{n < i ? "✓" : n + 1}</span>
+                  <span className="jt">{s.title}</span>
+                  <span className="ja">{s.actor}</span>
+                </button>
               </li>
             ))}
           </ol>
@@ -2268,34 +2434,55 @@ const STEP_ICON: Record<JudgeStep["status"], string> = {
   failed: "✕",
 };
 
-function JudgeHealthBar({ health }: { health: JudgeHealth | null }) {
+function JudgeHealthBar({ health, state }: { health: JudgeHealth | null; state?: LiveState }) {
+  const [open, setOpen] = useState(false);
   if (!health) return null;
+  // Ops detail (balances, budgets) is for engineers — visitors get one line.
+  // Anything abnormal auto-expands so the reason is never hidden.
+  const s = state ?? deriveLiveState(true, health);
+  const abnormal = s !== "ready" || health.low.length > 0 || !health.rpcOk || !health.contractOk;
+  const expanded = open || abnormal;
   return (
     <div className="lj-health">
-      <span className={`live-dot ${health.rpcOk ? "green" : "amber"}`} /> RPC
-      <span className={`live-dot ${health.contractOk ? "green" : "amber"}`} /> contract
-      <span className="lj-hsep">·</span>
-      {Object.keys(health.balances).map((k) => {
-        const bal = health.balances[k];
-        const low = health.low.includes(k);
-        return (
-          <span key={k} className="lj-bal" title={`${k} key balance`}>
-            <span className={`live-dot ${bal == null || low ? "amber" : "green"}`} />
-            {k} {bal == null ? "—" : bal.toFixed(0)}
-          </span>
-        );
-      })}
-      {health.budget && (
+      <span className={`live-dot ${LIVE_COPY[s].dot}`} /> {LIVE_COPY[s].pill}
+      <span className="lj-hsep">·</span> 5 stories
+      <span className="lj-hsep">·</span> real Testnet
+      <button
+        className="lj-health-toggle"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={expanded}
+      >
+        System health &amp; budgets {expanded ? "▴" : "▾"}
+      </button>
+      {expanded && (
         <>
           <span className="lj-hsep">·</span>
-          <span
-            className="lj-bal"
-            title="Anti-abuse budgets: daily wallet-payout CSPR and signed transactions"
-          >
-            budget {health.budget.spentCspr}/{health.budget.capCspr} CSPR
-            {health.budget.deployCap != null &&
-              ` · ${health.budget.deploysToday ?? 0}/${health.budget.deployCap} tx`}
-          </span>
+          <span className={`live-dot ${health.rpcOk ? "green" : "amber"}`} /> RPC
+          <span className={`live-dot ${health.contractOk ? "green" : "amber"}`} /> contract
+          <span className="lj-hsep">·</span>
+          {Object.keys(health.balances).map((k) => {
+            const bal = health.balances[k];
+            const low = health.low.includes(k);
+            return (
+              <span key={k} className="lj-bal" title={`${k} key balance`}>
+                <span className={`live-dot ${bal == null || low ? "amber" : "green"}`} />
+                {k} {bal == null ? "—" : bal.toFixed(0)}
+              </span>
+            );
+          })}
+          {health.budget && (
+            <>
+              <span className="lj-hsep">·</span>
+              <span
+                className="lj-bal"
+                title="Anti-abuse budgets: daily wallet-payout CSPR and signed transactions"
+              >
+                budget {health.budget.spentCspr}/{health.budget.capCspr} CSPR
+                {health.budget.deployCap != null &&
+                  ` · ${health.budget.deploysToday ?? 0}/${health.budget.deployCap} tx`}
+              </span>
+            </>
+          )}
         </>
       )}
     </div>
@@ -2831,6 +3018,7 @@ function JudgeGuided({
   const [predictions, setPredictions] = useState<Record<string, string>>({});
   /** Wallet balance snapshots for the payout delta card. */
   const [walletBefore, setWalletBefore] = useState<number | null>(null);
+  const [walletBeforeFailed, setWalletBeforeFailed] = useState(false);
   const [walletAfter, setWalletAfter] = useState<number | null>(null);
   /** Payout quota hit — shown as guidance at the gate, never as an error. */
   const [payoutNotice, setPayoutNotice] = useState<string | null>(null);
@@ -2870,12 +3058,17 @@ function JudgeGuided({
     // land after funding and report the post-payout balance as "before".
     if (supplierAddress && attempt === 0) {
       setWalletBefore(null);
+      setWalletBeforeFailed(false);
       setWalletAfter(null);
       try {
         const b = await judge.balance(supplierAddress);
-        setWalletBefore(b.cspr ?? 0);
+        setWalletBefore(b.cspr ?? null);
+        setWalletBeforeFailed(b.cspr == null);
       } catch {
-        setWalletBefore(0);
+        // NEVER pretend the balance was 0 — a failed read must not turn into
+        // "advance received +101.96" for a wallet that held 100 all along.
+        setWalletBefore(null);
+        setWalletBeforeFailed(true);
       }
     }
     try {
@@ -3015,6 +3208,7 @@ function JudgeGuided({
     setErr(null);
     setPredictions({});
     setWalletBefore(null);
+    setWalletBeforeFailed(false);
     setWalletAfter(null);
     setPayoutNotice(null);
     judge
@@ -3023,35 +3217,132 @@ function JudgeGuided({
       .catch(() => {});
   };
 
+  // While the desk is busy and we are on the picker, keep availability fresh
+  // so the busy banner clears itself the moment the other run finishes.
+  useEffect(() => {
+    if (!health?.deskBusy || session) return;
+    const iv = setInterval(() => {
+      judge
+        .health()
+        .then(onHealth)
+        .catch(() => {});
+    }, 15_000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [health?.deskBusy, !!session]);
+
+  /** Close/leave is a DECISION, not an accident: while a transaction settles
+   * the visitor is warned it continues server-side; an active session offers
+   * "continue later" (resume) vs a true server-side abandon. */
+  const [confirmClose, setConfirmClose] = useState<null | {
+    kind: "settling" | "leave";
+    target: "close" | "picker";
+  }>(null);
+  const requestLeave = (target: "close" | "picker") => {
+    if (!session || session.status !== "active") {
+      if (target === "close") onClose();
+      else reset();
+      return;
+    }
+    setConfirmClose({ kind: busy ? "settling" : "leave", target });
+  };
+  const requestClose = () => requestLeave("close");
+  const leaveWithoutAbandon = () => {
+    const t = confirmClose?.target ?? "close";
+    setConfirmClose(null);
+    if (t === "close") onClose();
+    else reset();
+  };
+  const abandonSafely = async () => {
+    if (!session) return;
+    try {
+      await judge.abandon(session.id);
+    } catch (e) {
+      if ((e as ApiError).status === 409) {
+        setConfirmClose((c) => (c ? { ...c, kind: "settling" } : c));
+        return;
+      }
+      /* 404/expired — nothing left to abandon */
+    }
+    const t = confirmClose?.target ?? "close";
+    setConfirmClose(null);
+    reset();
+    if (t === "close") onClose();
+  };
+  const pageRef = useModalA11y<HTMLDivElement>(true, () =>
+    confirmClose ? setConfirmClose(null) : requestClose(),
+  );
+
   const paused = health?.paused;
+  // Same six-state machine as the homepage — the runner must never contradict
+  // the hero ("warming up" there, "node down" here).
+  const runnerState = deriveLiveState(true, health);
   const doneCount = session
     ? session.steps.filter((s) => s.status === "done" || s.status === "reverted").length
     : 0;
 
   return (
-    <div className="lj-page">
+    <div
+      className="lj-page"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Guided live walkthrough"
+      ref={pageRef}
+    >
       <header className="lj-top">
         <div className="lj-brand">
           FAKTU<em>RA</em> <span className="lj-live">● LIVE JUDGE MODE</span>
         </div>
-        <button className="lj-close" onClick={onClose}>
+        <button className="lj-close" onClick={requestClose} data-autofocus>
           ✕ close
         </button>
       </header>
 
-      <JudgeHealthBar health={health} />
+      <JudgeHealthBar health={health} state={runnerState} />
 
-      {paused && (
-        <div className="lj-paused">
-          Live judge mode is temporarily paused — the Casper node is unreachable right now. The safe
-          showcase remains fully available.
+      {(runnerState === "paused" || runnerState === "warming") && (
+        <div className="lj-paused">{LIVE_COPY[runnerState].sub}</div>
+      )}
+
+      {runnerState === "busy" && !session && (
+        <div className="lj-busy">
+          <b>Another live walkthrough is signing right now.</b> The desk signs one story at a time —
+          estimated availability ~1–2 minutes. You can browse the stories below meanwhile.
+          <span className="lj-busy-actions">
+            <button
+              className="linklike"
+              onClick={() => {
+                onClose();
+                setTimeout(
+                  () =>
+                    document
+                      .querySelector(".latest-run")
+                      ?.scrollIntoView({ behavior: "smooth", block: "center" }),
+                  60,
+                );
+              }}
+            >
+              Watch the latest verified run →
+            </button>
+            <button
+              className="linklike"
+              onClick={() => {
+                judge
+                  .health()
+                  .then(onHealth)
+                  .catch(() => {});
+              }}
+            >
+              ↻ Refresh availability
+            </button>
+          </span>
         </div>
       )}
 
       {!session && (
         <div className="lj-intro">
           <p className="lj-intro-kicker">You are the credit desk.</p>
-          <h1>Move real capital on Casper — one step, one signature at a time.</h1>
+          <h1>Move real capital on Casper — one step, one agent-signed transaction at a time.</h1>
           <p className="lj-intro-lede">
             Choose a story below. You trigger each step yourself: the AI underwriter thinks out
             loud, then every on-chain move signs a <b>real Casper transaction</b> you can open on
@@ -3173,7 +3464,7 @@ function JudgeGuided({
                           <button
                             key={p.id}
                             className={`lj-preset ${p.id === "policy-block" ? "ace" : ""} ${group}`}
-                            disabled={paused || busy || cr?.ok === false}
+                            disabled={paused || busy || cr?.ok === false || !!health?.deskBusy}
                             title={cr?.reason ?? undefined}
                             onClick={() => start(p.id)}
                           >
@@ -3182,7 +3473,11 @@ function JudgeGuided({
                               {meta && <span className="lj-preset-time">{meta.time}</span>}
                             </div>
                             <div className="lj-preset-sub">
-                              {cr?.ok === false ? cr?.reason : (meta?.hook ?? p.subtitle)}
+                              {cr?.ok === false
+                                ? cr?.reason
+                                : health?.deskBusy
+                                  ? "desk busy — one story signs at a time; free again in ~1–2 min"
+                                  : (meta?.hook ?? p.subtitle)}
                             </div>
                             <div className="lj-preset-meta">
                               {p.steps.length} steps ·{" "}
@@ -3208,7 +3503,7 @@ function JudgeGuided({
 
       {session && (
         <div className="lj-run">
-          <button className="lj-back" onClick={reset} disabled={busy}>
+          <button className="lj-back" onClick={() => requestLeave("picker")} disabled={busy}>
             ← Walkthroughs
           </button>
           <div className="lj-run-top">
@@ -3262,7 +3557,7 @@ function JudgeGuided({
                   nextTitle={session.steps[i + 1]?.title}
                   walletLock={walletMismatch ? session.wallet : null}
                   onReconnect={() => void connectWallet()}
-                  onAbandon={reset}
+                  onAbandon={() => requestLeave("picker")}
                   onOpenMcp={onOpenMcp}
                   predict={PREDICTIONS[predKey]}
                   predicted={predictions[predKey]}
@@ -3272,21 +3567,46 @@ function JudgeGuided({
             })}
           </div>
 
-          {session.wallet && walletBefore != null && walletAfter != null && (
-            <div className="lj-wallet-delta">
-              <div className="lj-pe-kicker">YOUR WALLET · REAL BALANCE MOVE</div>
-              <div className="lj-wd-rows">
-                <span>before funding</span>
-                <b className="mono">{walletBefore.toFixed(2)} CSPR</b>
-                <span>advance received</span>
-                <b className="mono good">
-                  +{Math.max(0, walletAfter - walletBefore).toFixed(2)} CSPR
-                </b>
-                <span>after funding</span>
-                <b className="mono">{walletAfter.toFixed(2)} CSPR</b>
+          {session.wallet &&
+            walletAfter != null &&
+            (walletBefore != null || walletBeforeFailed) && (
+              <div className="lj-wallet-delta">
+                <div className="lj-pe-kicker">YOUR WALLET · REAL BALANCE MOVE</div>
+                {walletBefore != null ? (
+                  <div className="lj-wd-rows">
+                    <span>before funding</span>
+                    <b className="mono">{walletBefore.toFixed(2)} CSPR</b>
+                    <span>advance received</span>
+                    <b className="mono good">
+                      +{Math.max(0, walletAfter - walletBefore).toFixed(2)} CSPR
+                    </b>
+                    <span>after funding</span>
+                    <b className="mono">{walletAfter.toFixed(2)} CSPR</b>
+                  </div>
+                ) : (
+                  // The pre-funding read failed — show only what we KNOW instead
+                  // of inventing a delta from a fake zero.
+                  <div className="lj-wd-rows">
+                    <span>before funding</span>
+                    <b className="mono">unavailable</b>
+                    <span>advance expected</span>
+                    <b className="mono good">
+                      +
+                      {(() => {
+                        const d = session.steps.find((st) => st.key === "underwrite")?.decision;
+                        const face = 2;
+                        return d
+                          ? ((face * (10_000 - d.discountBps)) / 10_000).toFixed(2)
+                          : "≈1.96";
+                      })()}{" "}
+                      CSPR
+                    </b>
+                    <span>after funding</span>
+                    <b className="mono">{walletAfter.toFixed(2)} CSPR</b>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            )}
 
           {err && <div className="lj-err">{err}</div>}
 
@@ -3325,6 +3645,7 @@ function JudgeGuided({
                   Run another walkthrough →
                 </button>
               </div>
+              <ProofsCollected session={session} />
             </div>
           )}
           {session.status === "failed" && (
@@ -3337,6 +3658,55 @@ function JudgeGuided({
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {confirmClose && (
+        <div className="lj-confirm-bd" onClick={() => setConfirmClose(null)}>
+          <div
+            className="lj-confirm"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {confirmClose.kind === "settling" ? (
+              <>
+                <b>A real Casper transaction is still settling.</b>
+                <p>
+                  Closing this page won&apos;t stop it — the desk finishes the step server-side
+                  either way. Best to keep this open a few more seconds and watch it confirm.
+                </p>
+                <div className="lj-confirm-actions">
+                  <button className="lj-wallet-btn" onClick={() => setConfirmClose(null)}>
+                    Keep waiting
+                  </button>
+                  <button className="lj-back" onClick={leaveWithoutAbandon}>
+                    Close anyway — the transaction continues
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <b>Leave this walkthrough?</b>
+                <p>
+                  <i>Continue later</i> keeps your run resumable exactly where it stopped.{" "}
+                  <i>Abandon safely</i> ends it server-side and frees the desk (and any payout
+                  reservation) for the next visitor.
+                </p>
+                <div className="lj-confirm-actions">
+                  <button className="lj-wallet-btn" onClick={() => setConfirmClose(null)}>
+                    Stay
+                  </button>
+                  <button className="lj-back" onClick={leaveWithoutAbandon}>
+                    Continue later
+                  </button>
+                  <button className="lj-back danger" onClick={() => void abandonSafely()}>
+                    Abandon safely
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -3656,10 +4026,28 @@ function McpDrawer({
     }
   };
 
+  const dialogRef = useModalA11y<HTMLDivElement>(true, onClose);
   return (
     <>
       <div className="drawer-backdrop mcp-top-bd" onClick={onClose} />
-      <div className="drawer mcp-drawer mcp-top mcp2">
+      <div
+        className="drawer mcp-drawer mcp-top mcp2"
+        role="dialog"
+        aria-modal="true"
+        aria-label="MCP Agent Interface"
+        ref={dialogRef}
+      >
+        <div className="mcp2-topbar">
+          <span className="mono">MCP AGENT INTERFACE</span>
+          <button
+            className="mcp2-close"
+            onClick={onClose}
+            aria-label="Close MCP interface"
+            data-autofocus
+          >
+            ✕ Close
+          </button>
+        </div>
         {/* ---- hero ---- */}
         <div className="mcp2-hero">
           <div className="mcp2-hero-text">
