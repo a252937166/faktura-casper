@@ -66,10 +66,11 @@ const cspr = (motes: string | bigint) => Number(BigInt(motes) / 1_000_000n) / 10
 const explorer = config.explorerBase;
 const deployUrl = (h?: string) => (h ? `${explorer}/deploy/${h}` : undefined);
 
-/** True once the node reports the transaction as EXECUTED. The explorer often
- * shows the outcome tens of seconds before the CLI's event watcher notices —
- * past that point the waiting card must stop claiming "waiting for finality". */
-async function txExecuted(hash: string): Promise<boolean> {
+/** The BLOCK HASH once the node reports the transaction as executed, else
+ * null. The explorer often shows the outcome tens of seconds before the
+ * CLI's event watcher notices — past that point the waiting card must stop
+ * claiming "waiting for finality" and start counting the catch-up instead. */
+async function txExecuted(hash: string): Promise<string | null> {
   const rpc = `${config.nodeAddress.replace(/\/$/, "")}/rpc`;
   for (const variant of ["Version1", "Deploy"]) {
     try {
@@ -84,13 +85,16 @@ async function txExecuted(hash: string): Promise<boolean> {
         }),
         signal: AbortSignal.timeout(6000),
       });
-      const j = (await r.json()) as { result?: { execution_info?: unknown } };
-      if (j.result?.execution_info) return true;
+      const j = (await r.json()) as {
+        result?: { execution_info?: { block_hash?: string } | null };
+      };
+      const info = j.result?.execution_info;
+      if (info) return String(info.block_hash ?? "").slice(0, 10) || "confirmed";
     } catch {
       /* transient RPC hiccup — the next poll retries */
     }
   }
-  return false;
+  return null;
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const sha256 = (s: string) => crypto.createHash("sha256").update(s).digest("hex");
@@ -303,6 +307,8 @@ function buildReceipt(run: RecentRun) {
 
 /** Best-effort per-run persistence — the ring keeps 10, the disk keeps all. */
 function persistReceipt(run: RecentRun) {
+  // Narrates only while a step's live sink is attached (no-op otherwise).
+  emitLiveProgress({ phase: "writing the signed run receipt…" });
   try {
     fs.mkdirSync(receiptsDir(), { recursive: true });
     fs.writeFileSync(
@@ -963,6 +969,7 @@ async function reconcileRegister(s: Session): Promise<{ result: string; txHash?:
 
 /** Common post-fund bookkeeping — used by fresh funds AND timeout recovery. */
 function fundBookkeeping(s: Session, tx?: string) {
+  emitLiveProgress({ phase: "funds moved — recording the position for the cleanup worker…" });
   const r = s.ctx.record!;
   r.chain.fundHash = tx ?? r.chain.fundHash;
   r.status = "funded";
@@ -992,6 +999,7 @@ function fundBookkeeping(s: Session, tx?: string) {
   if (s.ctx.supplierOverride && !s.ctx.payoutCommitted) {
     dest = `FUNDED — the advance just landed in YOUR wallet (${s.ctx.supplierOverride.slice(0, 10)}…). Check your balance.`;
     const advanceCspr = (r.intake.amountCspr * (10_000 - (r.decision?.discountBps ?? 0))) / 10_000;
+    emitLiveProgress({ phase: "payout confirmed — committing it to the wallet-budget ledger…" });
     commitPayout(s.id, advanceCspr, { wallet: s.ctx.supplierOverride, ip: s.ip });
     s.ctx.payoutCommitted = true;
   }
@@ -1323,6 +1331,9 @@ async function stepConsumerVerdict(s: Session) {
       };
     }
   }
+  emitLiveProgress({
+    phase: "verifying the purchased report — re-hashing the memo, reading the on-chain anchor…",
+  });
   const local = db.invoices.find((r) => r.id === rep.invoiceId && r.decision);
   const onchainInv = await (s.ctx.invoicePrefetch ??
     chain.invoice(rep.invoiceId).catch(() => null));
@@ -1364,6 +1375,9 @@ async function stepConsumerVerdict(s: Session) {
   const verdictHash = `sha256:${sha256(JSON.stringify(verdictMemo))}`;
   s.ctx.consumerVerdict = { memo: verdictMemo, hash: verdictHash };
   // BOTH outcomes go on-chain — a rejection is a decision too.
+  emitLiveProgress({
+    phase: `checks done — anchoring the consumer's ${verdict} verdict on-chain…`,
+  });
   const att = await chain.attest(
     c.accepted ? "CREDIT_REPORT_ACCEPTED" : "CREDIT_REPORT_REJECTED",
     rep.invoiceId,
@@ -2322,16 +2336,33 @@ export function makeJudgeRouter(): Router {
             step.explorerUrl = deployUrl(p.txHash);
           }
         });
+        // Phase 1: ask the node until it reports execution. Phase 2: tick a
+        // visible catch-up counter (with the block hash) until the CLI's
+        // event watcher delivers — or a later sub-operation takes over the
+        // narration, at which point the probe retires.
+        let confirmedTs = 0;
+        let confirmedBlock = "";
         confirmProbe = setInterval(() => {
-          if (!step.txHash || step.status !== "running") return;
-          void txExecuted(step.txHash).then((executed) => {
-            if (executed && step.status === "running") {
-              step.phaseNote = "confirmed on-chain — the desk is finalizing the receipt…";
+          if (step.status !== "running") return;
+          if (confirmedTs) {
+            if (step.phaseNote && !step.phaseNote.startsWith("confirmed on-chain")) {
               if (confirmProbe) clearInterval(confirmProbe);
               confirmProbe = undefined;
+              return;
+            }
+            const secs = Math.round((Date.now() - confirmedTs) / 1000);
+            step.phaseNote = `confirmed on-chain (block ${confirmedBlock}…) — the signer's event stream is catching up · ${secs}s`;
+            return;
+          }
+          if (!step.txHash) return;
+          void txExecuted(step.txHash).then((block) => {
+            if (block && step.status === "running" && !confirmedTs) {
+              confirmedTs = Date.now();
+              confirmedBlock = block;
+              step.phaseNote = `confirmed on-chain (block ${block}…) — the signer's event stream is catching up`;
             }
           });
-        }, 8000);
+        }, 5000);
       }
       const out = await def.run(s);
       step.result = out.result;
