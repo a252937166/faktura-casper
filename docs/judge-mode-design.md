@@ -1,6 +1,6 @@
 # Live Testnet Judge Mode — Design (v0.2, as implemented)
 
-> Rationale: the finals judge asked for a *real, clickable* Casper Testnet
+> Rationale: the finals judge asked for a _real, clickable_ Casper Testnet
 > workflow, not a hosted showcase whose writes are simulated in memory. Live
 > Judge Mode is that surface: a guided, step-by-step walkthrough where every
 > click signs exactly one real Testnet transaction — additive, budgeted, and
@@ -20,23 +20,23 @@
 - **:4034 live judge** — `FAKTURA_JUDGE=1`: holds the 5 persona keys + the
   livenet binary. Exposes **only** `/api/judge/*`; the free-form demo write
   routes (`POST /api/invoices`, `/api/demo/*`) return `403 walkthroughOnly` on
-  this backend, so the guided walkthrough is the *only* public signing surface.
+  this backend, so the guided walkthrough is the _only_ public signing surface.
 
 Rollout is blue/green: the new backend must pass `/api/judge/health` before
 nginx routes to it.
 
 ## 2. Guided session model (one transaction per click)
 
-| Method | Path                          | Purpose |
-|--------|-------------------------------|---------|
-| GET    | `/api/judge/health`           | balances, pool, per-preset `canRun`, budgets, active session (owner only) |
-| GET    | `/api/judge/presets`          | the 5 preset descriptors with step lists |
-| POST   | `/api/judge/session`          | `{preset, supplierAddress?}` → `{id, displayId, token, steps…}` (signs nothing) |
-| POST   | `/api/judge/session/:id/next` | header `X-Judge-Token` — runs the next step: **exactly one transaction** |
-| GET    | `/api/judge/session/:id`      | session state (resume); owner requests refresh `lastActivityTs` |
-| GET    | `/api/judge/recent`           | last 5 completed walkthroughs — public receipts (no tokens/IPs) |
+| Method | Path                           | Purpose                                                                                                               |
+| ------ | ------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/judge/health`            | balances, pool, per-preset `canRun`, budgets, active session (owner only)                                             |
+| GET    | `/api/judge/presets`           | the 5 preset descriptors with step lists                                                                              |
+| POST   | `/api/judge/session`           | `{preset, supplierAddress?}` → `{id, displayId, token, steps…}` (signs nothing)                                       |
+| POST   | `/api/judge/session/:id/next`  | header `X-Judge-Token` — runs the next step: **exactly one transaction**                                              |
+| GET    | `/api/judge/session/:id`       | session state (resume); owner requests refresh `lastActivityTs`                                                       |
+| GET    | `/api/judge/recent`            | last 5 completed walkthroughs — public receipts (no tokens/IPs)                                                       |
 | GET    | `/api/judge/recent/:displayId` | one run as a canonical `faktura.credit-receipt.v1` (memo + receiptHash; verify offline with `npm run verify-receipt`) |
-| GET    | `/api/judge/balance/:pubkey`  | testnet balance of any public key (wallet chip) |
+| GET    | `/api/judge/balance/:pubkey`   | testnet balance of any public key (wallet chip)                                                                       |
 
 Presets:
 
@@ -70,12 +70,21 @@ Presets:
    walkthrough can never end as a false "done".
 
 Sessions: unguessable UUID id + human `JUDGE-YYYYMMDD-XXXXXXXX` display id + a
-32-byte bearer token required on every mutation. The active session (with its
-token) is revealed only to its creator — matched by an HttpOnly `fj_cid`
-cookie set at creation (IP is a fallback for cookie-less curls and otherwise
-used for rate-limits only); everyone else sees a `deskBusy` flag. A same-owner
-restart supersedes the old run — but NOT while a transaction is still
-settling (409: resume instead), so an in-flight payout can never be orphaned. Failed steps stay **retryable**; refresh-resume is offered, never forced.
+32-byte bearer token required on every mutation. **Sessions are PER-VISITOR**:
+each visitor (matched by an HttpOnly `fj_cid` cookie set at creation; IP is a
+fallback for cookie-less curls and otherwise used for rate-limits only) holds
+their own walkthrough, and `/health` reveals a session (with its resume
+token) only to its creator. Nobody else's run ever locks the story picker —
+the ONLY global mutex is the on-chain signing lock: two chain steps colliding
+answer a retry-soon 429 (`retryAfterMs`) that the page queues on and retries
+automatically; compute steps (AI underwriting, verified-invoice picks) run in
+parallel freely. A same-owner restart supersedes the old run — but NOT while
+a transaction is still settling (409: resume instead), so an in-flight payout
+can never be orphaned. Idle active sessions expire after 40 minutes
+(`pruneSessions`, called from `/health`, session creation and the cleanup
+tick); a session with a running transaction is never expired, and the
+in-memory store cap (60) evicts oldest NON-active sessions only. Failed
+steps stay **retryable**; refresh-resume is offered, never forced.
 
 ### Policy-block feasibility — why the math lives server-side
 
@@ -92,7 +101,7 @@ LLM's discount into [0.5%, 4%] so the whole possible advance band clears the
 cap and stays under liquidity. The SAME function powers `/health.canRun` and
 the underwrite step, so the UI can never promise a revert the pool shape can't
 deliver — and `POST /session` re-checks `canRun` **server-side** (deep links
-and curls hit the same wall). The fund step then *asserts* the revert is
+and curls hit the same wall). The fund step then _asserts_ the revert is
 exactly error 15: any other outcome fails the step loudly and voids the run.
 
 ### Wallet payouts (read-only, budgeted)
@@ -107,19 +116,25 @@ reservation. The ledger write is atomic (temp + rename) and the reserve path
 
 ## 3. Anti-abuse budgets (persisted in `agents/data/judge-limits.json`)
 
-| Budget | Default | Env |
-|---|---|---|
-| Wallet payout per wallet / per IP | 1 per 24 h | — |
-| Global payout CSPR per 24 h | 10 | `JUDGE_DAILY_PAYOUT_CSPR` |
-| Walkthroughs per IP per hour | 4 | `JUDGE_RUNS_PER_IP_HOUR` |
-| Walkthroughs per 24 h (all) | 24 | `JUDGE_RUNS_PER_DAY` |
-| Per-preset per 24 h | 12 / 10 / 15 / 8 / 8 | `JUDGE_HAPPY_PER_DAY` / `JUDGE_POLICY_PER_DAY` / `JUDGE_X402_PER_DAY` / `JUDGE_DEFAULT_PER_DAY` / `JUDGE_AI_REJECT_PER_DAY` |
-| Signed steps (gas) per 24 h | 60 | `JUDGE_DEPLOYS_PER_DAY` |
+| Budget                            | Default                                                       | Env                                                                                                                         |
+| --------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Wallet payout per wallet / per IP | 1 per 24 h                                                    | —                                                                                                                           |
+| Global payout CSPR per 24 h       | 10                                                            | `JUDGE_DAILY_PAYOUT_CSPR`                                                                                                   |
+| Walkthroughs per IP per hour      | 4 (finals runtime: 20)                                        | `JUDGE_RUNS_PER_IP_HOUR`                                                                                                    |
+| Walkthroughs per 24 h (all)       | 24 (finals runtime: 100)                                      | `JUDGE_RUNS_PER_DAY`                                                                                                        |
+| Per-preset per 24 h               | 12 / 10 / 15 / 8 / 8 (finals runtime: 20 / 30 / 30 / 15 / 20) | `JUDGE_HAPPY_PER_DAY` / `JUDGE_POLICY_PER_DAY` / `JUDGE_X402_PER_DAY` / `JUDGE_DEFAULT_PER_DAY` / `JUDGE_AI_REJECT_PER_DAY` |
+| Signed steps (gas) per 24 h       | 60 (finals runtime: 150)                                      | `JUDGE_DEPLOYS_PER_DAY`                                                                                                     |
 
-Plus: one active session globally (a same-owner restart supersedes unless a
-transaction is in flight; a *different* visitor can take the desk only after
-5 min of inactivity), a 4 s double-submit debounce (the UI auto-retries with
-`retryAfterMs`), a CORS allow-list, `trust proxy` IP handling, and
+All windows are ROLLING 24 h / 1 h — never calendar days. The run budgets
+(global + per-preset) feed the health `canRun` gates through the same
+`presetRunBudget` function that session creation enforces, so an exhausted
+story renders as a disabled card with its reason instead of a surprise 429.
+
+Plus: per-visitor sessions (a same-owner restart supersedes unless a
+transaction is in flight; other visitors simply hold their OWN sessions —
+there is no desk to take over), a 4 s double-submit debounce (the UI
+auto-retries with `retryAfterMs`), a CORS allow-list, `trust proxy` IP
+handling, and
 `JUDGE_SMOKE_SECRET` (header `X-Judge-Smoke`) for our own pre-freeze self-tests
 — it bypasses rate limits, never the signing or recording.
 
@@ -172,8 +187,8 @@ contract:
 - Encoding: UTF-8 JSON with **no whitespace** (`JSON.stringify` defaults).
 - Field order is FIXED (insertion order, exactly as `buildDecisionMemo`
   emits): `schema, intakeId, invoiceNumber, decidedAt, provider, model,
-  opinion, applied, policyNotes`; inside `opinion`: `approve, risk_score,
-  discount_bps, rationale, red_flags[, confidence]` (confidence omitted when
+opinion, applied, policyNotes`; inside `opinion`: `approve, risk_score,
+discount_bps, rationale, red_flags[, confidence]` (confidence omitted when
   absent, never null); inside `applied`: `approve, risk_score, discount_bps`.
 - Hash: lowercase hex SHA-256 of those bytes, prefixed `sha256:`.
 - `JSON.parse` in any mainstream runtime preserves this key order, so

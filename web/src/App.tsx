@@ -2891,6 +2891,7 @@ function GuidedStep({
   onRun,
   running,
   runStartTs,
+  queuedNote,
   nextTitle,
   walletLock,
   onReconnect,
@@ -2907,6 +2908,8 @@ function GuidedStep({
   onRun: () => void;
   running: boolean;
   runStartTs: number;
+  /** Set while this chain step waits for another visitor's signature. */
+  queuedNote?: string | null;
   nextTitle?: string;
   /** Set when this session pays a wallet that is no longer connected. */
   walletLock?: string | null;
@@ -3014,7 +3017,8 @@ function GuidedStep({
         {running && !isAi && (
           <div className="lj-signing" aria-live="polite">
             <div className="lj-signing-top">
-              <span className="lj-spinner" /> Signing on Casper…
+              <span className="lj-spinner" />{" "}
+              {queuedNote ? "In line to sign on Casper…" : "Signing on Casper…"}
               <ElapsedTimer startTs={runStartTs} />
             </div>
             <div className="lj-wait-bar">
@@ -3025,7 +3029,9 @@ function GuidedStep({
                 submitted, minutes before finality. */}
             <div className="lj-phase">
               <span className="lj-phase-dot" />
-              {step.phaseNote ?? "connecting to the Casper node…"}
+              <span className="lj-phase-text">
+                {queuedNote ?? step.phaseNote ?? "connecting to the Casper node…"}
+              </span>
               {step.txHash && (
                 <a className="lr-tx mono" target="_blank" rel="noreferrer" href={step.explorerUrl}>
                   tx {step.txHash.slice(0, 10)}… ↗
@@ -3052,7 +3058,9 @@ function GuidedStep({
             </div>
             <div className="lj-phase">
               <span className="lj-phase-dot" />
-              {step.phaseNote ?? "waiting for on-chain finality…"}
+              <span className="lj-phase-text">
+                {step.phaseNote ?? "waiting for on-chain finality…"}
+              </span>
               {step.txHash && (
                 <a className="lr-tx mono" target="_blank" rel="noreferrer" href={step.explorerUrl}>
                   tx {step.txHash.slice(0, 10)}… ↗
@@ -3296,6 +3304,9 @@ function JudgeGuided({
   const [session, setSession] = useState<JudgeSession | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /** Set while our chain step waits for ANOTHER visitor's signature to clear
+   * (the desk signs one transaction at a time) — retried automatically. */
+  const [queued, setQueued] = useState<string | null>(null);
   const [runStartTs, setRunStartTs] = useState(0);
   /** Predict-then-verify answers, keyed by "preset:stepKey". */
   const [predictions, setPredictions] = useState<Record<string, string>>({});
@@ -3474,27 +3485,42 @@ function JudgeGuided({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fundDone, session?.wallet]);
 
-  const runNext = async () => {
+  const runNext = async (attempt?: unknown) => {
+    // onClick passes the click event — only an explicit number counts.
+    const tries = typeof attempt === "number" ? attempt : 0;
     if (!session || walletMismatch) return;
     setErr(null);
-    setRunStartTs(Date.now());
+    if (tries === 0) setRunStartTs(Date.now());
     setBusy(true);
     try {
       const updated = await judge.nextStep(session.id);
+      setQueued(null);
       setSession(updated);
+      setBusy(false);
       if (updated.status !== "active")
         judge
           .health()
           .then(onHealth)
           .catch(() => {});
     } catch (e) {
+      // Signer collision (another visitor's transaction is mid-flight) comes
+      // back as retry-soon — queue politely and retry by ourselves instead of
+      // making the visitor mash the button.
+      const retryAfterMs = Number((e as ApiError).body?.retryAfterMs ?? 0);
+      if (retryAfterMs > 0 && tries < 8) {
+        setQueued(
+          "In line behind another visitor's transaction — the desk signs one at a time; retrying automatically…",
+        );
+        setTimeout(() => void runNext(tries + 1), retryAfterMs + Math.floor(Math.random() * 900));
+        return; // busy stays true — the strip explains the wait
+      }
+      setQueued(null);
       setErr((e as Error).message);
       // refresh session state (the step may have been marked failed server-side)
       judge
         .getSession(session.id)
         .then(setSession)
         .catch(() => {});
-    } finally {
       setBusy(false);
     }
   };
@@ -3721,12 +3747,21 @@ function JudgeGuided({
                   className="lj-wallet-btn"
                   onClick={() => {
                     // The health snapshot can lag — fetch the authoritative
-                    // session state so the current step arrives runnable.
+                    // session state so the current step arrives runnable. If
+                    // the desk already expired/evicted it, say so honestly
+                    // instead of resuming a ghost that 404s on every step.
                     void judge
                       .getSession(resumable.id)
-                      .then(setSession)
-                      .catch(() => setSession(resumable));
-                    setResumable(null);
+                      .then((fresh) => {
+                        setSession(fresh);
+                        setResumable(null);
+                      })
+                      .catch(() => {
+                        setResumable(null);
+                        setErr(
+                          "That walkthrough already ended on the desk — pick any story to start fresh.",
+                        );
+                      });
                   }}
                 >
                   Resume →
@@ -3941,6 +3976,7 @@ function JudgeGuided({
                   onRun={runNext}
                   running={busy && i === session.cursor}
                   runStartTs={runStartTs}
+                  queuedNote={queued}
                   nextTitle={session.steps[i + 1]?.title}
                   walletLock={walletMismatch ? session.wallet : null}
                   onReconnect={() => void connectWallet()}
