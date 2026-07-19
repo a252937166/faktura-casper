@@ -282,6 +282,16 @@ export async function processIntake(input: IntakeInput): Promise<InvoiceRecord> 
           : `Casper policy blocked funding for invoice #${record.id}: ${norm}`,
         invoiceId: record.id,
       });
+    } else if (classifyFundError(norm) === "capacity") {
+      // The pool is out of liquid capital — a capacity story, not a fault.
+      record.status = "error";
+      upsertInvoice(record);
+      feed.publish({
+        actor: "system",
+        kind: "warn",
+        message: `Funding for invoice #${record.id} is waiting on pool capacity: ${norm} — the pool does not currently hold enough liquid capital; retry when liquidity returns`,
+        invoiceId: record.id,
+      });
     } else {
       // Infrastructure failure — NOT a policy verdict. Say so.
       record.status = "error";
@@ -345,13 +355,17 @@ function normalizeRevert(msg: string): string {
 }
 
 /**
- * A funding failure is only a POLICY BLOCK when the contract itself said so
- * (typed policy errors 13–16). Everything else — RPC timeouts, node hiccups,
- * livenet process errors — is infrastructure and must never be narrated as
- * "Casper policy blocked funding": that would be a false story.
+ * Three-way funding-failure triage. A POLICY BLOCK is only what the contract
+ * ruled (typed policy errors 13–16). InsufficientLiquidity (6) is CAPACITY —
+ * the pool simply lacks liquid capital right now, which is neither a policy
+ * verdict nor an infrastructure fault. Everything else — RPC timeouts, node
+ * hiccups, livenet process errors — is infrastructure, and must never be
+ * narrated as "Casper policy blocked funding": that would be a false story.
  */
-export function classifyFundError(normalized: string): "policy" | "infra" {
-  return /User error:\s*(13|14|15|16)\b/.test(normalized) ? "policy" : "infra";
+export function classifyFundError(normalized: string): "policy" | "capacity" | "infra" {
+  if (/User error:\s*(13|14|15|16)\b/.test(normalized)) return "policy";
+  if (/User error:\s*6\b/.test(normalized)) return "capacity";
+  return "infra";
 }
 
 async function finalizeReject(

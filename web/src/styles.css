@@ -267,7 +267,7 @@ body::before {
 /* ---------- invoice-document ornament ---------- */
 .doc-wrap {
   position: relative;
-  height: 440px;
+  height: 474px;
   pointer-events: none;
 }
 .doc {
@@ -895,11 +895,20 @@ td:first-child {
   .doc-wrap {
     margin: 26px auto 0;
     max-width: 340px;
+    height: auto;
     transform: none;
   }
   .doc-wrap .doc {
+    position: static;
+    width: 100%;
+    height: auto;
     transform: none;
     padding: 16px 18px;
+  }
+  .doc-wrap .doc-caption {
+    position: static;
+    width: auto;
+    margin-top: 10px;
   }
   .doc-wrap .doc-row-optional {
     display: none;
@@ -3602,7 +3611,12 @@ button.field-wallet {
   border-color: var(--red);
 }
 .doc-caption {
-  margin-top: 10px;
+  /* the invoice card above is absolutely positioned — pin the caption BELOW
+     it, never in the flow where the card would cover it */
+  position: absolute;
+  top: 426px;
+  right: 26px;
+  width: 330px;
   font-size: 11.5px;
   color: rgba(23, 19, 13, 0.6);
   font-style: italic;

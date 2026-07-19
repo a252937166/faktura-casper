@@ -56,9 +56,12 @@ test("classifyFundError: typed policy errors 13–16 are POLICY", () => {
   assert.equal(classifyFundError("User error: 16 (DebtorExposureCapExceeded)"), "policy");
 });
 
+test("classifyFundError: InsufficientLiquidity is CAPACITY, not infrastructure", () => {
+  assert.equal(classifyFundError("User error: 6 (InsufficientLiquidity)"), "capacity");
+});
+
 test("classifyFundError: timeouts, RPC failures and other errors are INFRA", () => {
   assert.equal(classifyFundError("connection timed out after 180s"), "infra");
-  assert.equal(classifyFundError("User error: 6 (InsufficientLiquidity)"), "infra");
   assert.equal(classifyFundError("livenet fund failed (101): thread panicked"), "infra");
 });
 
