@@ -137,3 +137,21 @@ test("positions: add → stale → resolve lifecycle", () => {
   limits.resolvePosition(999);
   assert.equal(limits.openPositionCount(), 0);
 });
+
+// ---- run budget: create and canRun must share the same math ----------------
+
+test("run budget: an exhausted per-preset cap disables BOTH create and canRun", () => {
+  // Fill policy-block to its daily cap from distinct IPs (so the per-IP
+  // hourly limit stays out of the way — this test is about the GLOBAL caps).
+  const cap = limits.CAPS.perPresetPerDay["policy-block"];
+  for (let i = 0; i < cap; i++) limits.recordRun(`ip-pb-${i}`, "policy-block");
+  const create = limits.canStartRun("ip-pb-fresh", "policy-block");
+  const gate = limits.presetRunBudget("policy-block");
+  assert.equal(create.ok, false);
+  assert.equal(gate.ok, false);
+  // The regression this pins: the picker said "runnable", create said 429.
+  assert.equal(create.reason, gate.reason);
+  assert.match(gate.reason ?? "", /within 24 h/);
+  // Other stories keep their own budgets.
+  assert.equal(limits.presetRunBudget("x402").ok, true);
+});

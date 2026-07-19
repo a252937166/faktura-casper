@@ -303,6 +303,25 @@ export function releaseReservation(sessionId: string) {
 
 // ---- walkthrough + deploy budgets ------------------------------------------
 
+/** GLOBAL run-budget dimensions (rolling 24 h, no per-visitor terms) — shared
+ * by session creation AND the health canRun gates, so a story the picker
+ * shows as runnable can never bounce with a budget 429 at create time. */
+export function presetRunBudget(preset: string): { ok: boolean; reason?: string } {
+  prune();
+  if (state.runs.length >= CAPS.runsPerDay)
+    return {
+      ok: false,
+      reason: "the desk's daily walkthrough budget is spent — slots free up within 24 h",
+    };
+  const presetCap = CAPS.perPresetPerDay[preset];
+  if (presetCap && state.runs.filter((r) => r.preset === preset).length >= presetCap)
+    return {
+      ok: false,
+      reason: "today's runs for this story are used up — try another story; frees up within 24 h",
+    };
+  return { ok: true };
+}
+
 export function canStartRun(ip: string, preset: string): { ok: boolean; reason?: string } {
   prune();
   const now = Date.now();
@@ -312,19 +331,7 @@ export function canStartRun(ip: string, preset: string): { ok: boolean; reason?:
       ok: false,
       reason: `Rate limit: ${CAPS.runsPerIpPerHour} walkthroughs per hour per visitor — please come back in a little while.`,
     };
-  if (state.runs.length >= CAPS.runsPerDay)
-    return {
-      ok: false,
-      reason: "The desk's daily walkthrough budget is used up — live runs resume tomorrow.",
-    };
-  const presetCap = CAPS.perPresetPerDay[preset];
-  if (presetCap && state.runs.filter((r) => r.preset === preset).length >= presetCap)
-    return {
-      ok: false,
-      reason:
-        "This walkthrough's daily budget is used up — try another story or come back tomorrow.",
-    };
-  return { ok: true };
+  return presetRunBudget(preset);
 }
 
 export function recordRun(ip: string, preset: string) {
