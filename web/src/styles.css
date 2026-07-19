@@ -4390,7 +4390,9 @@ button.field-wallet {
 /* ---------- MCP drawer v2 — agent-native, wide terminal canvas ---------- */
 .mcp2 {
   width: min(1180px, 96vw) !important;
-  padding: 36px 46px 56px !important;
+  /* NO top padding: the sticky topbar is the first thing in the scroll flow,
+     so nothing can ever peek through a gap above it while scrolling */
+  padding: 0 46px 56px !important;
   border-color: #7a4dd0 !important;
   box-shadow: -10px 0 0 rgba(122, 77, 208, 0.18) !important;
   background:
@@ -4894,8 +4896,8 @@ button.field-wallet {
 .mcp2-topbar {
   position: sticky;
   top: 0;
-  margin: -36px -46px 14px;
-  padding: 12px 46px;
+  margin: 0 -46px 18px;
+  padding: 16px 46px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -5145,4 +5147,23 @@ button.field-wallet {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* per-story wallet requirement, answered on the card */
+.lj-wallet-tag {
+  display: inline-block;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1px solid rgba(23, 19, 13, 0.3);
+  color: rgba(23, 19, 13, 0.55);
+}
+.lj-wallet-tag.on {
+  border-color: #0f8a5f;
+  color: #0f8a5f;
+  background: rgba(15, 138, 95, 0.06);
 }

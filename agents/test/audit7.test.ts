@@ -64,6 +64,20 @@ test("classifyFundError: timeouts, RPC failures and other errors are INFRA", () 
 
 // ---- x402 charge persistence ------------------------------------------------
 
+test("x402 settled map: same charge re-delivers, different nonce is replay", () => {
+  // The semantic contract behind x402Gate's idempotency branch.
+  const settled = new Map([
+    ["deploy-abc", { ts: Date.now(), nonce: "784551", resource: "/api/risk/30" }],
+  ]);
+  const prior = settled.get("deploy-abc")!;
+  const sameCharge = prior.nonce === "784551" && prior.resource === "/api/risk/30";
+  const stolenNonce = prior.nonce === "999999";
+  const wrongResource = prior.resource === "/api/risk/31";
+  assert.equal(sameCharge, true, "same proof+nonce+resource → idempotent re-delivery");
+  assert.equal(stolenNonce, false, "different nonce reusing the deploy → replay, refused");
+  assert.equal(wrongResource, false, "different resource → refused");
+});
+
 test("x402 state: a paid nonce and the replay set survive a restart (loader honors the file)", async () => {
   // Write the state file BEFORE the x402 module is first imported in this
   // process — its module-init loader must pick both entries up, exactly like

@@ -750,7 +750,7 @@ export default function App() {
                 // ONE primary task — the five stories are chosen on the next
                 // screen, not before understanding the product.
                 <button className="btn-primary" onClick={() => openRunner()}>
-                  ▶ Start the guided demo · 3–6 min
+                  ▶ Use the live AI desk · 3–6 min
                 </button>
               ) : liveState === "busy" ? (
                 <>
@@ -773,7 +773,7 @@ export default function App() {
                 </>
               ) : liveState === "warming" || liveState === "paused" ? (
                 <button className="btn-primary" disabled>
-                  ▶ Start the guided demo · 3–6 min
+                  ▶ Use the live AI desk · 3–6 min
                 </button>
               ) : (
                 <button className="btn-primary" onClick={() => setJudgeOpen(true)}>
@@ -781,11 +781,13 @@ export default function App() {
                 </button>
               )}
             </div>
-            <p className="hero-agent-link">
-              <button className="linklike" onClick={() => openRunner("policy-block")}>
-                ⛔ Skip straight to the contract refusing an AI-approved invoice →
-              </button>
-            </p>
+            {jhealth?.canRun?.policyBlock?.ok === true && (
+              <p className="hero-agent-link">
+                <button className="linklike" onClick={() => openRunner("policy-block")}>
+                  ⛔ Skip straight to the contract refusing an AI-approved invoice →
+                </button>
+              </p>
+            )}
             <p className="hero-agent-link dev">
               <span className="muted">Developers:</span>{" "}
               <button className="linklike" onClick={() => setMcpOpen(true)}>
@@ -803,7 +805,8 @@ export default function App() {
             </p>
             {liveState === "ready" && (
               <p className="hero-cost">
-                Five stories to pick from — every on-chain step is a real Casper transaction
+                Five stories to pick from — every on-chain step is a real Casper transaction. No
+                wallet required; connect one only if you want the payout sent to you.
               </p>
             )}
             <p className="hero-links">
@@ -1339,6 +1342,7 @@ export default function App() {
         <Drawer
           record={selected}
           pool={pool}
+          suspended={mcpOpen}
           meta={meta}
           busy={busy}
           notify={notify}
@@ -1360,6 +1364,7 @@ export default function App() {
       {judgeOpen && (
         <JudgeDemo
           meta={meta}
+          suspended={mcpOpen}
           onClose={() => {
             setJudgeOpen(false);
             refresh();
@@ -1387,6 +1392,7 @@ export default function App() {
           onHealth={setJhealth}
           wallet={wallet}
           initialPreset={runnerPreset}
+          suspended={mcpOpen}
           onOpenMcp={() => setMcpOpen(true)}
           onClose={() => {
             setRunnerOpen(false);
@@ -2024,6 +2030,7 @@ function Drawer({
   notify,
   onClose,
   onSettle,
+  suspended = false,
 }: {
   record: InvoiceRecord;
   pool: PoolResponse | null;
@@ -2032,6 +2039,8 @@ function Drawer({
   notify: (m: string) => void;
   onClose: () => void;
   onSettle: (id: number) => void;
+  /** A higher overlay (MCP) is stacked on top — release the modal claim. */
+  suspended?: boolean;
 }) {
   const chainState = pool?.onchain.find((o) => o.id === record.id);
   const status =
@@ -2055,12 +2064,18 @@ function Drawer({
       ].filter(([, h]) => h),
     [record],
   );
-  const invoiceDialogRef = useModalA11y<HTMLDivElement>(true, onClose);
+  const invoiceDialogRef = useModalA11y<HTMLDivElement>(!suspended, onClose);
 
   return (
     <>
       <div className="drawer-backdrop" onClick={onClose} />
-      <div className="drawer" role="dialog" aria-modal="true" ref={invoiceDialogRef}>
+      <div
+        className="drawer"
+        role="dialog"
+        aria-modal={suspended ? undefined : "true"}
+        aria-hidden={suspended || undefined}
+        ref={invoiceDialogRef}
+      >
         <button className="drawer-x" onClick={onClose} aria-label="Close invoice details">
           ✕
         </button>
@@ -2494,7 +2509,7 @@ const JUDGE_STEPS: {
     actor: "debtor",
     title: "Settle — or default",
     detail:
-      "On payment the pool realizes its yield through the share price. Past due + grace, only the collector key can write the invoice off — separation of duties the contract enforces — and LPs absorb the loss the same way. Both endings are part of the demo.",
+      "On payment the pool realizes its yield through the share price. Past due + grace, only the collector key can write the invoice off — separation of duties the contract enforces — and LPs absorb the loss the same way. Both endings are part of the product.",
     showcaseDetail:
       "Settlement and write-off are simulated here; the seeded SETTLED and DEFAULTED invoices link to the real transactions.",
   },
@@ -2507,19 +2522,28 @@ const JUDGE_STEPS: {
   },
 ];
 
-function JudgeDemo({ meta, onClose }: { meta: Meta | null; onClose: () => void }) {
+function JudgeDemo({
+  meta,
+  onClose,
+  suspended = false,
+}: {
+  meta: Meta | null;
+  onClose: () => void;
+  suspended?: boolean;
+}) {
   const [i, setI] = useState(0);
   const step = JUDGE_STEPS[i];
   const last = i === JUDGE_STEPS.length - 1;
   const live = meta?.mode === "live-testnet";
-  const judgeDemoRef = useModalA11y<HTMLDivElement>(true, onClose);
+  const judgeDemoRef = useModalA11y<HTMLDivElement>(!suspended, onClose);
   return (
     <>
       <div className="drawer-backdrop" onClick={onClose} />
       <div
         className="judge"
         role="dialog"
-        aria-modal="true"
+        aria-modal={suspended ? undefined : "true"}
+        aria-hidden={suspended || undefined}
         aria-label="Judge demo — the 30-second story"
         ref={judgeDemoRef}
       >
@@ -3110,11 +3134,16 @@ function PoolEconomics({
 }
 
 /** Picker metadata: group, promised time, one-line hook — main quest first. */
-const PRESET_META: Record<string, { group: "main" | "challenge"; time: string; hook: string }> = {
+const PRESET_META: Record<
+  string,
+  { group: "main" | "challenge"; time: string; hook: string; wallet?: "optional-payout" }
+> = {
   happy: {
     group: "main",
     time: "3–6 min",
     hook: "Supplier gets paid; debtor settles. The whole credit loop.",
+    // The ONE story with a payout — a connected wallet receives the advance.
+    wallet: "optional-payout",
   },
   "policy-block": {
     group: "challenge",
@@ -3181,6 +3210,7 @@ function JudgeGuided({
   initialPreset,
   onOpenMcp,
   onClose,
+  suspended = false,
 }: {
   health: JudgeHealth | null;
   onHealth: (h: JudgeHealth | null) => void;
@@ -3189,6 +3219,9 @@ function JudgeGuided({
   initialPreset?: string | null;
   onOpenMcp: () => void;
   onClose: () => void;
+  /** True while a higher overlay (MCP) is stacked on top — this dialog
+   * releases its focus trap, Escape handler and aria-modal claim. */
+  suspended?: boolean;
 }) {
   const [presets, setPresets] = useState<JudgePreset[]>([]);
   const [session, setSession] = useState<JudgeSession | null>(null);
@@ -3431,8 +3464,16 @@ function JudgeGuided({
   const leaveWithoutAbandon = () => {
     const t = confirmClose?.target ?? "close";
     setConfirmClose(null);
-    if (t === "close") onClose();
-    else reset();
+    if (t === "close") {
+      onClose();
+      return;
+    }
+    // Back to the picker: ONE leave semantic everywhere — the session goes
+    // into the resumable slot immediately (reset() would make it vanish from
+    // this screen while still active server-side).
+    setResumable(session);
+    setSession(null);
+    setErr(null);
   };
   const abandonSafely = async () => {
     if (!session) return;
@@ -3450,7 +3491,7 @@ function JudgeGuided({
     reset();
     if (t === "close") onClose();
   };
-  const pageRef = useModalA11y<HTMLDivElement>(true, () =>
+  const pageRef = useModalA11y<HTMLDivElement>(!suspended, () =>
     confirmClose ? setConfirmClose(null) : requestClose(),
   );
 
@@ -3466,7 +3507,8 @@ function JudgeGuided({
     <div
       className="lj-page"
       role="dialog"
-      aria-modal="true"
+      aria-modal={suspended ? undefined : "true"}
+      aria-hidden={suspended || undefined}
       aria-label="Guided live walkthrough"
       ref={pageRef}
     >
@@ -3547,7 +3589,12 @@ function JudgeGuided({
                 <button
                   className="lj-wallet-btn"
                   onClick={() => {
-                    setSession(resumable);
+                    // The health snapshot can lag — fetch the authoritative
+                    // session state so the current step arrives runnable.
+                    void judge
+                      .getSession(resumable.id)
+                      .then(setSession)
+                      .catch(() => setSession(resumable));
                     setResumable(null);
                   }}
                 >
@@ -3670,6 +3717,14 @@ function JudgeGuided({
                                 <span className="lj-ace-tag">the one to watch</span>
                               )}
                             </div>
+                            {/* Who needs a wallet? Answered on the card itself. */}
+                            {meta?.wallet === "optional-payout" ? (
+                              <span className="lj-wallet-tag on">
+                                ◈ connect a wallet & the advance is paid to YOU (optional)
+                              </span>
+                            ) : (
+                              <span className="lj-wallet-tag">no wallet needed</span>
+                            )}
                             <span className="lj-preset-go">Begin →</span>
                           </button>
                         );
@@ -3727,10 +3782,18 @@ function JudgeGuided({
           <div className="lj-steps">
             {session.steps.map((s, i) => {
               const predKey = `${session.preset}:${s.key}`;
+              // Defensive: an active session must NEVER present its current
+              // step as "locked" (a stale snapshot would freeze the flow with
+              // no button to click). The server re-validates every /next
+              // anyway, so treating it as ready is always safe.
+              const step =
+                session.status === "active" && i === session.cursor && s.status === "locked"
+                  ? { ...s, status: "ready" as const }
+                  : s;
               return (
                 <GuidedStep
                   key={s.key}
-                  step={s}
+                  step={step}
                   index={i}
                   total={session.steps.length}
                   isCurrent={i === session.cursor && session.status === "active"}
