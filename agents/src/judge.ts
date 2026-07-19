@@ -2228,7 +2228,11 @@ export function makeJudgeRouter(): Router {
       } else {
         s.steps[s.cursor].status = "ready";
       }
-      res.json(publicSession(s));
+      try {
+        res.json(publicSession(s));
+      } catch {
+        /* client refreshed/closed mid-step — state is saved; they reattach via GET */
+      }
     } catch (e) {
       // Testnet hiccups happen — a failed step stays RETRYABLE and the
       // walkthrough stays active (unless the executor voided the session).
@@ -2253,7 +2257,11 @@ export function makeJudgeRouter(): Router {
         kind: "error",
         message: `judge step ${step.key} failed (retryable): ${tail.slice(0, 200)}`,
       });
-      res.json(publicSession(s));
+      try {
+        res.json(publicSession(s));
+      } catch {
+        /* client gone — failure state is saved for reattach */
+      }
     } finally {
       s.ctx.retrying = false;
       STEPPING = false;

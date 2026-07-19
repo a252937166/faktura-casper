@@ -3017,6 +3017,25 @@ function GuidedStep({
             </span>
           </div>
         )}
+        {step.status === "running" && !running && (
+          /* Reattached after a refresh: the transaction kept settling
+             server-side while the page was away — show the live wait (timer
+             continues from the SERVER's start time) and the poller above
+             swaps in the result the moment it lands. */
+          <div className="lj-signing" aria-live="polite">
+            <div className="lj-signing-top">
+              <span className="lj-spinner" /> Still settling on Casper — reattached
+              <ElapsedTimer startTs={step.startedTs ?? Date.now()} />
+            </div>
+            <div className="lj-wait-bar">
+              <span className="lj-wait-fill" />
+            </div>
+            <span className="lj-run-hint">
+              Your refresh didn&apos;t interrupt anything — the desk kept signing; this card updates
+              automatically when the transaction confirms.
+            </span>
+          </div>
+        )}
 
         {isCurrent && step.status === "failed" && !running && (
           <div className="lj-failbox">
@@ -3451,6 +3470,35 @@ function JudgeGuided({
       .then(onHealth)
       .catch(() => {});
   };
+
+  // Reattach after refresh: if the current step is RUNNING server-side (the
+  // transaction kept settling while the page was away), poll the
+  // authoritative session until the outcome lands — the visitor watches it
+  // flip to done/failed instead of staring at a stuck card.
+  const serverRunning =
+    !!session &&
+    session.status === "active" &&
+    session.steps[session.cursor]?.status === "running" &&
+    !busy;
+  useEffect(() => {
+    if (!serverRunning || !session) return;
+    const iv = setInterval(() => {
+      judge
+        .getSession(session.id)
+        .then((fresh) => {
+          setSession(fresh);
+          if (fresh.steps[fresh.cursor]?.status !== "running") {
+            judge
+              .health()
+              .then(onHealth)
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverRunning, session?.id]);
 
   // While the desk is busy and we are on the picker, keep availability fresh
   // so the busy banner clears itself the moment the other run finishes.
