@@ -21,10 +21,15 @@ export function useModalA11y<T extends HTMLElement>(active: boolean, onClose: ()
 
     // Move focus in (prefer an explicit close button so Escape's sibling is
     // announced first; fall back to the first focusable, then the container).
+    // ONLY when focus is currently outside this container — re-activating
+    // after a stacked overlay closed must not yank focus away from where the
+    // user already is inside us.
     const focusables = () =>
       el ? [...el.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((f) => f.offsetParent) : [];
-    const first = el?.querySelector<HTMLElement>("[data-autofocus]") ?? focusables()[0] ?? el;
-    first?.focus?.();
+    if (!el || !el.contains(document.activeElement)) {
+      const first = el?.querySelector<HTMLElement>("[data-autofocus]") ?? focusables()[0] ?? el;
+      first?.focus?.();
+    }
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -54,7 +59,9 @@ export function useModalA11y<T extends HTMLElement>(active: boolean, onClose: ()
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prevOverflow;
-      opener?.focus?.();
+      // Restore focus to the opener ONLY if we still own it — a suspended
+      // dialog must not steal focus from the overlay stacked above it.
+      if (el?.contains(document.activeElement)) opener?.focus?.();
     };
   }, [active]);
 

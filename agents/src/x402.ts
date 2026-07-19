@@ -42,18 +42,24 @@ const STATE_FILE = () => path.join(config.dataDir, "x402-state.json");
 const SETTLED_RETENTION_MS = 7 * 24 * 3600_000;
 
 const pending = new Map<string, PendingCharge>(); // nonce -> charge
-const settledDeploys = new Map<string, number>(); // deployHash -> settledTs (replay protection)
+/** deployHash -> what it PAID FOR. Replay protection AND idempotent
+ * re-delivery are different needs: a different nonce reusing this deploy is
+ * an attack; the SAME nonce retrying after a lost response is a paying
+ * customer who deserves their report again. */
+const settledDeploys = new Map<string, { ts: number; nonce?: string; resource?: string }>();
 
 function loadX402State() {
   try {
     const raw = JSON.parse(fs.readFileSync(STATE_FILE(), "utf8")) as {
       pending?: PendingCharge[];
-      settled?: Record<string, number>;
+      settled?: Record<string, number | { ts: number; nonce?: string; resource?: string }>;
     };
     for (const c of raw.pending ?? [])
       if (Date.now() - c.createdTs <= config.x402.ttlMs) pending.set(c.nonce, c);
-    for (const [h, ts] of Object.entries(raw.settled ?? {}))
-      if (Date.now() - ts <= SETTLED_RETENTION_MS) settledDeploys.set(h, ts);
+    for (const [h, v] of Object.entries(raw.settled ?? {})) {
+      const entry = typeof v === "number" ? { ts: v } : v;
+      if (Date.now() - entry.ts <= SETTLED_RETENTION_MS) settledDeploys.set(h, entry);
+    }
   } catch {
     /* first boot or unreadable file — start clean */
   }
@@ -69,7 +75,7 @@ function saveX402State() {
       JSON.stringify({
         pending: [...pending.values()].filter((c) => Date.now() - c.createdTs <= config.x402.ttlMs),
         settled: Object.fromEntries(
-          [...settledDeploys].filter(([, ts]) => Date.now() - ts <= SETTLED_RETENTION_MS),
+          [...settledDeploys].filter(([, v]) => Date.now() - v.ts <= SETTLED_RETENTION_MS),
         ),
       }),
     );
@@ -125,6 +131,7 @@ async function rpc(method: string, params: unknown) {
 async function verifyPayment(
   deployHash: string,
   nonce: string,
+  resource?: string,
 ): Promise<{ ok: boolean; reason?: string }> {
   if (settledDeploys.has(deployHash)) return { ok: false, reason: "deploy already used" };
   try {
@@ -156,7 +163,7 @@ async function verifyPayment(
       : JSON.stringify(results ?? "").includes("Success");
     if (!success) return { ok: false, reason: "deploy not (yet) successful" };
 
-    settledDeploys.set(deployHash, Date.now());
+    settledDeploys.set(deployHash, { ts: Date.now(), nonce, resource });
     saveX402State();
     return { ok: true };
   } catch (e) {
@@ -233,6 +240,24 @@ export function x402Gate() {
       return;
     }
 
+    // Idempotent re-delivery: the SAME proof + nonce (+ resource) that
+    // already settled gets its report again — a lost response must never
+    // orphan a real payment. Anything else reusing the deploy is replay.
+    const prior = settledDeploys.get(proof.trim());
+    if (
+      prior &&
+      prior.nonce === nonceHeader &&
+      (!prior.resource || prior.resource === req.originalUrl)
+    ) {
+      feed.publish({
+        actor: "oracle",
+        kind: "x402",
+        message: `Idempotent re-delivery for settled deploy ${proof.slice(0, 10)}… — same charge, same report`,
+      });
+      next();
+      return;
+    }
+
     const charge = pending.get(nonceHeader);
     if (!charge) {
       res.status(402).json({ x402Version: 1, error: "unknown or expired nonce" });
@@ -251,6 +276,12 @@ export function x402Gate() {
     // /api/demo/x402-pay so public visitors can walk the flow without keys.
     if (config.showcase && proof.trim() === `showcase-simulated:${nonceHeader}`) {
       pending.delete(nonceHeader);
+      // The simulated proof gets the same idempotent re-delivery contract.
+      settledDeploys.set(proof.trim(), {
+        ts: Date.now(),
+        nonce: nonceHeader,
+        resource: charge.resource ?? req.originalUrl,
+      });
       saveX402State();
       feed.publish({
         actor: "oracle",
@@ -263,7 +294,7 @@ export function x402Gate() {
     const verdict =
       config.x402.mode === "official-facilitator"
         ? await verifyViaFacilitator(proof.trim(), nonceHeader, req.originalUrl)
-        : await verifyPayment(proof.trim(), nonceHeader);
+        : await verifyPayment(proof.trim(), nonceHeader, charge.resource ?? req.originalUrl);
     if (!verdict.ok) {
       feed.publish({
         actor: "oracle",
