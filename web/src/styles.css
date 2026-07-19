@@ -5053,3 +5053,96 @@ button.field-wallet {
   font-size: 12px;
   padding: 10px 14px;
 }
+
+/* ---------- audit 8: business-user + deep-a11y pass ---------- */
+
+/* keyboard-real row opener — looks like the old text, works like a button */
+.row-open {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted rgba(23, 19, 13, 0.35);
+  text-underline-offset: 3px;
+}
+.row-open:hover {
+  text-decoration-color: var(--ink, #17130d);
+}
+.row-open:focus-visible {
+  outline: 2px solid #d92d2d;
+  outline-offset: 2px;
+}
+
+/* inline field errors */
+.field-err {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #b3231f;
+}
+.field input[aria-invalid="true"],
+.field textarea[aria-invalid="true"] {
+  border-color: #d92d2d;
+}
+
+/* dev-resources hero row sits quieter than the product links */
+.hero-agent-link.dev {
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+/* invoice pipeline becomes CARDS on small screens — seven columns never
+   squeeze into a phone */
+@media (max-width: 720px) {
+  .panel table,
+  .panel tbody,
+  .panel tr.row {
+    display: block;
+    width: 100%;
+  }
+  .panel thead {
+    display: none;
+  }
+  .panel tr.row {
+    border: 1.5px solid rgba(23, 19, 13, 0.35);
+    border-radius: 6px;
+    margin-bottom: 10px;
+    padding: 8px 12px;
+  }
+  .panel tr.row td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    border: none;
+    padding: 4px 0;
+    text-align: left;
+  }
+  .panel tr.row td::before {
+    content: attr(data-label);
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: rgba(23, 19, 13, 0.5);
+    flex-shrink: 0;
+  }
+  .panel tr.row td.num {
+    text-align: right;
+  }
+}
+
+/* one switch kills every non-essential animation site-wide */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

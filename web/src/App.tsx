@@ -299,7 +299,15 @@ const HERO_RUNS = [
 function HeroInvoice() {
   const [run, setRun] = useState(0);
   const [phase, setPhase] = useState(0);
+  const reducedMotion =
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   useEffect(() => {
+    // Respect prefers-reduced-motion: hold one meaningful frame, no cycling.
+    if (reducedMotion) {
+      if (phase !== 5) setPhase(5);
+      return;
+    }
     const r = HERO_RUNS[run];
     const last = phase >= r.phases.length - 1;
     const t = setTimeout(
@@ -312,6 +320,7 @@ function HeroInvoice() {
       last ? 3400 : 1500,
     );
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run, phase]);
   const r = HERO_RUNS[run];
   const label = r.phases[phase];
@@ -724,8 +733,8 @@ export default function App() {
             <p className="hero-sub">
               Faktura turns unpaid invoices into working capital. An autonomous AI agent evaluates
               the receivable, a <span className="casper-word">Casper</span> contract enforces the
-              risk limits, and a native-CSPR pool pays the supplier. Every decision stays
-              verifiable.
+              risk limits, and a shared liquidity pool advances the money up front — in CSPR,
+              Casper's native token. Every decision stays verifiable.
             </p>
             <p className="hero-tagline">
               An AI can approve the invoice. <b>Only Casper can move the money.</b>
@@ -738,14 +747,11 @@ export default function App() {
                   ● Checking live desk…
                 </button>
               ) : liveState === "ready" ? (
-                <>
-                  <button className="btn-primary" onClick={() => openRunner("happy")}>
-                    ▶ Use the real AI desk
-                  </button>
-                  <button className="btn-outline" onClick={() => openRunner("policy-block")}>
-                    ⛔ Watch the AI get blocked
-                  </button>
-                </>
+                // ONE primary task — the five stories are chosen on the next
+                // screen, not before understanding the product.
+                <button className="btn-primary" onClick={() => openRunner()}>
+                  ▶ Start the guided demo · 3–6 min
+                </button>
               ) : liveState === "busy" ? (
                 <>
                   <button
@@ -766,14 +772,9 @@ export default function App() {
                   </button>
                 </>
               ) : liveState === "warming" || liveState === "paused" ? (
-                <>
-                  <button className="btn-primary" disabled>
-                    ▶ Use the real AI desk
-                  </button>
-                  <button className="btn-outline" disabled>
-                    ⛔ Watch the AI get blocked
-                  </button>
-                </>
+                <button className="btn-primary" disabled>
+                  ▶ Start the guided demo · 3–6 min
+                </button>
               ) : (
                 <button className="btn-primary" onClick={() => setJudgeOpen(true)}>
                   ▶ RUN JUDGE DEMO
@@ -781,13 +782,28 @@ export default function App() {
               )}
             </div>
             <p className="hero-agent-link">
-              <button className="linklike" onClick={() => setMcpOpen(true)}>
-                🤖 Building an agent? Open the MCP interface →
+              <button className="linklike" onClick={() => openRunner("policy-block")}>
+                ⛔ Skip straight to the contract refusing an AI-approved invoice →
               </button>
+            </p>
+            <p className="hero-agent-link dev">
+              <span className="muted">Developers:</span>{" "}
+              <button className="linklike" onClick={() => setMcpOpen(true)}>
+                🤖 MCP interface
+              </button>{" "}
+              ·{" "}
+              <a
+                className="linklike"
+                href="https://github.com/a252937166/faktura-casper"
+                target="_blank"
+                rel="noreferrer"
+              >
+                ⭐ GitHub
+              </a>
             </p>
             {liveState === "ready" && (
               <p className="hero-cost">
-                5 guided steps · 4 real on-chain transactions · about 3–6 minutes
+                Five stories to pick from — every on-chain step is a real Casper transaction
               </p>
             )}
             <p className="hero-links">
@@ -1146,13 +1162,28 @@ export default function App() {
                                 : r.status;
                           return (
                             <tr key={r.intakeId} className="row" onClick={() => setSelected(r)}>
-                              <td className="mono">{r.intake.invoiceNumber}</td>
-                              <td>
+                              <td className="mono" data-label="Invoice">
+                                {/* A REAL button so keyboard users can open the
+                                    drawer; the whole-row click stays as a mouse
+                                    enhancement. */}
+                                <button
+                                  className="row-open"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelected(r);
+                                  }}
+                                >
+                                  {r.intake.invoiceNumber}
+                                </button>
+                              </td>
+                              <td data-label="Supplier → Debtor">
                                 {r.intake.supplierName} <span className="muted">→</span>{" "}
                                 {r.intake.debtorName}
                               </td>
-                              <td className="num mono">{fmtCspr(r.intake.amountCspr)}</td>
-                              <td className="num mono">
+                              <td className="num mono" data-label="Face">
+                                {fmtCspr(r.intake.amountCspr)}
+                              </td>
+                              <td className="num mono" data-label="Advance">
                                 {r.decision?.approve
                                   ? fmtCspr(
                                       (r.intake.amountCspr * (10_000 - r.decision.discountBps)) /
@@ -1160,7 +1191,7 @@ export default function App() {
                                     )
                                   : "—"}
                               </td>
-                              <td>
+                              <td data-label="Risk">
                                 {r.decision ? (
                                   <span className="risk">
                                     <span className="bar">
@@ -1177,10 +1208,10 @@ export default function App() {
                                   <span className="muted mono">…</span>
                                 )}
                               </td>
-                              <td className="mono muted">
+                              <td className="mono muted" data-label="Due">
                                 {new Date(r.intake.dueTs).toISOString().slice(0, 10)}
                               </td>
-                              <td>
+                              <td data-label="Status">
                                 <span className={`badge ${status}`}>{status.toUpperCase()}</span>
                               </td>
                             </tr>
@@ -1367,7 +1398,15 @@ export default function App() {
       )}
       <ClickBridge />
       {mcpOpen && <McpDrawer meta={meta} notify={notify} onClose={() => setMcpOpen(false)} />}
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div
+          className="toast"
+          role={/fail|error|reject/i.test(toast) ? "alert" : "status"}
+          aria-live="polite"
+        >
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
@@ -1786,7 +1825,34 @@ function SubmitPanel({
     setForm((f) => ({ ...f, ...p, invoiceNumber: `INV-${new Date().getFullYear()}-${num()}` }));
   };
 
+  /** Inline field errors + a top-level submit error — never a browser alert()
+   * that rips the visitor out of context. */
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitErr, setSubmitErr] = useState<string | null>(null);
+  const validate = (): Record<string, string> => {
+    const e: Record<string, string> = {};
+    if (!form.supplierName.trim()) e.supplierName = "Who is selling this invoice?";
+    if (!form.debtorName.trim()) e.debtorName = "Who owes the money?";
+    const amount = Number(form.amountCspr);
+    if (!(amount > 0)) e.amountCspr = "Enter a face value above 0 CSPR.";
+    const days = Number(form.dueDays);
+    if (!(days >= 1 && days <= 365)) e.dueDays = "Due in 1–365 days.";
+    if (!form.invoiceNumber.trim()) e.invoiceNumber = "An invoice reference is required.";
+    const addr = form.supplierAddress.trim();
+    if (addr && !/^(account-hash-|01|02)/.test(addr))
+      e.supplierAddress = "Use an account-hash-… address or a 01/02 public key.";
+    return e;
+  };
+
   const submit = async () => {
+    const e = validate();
+    setErrors(e);
+    setSubmitErr(null);
+    const firstBad = Object.keys(e)[0];
+    if (firstBad) {
+      document.getElementById(`intake-${firstBad}`)?.focus();
+      return;
+    }
     setBusy(true);
     try {
       const r = await api.submit({
@@ -1804,12 +1870,40 @@ function SubmitPanel({
         "invoiceNumber",
         `INV-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 900) + 100)}`,
       );
-    } catch (e) {
-      alert((e as Error).message);
+    } catch (err) {
+      setSubmitErr((err as Error).message);
     } finally {
       setBusy(false);
     }
   };
+
+  /** One accessible field: label↔input wired by id, inline error announced. */
+  const field = (
+    key: keyof typeof form,
+    label: React.ReactNode,
+    inputProps: React.InputHTMLAttributes<HTMLInputElement> = {},
+    full = false,
+  ) => (
+    <div className={`field${full ? " full" : ""}`}>
+      <label htmlFor={`intake-${key}`}>{label}</label>
+      <input
+        id={`intake-${key}`}
+        value={form[key]}
+        aria-invalid={errors[key] ? true : undefined}
+        aria-describedby={errors[key] ? `intake-${key}-err` : undefined}
+        onChange={(e) => {
+          set(key, e.target.value);
+          if (errors[key]) setErrors(({ [key]: _drop, ...rest }) => rest);
+        }}
+        {...inputProps}
+      />
+      {errors[key] && (
+        <span className="field-err" id={`intake-${key}-err`} role="alert">
+          {errors[key]}
+        </span>
+      )}
+    </div>
+  );
 
   return (
     <div className="panel">
@@ -1831,33 +1925,17 @@ function SubmitPanel({
         ))}
       </div>
       <div className="form">
-        <div className="field">
-          <label>Supplier (you)</label>
-          <input value={form.supplierName} onChange={(e) => set("supplierName", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Debtor (owes the invoice)</label>
-          <input value={form.debtorName} onChange={(e) => set("debtorName", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Face value (CSPR)</label>
-          <input value={form.amountCspr} onChange={(e) => set("amountCspr", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Due in (days)</label>
-          <input value={form.dueDays} onChange={(e) => set("dueDays", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Invoice number</label>
-          <input
-            value={form.invoiceNumber}
-            onChange={(e) => set("invoiceNumber", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Payment history</label>
-          <input value={form.history} onChange={(e) => set("history", e.target.value)} />
-        </div>
+        {field("supplierName", "Supplier (you)")}
+        {field("debtorName", "Debtor (owes the invoice)")}
+        {field("amountCspr", "Face value (CSPR)", {
+          type: "number",
+          min: 0.01,
+          step: 0.01,
+          inputMode: "decimal",
+        })}
+        {field("dueDays", "Due in (days)", { type: "number", min: 1, max: 365, step: 1 })}
+        {field("invoiceNumber", "Invoice number")}
+        {field("history", "Payment history")}
         <div className="field full">
           <label>Description</label>
           <textarea
@@ -1867,7 +1945,7 @@ function SubmitPanel({
           />
         </div>
         <div className="field full">
-          <label>
+          <label htmlFor="intake-supplierAddress">
             Supplier Casper address — receives the advance
             {wallet.connected && wallet.publicKey && form.supplierAddress === wallet.publicKey ? (
               <span className="field-wallet on"> · ◈ your connected wallet</span>
@@ -1878,15 +1956,33 @@ function SubmitPanel({
             ) : null}
           </label>
           <input
+            id="intake-supplierAddress"
             value={form.supplierAddress}
+            aria-invalid={errors.supplierAddress ? true : undefined}
+            aria-describedby={errors.supplierAddress ? "intake-supplierAddress-err" : undefined}
             placeholder={
               supplierDefault
                 ? `defaults to demo supplier ${supplierDefault.replace("entity-account-", "account-hash-").slice(0, 30)}…`
                 : "account-hash-… (defaults to the demo supplier account)"
             }
-            onChange={(e) => set("supplierAddress", e.target.value)}
+            onChange={(e) => {
+              set("supplierAddress", e.target.value);
+              if (errors.supplierAddress) setErrors(({ supplierAddress: _d, ...rest }) => rest);
+            }}
           />
+          {errors.supplierAddress && (
+            <span className="field-err" id="intake-supplierAddress-err" role="alert">
+              {errors.supplierAddress}
+            </span>
+          )}
         </div>
+        {submitErr && (
+          <div className="field full">
+            <span className="field-err" role="alert">
+              Submission failed: {submitErr} — nothing was signed; fix and retry.
+            </span>
+          </div>
+        )}
         <div
           className="full"
           style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}
