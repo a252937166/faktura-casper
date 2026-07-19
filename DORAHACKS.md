@@ -49,6 +49,15 @@ hits a dead button. Design notes:
 
 The transactions in this file were produced by exactly these code paths.
 
+**Final interaction build: `v0.2.4-final` (tip; runtime code `@ cd48f47c`,
+cross-check `/api/meta → release.gitSha` live).** Interaction regression
+verified end-to-end on production: minimize → homepage pill → resume ·
+back-to-picker keeps the run resumable · refresh → resume · abandon
+pre-fund releases the reservation · abandon after funding hands off to the
+cleanup worker · a second visitor sees the busy desk BEFORE clicking ·
+x402 charges survive a backend restart · the same paid proof re-delivers
+its report idempotently (a different nonce reusing the deploy is refused).
+
 ### v0.2.4-final verification matrix — all five presets (2026-07-18)
 
 Re-verified after the audit-5 hardening: the anchored decision hash now covers
