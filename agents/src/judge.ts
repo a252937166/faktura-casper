@@ -65,6 +65,33 @@ const toMotes = (c: number) => BigInt(Math.round(c * 1e9)).toString();
 const cspr = (motes: string | bigint) => Number(BigInt(motes) / 1_000_000n) / 1000;
 const explorer = config.explorerBase;
 const deployUrl = (h?: string) => (h ? `${explorer}/deploy/${h}` : undefined);
+
+/** True once the node reports the transaction as EXECUTED. The explorer often
+ * shows the outcome tens of seconds before the CLI's event watcher notices —
+ * past that point the waiting card must stop claiming "waiting for finality". */
+async function txExecuted(hash: string): Promise<boolean> {
+  const rpc = `${config.nodeAddress.replace(/\/$/, "")}/rpc`;
+  for (const variant of ["Version1", "Deploy"]) {
+    try {
+      const r = await fetch(rpc, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "info_get_transaction",
+          params: { transaction_hash: { [variant]: hash } },
+        }),
+        signal: AbortSignal.timeout(6000),
+      });
+      const j = (await r.json()) as { result?: { execution_info?: unknown } };
+      if (j.result?.execution_info) return true;
+    } catch {
+      /* transient RPC hiccup — the next poll retries */
+    }
+  }
+  return false;
+}
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const sha256 = (s: string) => crypto.createHash("sha256").update(s).digest("hex");
 const day = 86_400_000;
@@ -1859,14 +1886,51 @@ function myActiveSession(cid: string, ip: string): Session | undefined {
   return undefined;
 }
 
-function activeSession(): Session | undefined {
-  const id = order.filter((i) => sessions.get(i)?.status === "active").at(-1);
-  const s = id ? sessions.get(id) : undefined;
-  if (s && Date.now() - s.lastActivityTs > SESSION_STALE_MS && !STEPPING) {
-    endSession(s, "failed", "Session expired after inactivity.");
-    return undefined;
+/** Pure lifecycle decision — what to expire and what may be evicted. Kept
+ * separate from the mutation so the rules are unit-testable:
+ *  - an ACTIVE session with no running step, idle past the stale window → expire;
+ *  - the store keeps at most `max` sessions, evicting OLDEST NON-ACTIVE first;
+ *  - an active or mid-transaction session is NEVER silently deleted. */
+export function prunePlan(
+  list: { id: string; status: string; running: boolean; lastActivityTs: number }[],
+  now: number,
+  max = 60,
+): { expire: string[]; evict: string[] } {
+  const expire = list
+    .filter((s) => s.status === "active" && !s.running && now - s.lastActivityTs > SESSION_STALE_MS)
+    .map((s) => s.id);
+  const expired = new Set(expire);
+  const evictable = list.filter((s) => s.status !== "active" || expired.has(s.id));
+  const overflow = Math.max(0, list.length - max);
+  return { expire, evict: evictable.slice(0, overflow).map((s) => s.id) };
+}
+
+/** Sweep expired walkthroughs and cap the in-memory store. Called from the
+ * cheap read paths (/health, create) and the cleanup tick — the 40-minute
+ * expiry actually fires now (the per-visitor refactor had orphaned it). */
+function pruneSessions(now = Date.now()) {
+  const plan = prunePlan(
+    order.map((id) => {
+      const s = sessions.get(id);
+      return {
+        id,
+        status: s?.status ?? "gone",
+        running: !!s?.steps.some((st) => st.status === "running"),
+        lastActivityTs: s?.lastActivityTs ?? 0,
+      };
+    }),
+    now,
+  );
+  for (const id of plan.expire) {
+    const s = sessions.get(id);
+    if (s) endSession(s, "failed", "Session expired after inactivity.");
   }
-  return s;
+  for (const id of plan.evict) {
+    releaseReservation(id);
+    sessions.delete(id);
+    const at = order.indexOf(id);
+    if (at >= 0) order.splice(at, 1);
+  }
 }
 
 // ---- router -----------------------------------------------------------------
@@ -1904,6 +1968,7 @@ export function makeJudgeRouter(): Router {
 
   r.get("/health", async (req, res) => {
     try {
+      pruneSessions();
       const h = await cachedHealth();
       // The active walkthrough (with its resume token) is only shown to the IP
       // that created it — strangers see a busy flag, not someone else's run.
@@ -1988,7 +2053,10 @@ export function makeJudgeRouter(): Router {
       res.json(publicSession(s));
       return;
     }
-    if (outcome === "settling" || STEPPING) {
+    // Only THIS session's own in-flight transaction blocks its abandon —
+    // another visitor holding the signing mutex is none of our business
+    // (sessions are per-visitor; the mutex only serializes signatures).
+    if (outcome === "settling") {
       res.status(409).json({
         error: "a real transaction is still settling — keep the page open a moment and retry",
       });
@@ -2065,6 +2133,9 @@ export function makeJudgeRouter(): Router {
     const ip = clientIp(req);
     const cid = clientCid(req, res);
     const smoke = isSmoke(req);
+    // Expire stale walkthroughs FIRST — a 40-minute-old abandoned session
+    // must not trigger the supersede/settling logic below.
+    pruneSessions();
     // Sessions are PER-VISITOR: someone else's walkthrough never blocks
     // yours (judges must never find a locked door). The only global mutex is
     // the on-chain signing lock — steps colliding there get a retry-soon 429.
@@ -2167,11 +2238,9 @@ export function makeJudgeRouter(): Router {
     };
     sessions.set(s.id, s);
     order.push(s.id);
-    if (order.length > 60) {
-      const evicted = order.shift() as string;
-      releaseReservation(evicted);
-      sessions.delete(evicted);
-    }
+    // Store cap enforcement lives in pruneSessions — it never deletes an
+    // active or mid-transaction walkthrough (the old blind shift() could).
+    pruneSessions();
     recordRun(ip, preset);
     res.status(201).json({ ...publicSession(s), token: s.token });
   });
@@ -2194,13 +2263,6 @@ export function makeJudgeRouter(): Router {
       res.status(409).json({ error: `session is ${s.status}`, session: publicSession(s) });
       return;
     }
-    if (STEPPING) {
-      res.status(429).json({
-        error:
-          "Another transaction is signing right now (one at a time on-chain) — retry in a few seconds.",
-      });
-      return;
-    }
     const i = s.cursor;
     const def = s.defs[i];
     const step = s.steps[i];
@@ -2208,8 +2270,20 @@ export function makeJudgeRouter(): Router {
       res.status(409).json({ error: "no step ready to run", session: publicSession(s) });
       return;
     }
+    // ONLY chain steps take the global signing mutex — AI underwriting and
+    // other compute steps from different visitors run freely in parallel
+    // ("one at a time" means one SIGNATURE, not one visitor).
+    const needsSigner = def.kind === "chain";
+    if (needsSigner && STEPPING) {
+      res.status(429).json({
+        error:
+          "Another visitor's transaction is signing right now (one signature at a time on-chain) — you're next.",
+        retryAfterMs: 4000,
+      });
+      return;
+    }
     // Global daily gas budget for signed steps (reads are free).
-    if (def.kind === "chain" && !s.smoke) {
+    if (needsSigner && !s.smoke) {
       const gas = canSignDeploy();
       if (!gas.ok) {
         res.status(429).json({ error: gas.reason });
@@ -2217,7 +2291,12 @@ export function makeJudgeRouter(): Router {
       }
     }
 
-    STEPPING = true;
+    if (needsSigner) STEPPING = true;
+    // While the CLI's event watcher waits for finality, ask the node directly
+    // every 8 s — visitors compare against the explorer, which indexes faster
+    // than the event stream delivers ("CSPR.live shows success, why is this
+    // still signing?" was a real user report).
+    let confirmProbe: ReturnType<typeof setInterval> | undefined;
     s.lastActivityTs = Date.now();
     touchPosition(s.id);
     const isRetry = step.status === "failed";
@@ -2232,15 +2311,28 @@ export function makeJudgeRouter(): Router {
       s.ctx.retrying = isRetry;
       // Live sub-step feed: phase notes + the deploy hash the moment the CLI
       // prints it — the visitor sees "submitted, tx 77a6…" while finality is
-      // still pending instead of a silent bar.
-      step.phaseNote = def.kind === "chain" ? "preparing the transaction…" : undefined;
-      setLiveProgressSink((p) => {
-        if (p.phase) step.phaseNote = p.phase;
-        if (p.txHash && !step.txHash) {
-          step.txHash = p.txHash;
-          step.explorerUrl = deployUrl(p.txHash);
-        }
-      });
+      // still pending instead of a silent bar. Chain steps only: the sink is
+      // a single global slot, safe precisely BECAUSE of the signing mutex.
+      step.phaseNote = needsSigner ? "preparing the transaction…" : undefined;
+      if (needsSigner) {
+        setLiveProgressSink((p) => {
+          if (p.phase) step.phaseNote = p.phase;
+          if (p.txHash && !step.txHash) {
+            step.txHash = p.txHash;
+            step.explorerUrl = deployUrl(p.txHash);
+          }
+        });
+        confirmProbe = setInterval(() => {
+          if (!step.txHash || step.status !== "running") return;
+          void txExecuted(step.txHash).then((executed) => {
+            if (executed && step.status === "running") {
+              step.phaseNote = "confirmed on-chain — the desk is finalizing the receipt…";
+              if (confirmProbe) clearInterval(confirmProbe);
+              confirmProbe = undefined;
+            }
+          });
+        }, 8000);
+      }
       const out = await def.run(s);
       step.result = out.result;
       if (out.decision) step.decision = out.decision;
@@ -2330,10 +2422,13 @@ export function makeJudgeRouter(): Router {
         /* client gone — failure state is saved for reattach */
       }
     } finally {
-      setLiveProgressSink(null);
+      if (confirmProbe) clearInterval(confirmProbe);
+      if (needsSigner) setLiveProgressSink(null);
       step.phaseNote = undefined;
       s.ctx.retrying = false;
-      STEPPING = false;
+      // Release ONLY if this call took the mutex — a compute step finishing
+      // must never free another visitor's in-flight signing lock.
+      if (needsSigner) STEPPING = false;
     }
   });
 
@@ -2496,6 +2591,7 @@ async function replenishDefaultInventory(): Promise<boolean> {
 }
 
 async function cleanupTick() {
+  pruneSessions();
   if (STEPPING) return;
   // First priority: keep the loss half of the story playable.
   if (await replenishDefaultInventory()) return;

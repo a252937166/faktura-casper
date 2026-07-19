@@ -48,6 +48,10 @@ export function emitLiveProgress(p: LiveProgress) {
   progressSink?.(p);
 }
 
+/** Ops that sign a transaction — the only ones whose CLI output feeds the
+ * live progress UI. Reads run concurrently and stay silent. */
+const WRITE_OPS = new Set(["register", "fund", "settle", "default", "deposit", "attest"]);
+
 /** Tracks the REAL tx hash across CLI output lines. The only full-hex
  * occurrence of it before finality is the `"hash"` field of the signed
  * transaction's debug dump (the `[WATCHER]` line abbreviates hashes, and the
@@ -68,23 +72,25 @@ export function finalTxHash(raw: string): string | undefined {
 }
 
 export function parseProgressLine(line: string, track: ProgressTrack) {
-  if (!progressSink) return;
+  // Track state updates ALWAYS run (sink-less writes — cleanup, seeder — need
+  // the hash for their timeout/failure reporting); only the UI notifications
+  // are optional.
   // `"hash": "<64hex>"` — the signed transaction's own hash (debug JSON dump,
   // printed just before submission). Remember it; announce only once the
   // watcher confirms the node accepted it.
   const built = /^\s*"hash"\s*:\s*"([0-9a-f]{64})"/.exec(line);
   if (built && !track.hash) {
     track.hash = built[1];
-    progressSink({ phase: "signed — submitting to the network" });
+    progressSink?.({ phase: "signed — submitting to the network" });
     return;
   }
   if (/Calling\s+"/.test(line)) {
-    progressSink({ phase: "building & signing the transaction" });
+    progressSink?.({ phase: "building & signing the transaction" });
   } else if (/Starting to monitor for transaction/i.test(line) && track.hash && !track.announced) {
     track.announced = true;
-    progressSink({ txHash: track.hash, phase: "submitted — waiting for on-chain finality" });
+    progressSink?.({ txHash: track.hash, phase: "submitted — waiting for on-chain finality" });
   } else if (/WATCHER|Monitoring|event/i.test(line)) {
-    progressSink({ phase: "submitted — waiting for on-chain finality" });
+    progressSink?.({ phase: "submitted — waiting for on-chain finality" });
   }
 }
 
@@ -110,14 +116,20 @@ export async function livenet<T = unknown>(
     let out = "";
     let err = "";
     const track: ProgressTrack = { hash: null, announced: false };
+    // Live progress is parsed ONLY for state-changing ops — read-only calls
+    // (pool stats, book, policy…) run CONCURRENTLY with a signing step and
+    // must never write their "Calling …" lines into its phase feed.
+    const streamable = WRITE_OPS.has(args[0]);
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      // The deploy may already be submitted — surface the TRACKED tx hash so
-      // the caller can reconcile instead of double-signing on retry.
+      // The deploy may already be ACCEPTED — surface the tracked tx hash so
+      // the caller can reconcile instead of double-signing on retry; a hash
+      // that was only signed locally (never announced) is not on-chain.
+      const submitted = track.announced ? track.hash : null;
       reject(
         new Error(
           `livenet ${args[0]} timed out` +
-            (track.hash ? ` (submitted tx ${track.hash} may still land on-chain)` : ""),
+            (submitted ? ` (submitted tx ${submitted} may still land on-chain)` : ""),
         ),
       );
     }, opts.timeoutMs ?? 240_000);
@@ -129,7 +141,7 @@ export async function livenet<T = unknown>(
       outBuf += chunk;
       let nl;
       while ((nl = outBuf.indexOf("\n")) >= 0) {
-        parseProgressLine(outBuf.slice(0, nl), track);
+        if (streamable) parseProgressLine(outBuf.slice(0, nl), track);
         outBuf = outBuf.slice(nl + 1);
       }
     });
@@ -139,7 +151,7 @@ export async function livenet<T = unknown>(
       errBuf += chunk;
       let nl;
       while ((nl = errBuf.indexOf("\n")) >= 0) {
-        parseProgressLine(errBuf.slice(0, nl), track);
+        if (streamable) parseProgressLine(errBuf.slice(0, nl), track);
         errBuf = errBuf.slice(nl + 1);
       }
     });
@@ -147,10 +159,11 @@ export async function livenet<T = unknown>(
       clearTimeout(timer);
       const raw = out + "\n" + err;
       // The ONLY trustworthy sources for the tx hash: the client's own
-      // execution-report line, then the signed-transaction dump. A bare hex
-      // scan is meaningless at debug level — the stream is full of state
-      // roots, block hashes and argument bytes.
-      const tx = finalTxHash(raw) ?? track.hash;
+      // execution-report line, then the signed-transaction dump — and the
+      // dump hash counts only once the watcher ANNOUNCED it (the node
+      // accepted the tx). A locally-signed hash whose submission failed
+      // before acceptance must never become an explorer link.
+      const tx = finalTxHash(raw) ?? (track.announced ? track.hash : null);
       if (code !== 0) {
         // A revert exits non-zero but its transaction DID land — keep the
         // hash so the caller can link the failed deploy on the explorer.

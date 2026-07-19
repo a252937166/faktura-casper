@@ -8,13 +8,13 @@
 **Casper Agentic Buildathon 2026** submission · Casper Innovation Track ·
 Deployed & running on **Casper Testnet**.
 
-| | |
-|---|---|
+|                  |                                                                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Contract package | [`fb209bb1…b49d7e`](https://testnet.cspr.live/contract-package/fb209bb1d3a1d5e675841f7d184ab7fa96d65adc099f6fd0105f29115fb49d7e) |
-| Odra address | `hash-fb209bb1d3a1d5e675841f7d184ab7fa96d65adc099f6fd0105f29115fb49d7e` |
-| Deploy tx | [`b59b3292…`](https://testnet.cspr.live/transaction/b59b32927dc57f614a56de4012990f4303542ac12f821c21e0408ade3fe90d5d) |
-| Network | Casper **Testnet** (`casper-test`) · built with **Odra 2.8** |
-| Evidence pack | [`DORAHACKS.md`](DORAHACKS.md) — every lifecycle step as an explorer-linkable transaction |
+| Odra address     | `hash-fb209bb1d3a1d5e675841f7d184ab7fa96d65adc099f6fd0105f29115fb49d7e`                                                          |
+| Deploy tx        | [`b59b3292…`](https://testnet.cspr.live/transaction/b59b32927dc57f614a56de4012990f4303542ac12f821c21e0408ade3fe90d5d)            |
+| Network          | Casper **Testnet** (`casper-test`) · built with **Odra 2.8**                                                                     |
+| Evidence pack    | [`DORAHACKS.md`](DORAHACKS.md) — every lifecycle step as an explorer-linkable transaction                                        |
 
 ---
 
@@ -39,7 +39,7 @@ Three agent roles run with no human in the loop, each with its **own key** and
   LLM for a risk score and price → registers, funds and attests. The advance is
   paid from the pool **to the supplier's account** (never the debtor's).
 - **Collector agent** (`collector` key) — reconciles settlements and
-  autonomously writes off invoices past due + grace. It is the *only* key the
+  autonomously writes off invoices past due + grace. It is the _only_ key the
   contract accepts for `mark_default`, and it cannot register or fund.
 - **x402 risk oracle** — sells each underwriting as a verified risk report over
   **HTTP 402** with native-CSPR settlement, machine-to-machine
@@ -54,7 +54,7 @@ Two load-bearing ideas:
    or even a **compromised agent key** cannot exceed those bounds; the deploy
    reverts with a typed error. Exposure is tracked per debtor and released on
    settle/default.
-   *Two layers, one source of truth:* the TypeScript agent applies a stricter
+   _Two layers, one source of truth:_ the TypeScript agent applies a stricter
    prefilter for **risk score and discount** (at boot it reads `get_policy()`
    and takes the tighter of the two), plus a gas-saving **liquidity sanity
    check**. Concentration limits are deliberately left to the Casper contract
@@ -64,7 +64,7 @@ Two load-bearing ideas:
    shows both layers.
 2. **The on-chain attestation log.** `attest(...)` records
    `{actor, kind, subjectId, payloadHash, model, ts}` for **every** autonomous
-   decision — approvals *and* rejections. The SHA-256 of the full decision memo
+   decision — approvals _and_ rejections. The SHA-256 of the full decision memo
    is anchored at decision time, so anyone can prove after the fact exactly
    what the agent decided. That turns "an AI moved money" into an auditable,
    fundable credit process.
@@ -72,7 +72,7 @@ Two load-bearing ideas:
 ## The DeFi + RWA core (`FakturaHub`, Odra/Rust)
 
 - **RWA registry** — receivables with a `Listed → Funded → (Settled |
-  Defaulted)` lifecycle.
+Defaulted)` lifecycle.
 - **Native-CSPR liquidity pool** — `deposit()` mints LP shares at the current
   share price; yield and losses accrue to the **share price**
   (`poolValue / totalShares`). `withdraw()` is limited to liquid capital.
@@ -115,7 +115,7 @@ the on-chain data model.
 
 ## Plug your agent in (MCP)
 
-Faktura is itself a service *for* agents: an MCP server exposes the desk to any
+Faktura is itself a service _for_ agents: an MCP server exposes the desk to any
 MCP-capable assistant.
 
 ```bash
@@ -132,10 +132,11 @@ No terminal handy? Click the **MCP · 6 tools** chip on the
 all six tools, copyable commands, and live read-only previews (including the
 real off-chain vs. on-chain decision-hash comparison).
 
-Tools: `pool_stats`, `list_funded_invoices`, `submit_invoice` (drives the real
-underwriting pipeline), `get_risk_report` (x402: returns the 402 payment
-challenge, then the paid report), `verify_decision_hash` (audits that the
-off-chain memo matches the on-chain anchor).
+Tools: `pool_stats`, `list_funded_invoices`, `list_verified_invoices` (only
+invoices whose canonical memo re-hashes to the on-chain anchor), `submit_invoice`
+(drives the real underwriting pipeline), `get_risk_report` (x402: returns the
+402 payment challenge, then the paid report), `verify_decision_hash` (re-hashes
+the full memo document and compares against the on-chain anchor).
 
 ## Live demo vs. local run — read this first
 
@@ -143,24 +144,26 @@ Three ways to see Faktura, honestly labeled (the UI shows the active mode in a
 banner):
 
 - **🟢 Live Testnet Judge Mode** — on [faktura.axiqo.xyz](https://faktura.axiqo.xyz)
-  click **▶ Use the real AI desk**. Each preset drives the *full* lifecycle as
+  click **▶ Use the live AI desk · 3–6 min**. Each preset drives the _full_ lifecycle as
   **real Casper Testnet transactions** with a CSPR.live link on every step —
   no simulation. Five presets: the main story (AI underwrite →
   register → fund → attest → settle — supplier paid, debtor settles), the **policy firewall**
-  (the AI approves an oversized invoice and the *contract* reverts funding with
+  (the AI approves an oversized invoice and the _contract_ reverts funding with
   `SingleInvoiceCapExceeded` — the failed transaction links right there), an
   x402 story where the buyer agent pays, **verifies and acts** on the report
-  (anchoring `CREDIT_REPORT_ACCEPTED`), and a **default workout** where the
-  collector key writes off an overdue invoice and LPs absorb the loss. Walkthroughs are
+  (anchoring `CREDIT_REPORT_ACCEPTED`), a **default workout** where the
+  collector key writes off an overdue invoice and LPs absorb the loss, and
+  **AI declines** — the model rejects bad paper and even the rejection memo
+  is hash-anchored on-chain (`UNDERWRITE_REJECT`). Walkthroughs are
   preset-only and small-capped, signed by pre-funded testnet-only demo keys;
   wallet payouts are budgeted (reserved before signing; one per wallet & per IP
   each 24 h plus a global daily cap), every signed step draws on a daily gas
   budget, abandoned funded runs are auto-settled by a cleanup worker, and
   sessions are token-guarded — a controlled way to let anyone trigger real
   value safely. See [docs/judge-mode-design.md](docs/judge-mode-design.md).
-- **Safe showcase** — the same site, secondary entry: on-chain *reads* come from
+- **Safe showcase** — the same site, secondary entry: on-chain _reads_ come from
   a captured snapshot of the real testnet contract (verifiable on cspr.live) and
-  the AI underwriter runs *live*, but *writes* are simulated in server memory so
+  the AI underwriter runs _live_, but _writes_ are simulated in server memory so
   casual visitors don't burn testnet gas or wait 30–120 s per block. Nothing
   there is ever claimed to be on-chain (writes are labelled `simulated`).
 - **Local live mode** — run the whole stack yourself (below) with your own funded
@@ -220,12 +223,12 @@ Anthropic-compatible key plugs in via env.
   a real deploy.
 - **Use of AI / agentic systems** — the agents run the entire credit process;
   the attestation log + on-chain policy make each autonomous decision provable
-  *and* bounded.
+  _and_ bounded.
 - **Real-world applicability (DeFi & RWA)** — invoice factoring is a live $3T
   market; the pool, yield model, and RWA lifecycle are the actual mechanism.
 - **Long-term plan** — permissioned institutional pools, real supplier-ERP
   document ingestion with proof-of-authenticity, and the x402/MCP surfaces as
-  the distribution channel: other agents underwrite *with* Faktura instead of
+  the distribution channel: other agents underwrite _with_ Faktura instead of
   rebuilding it.
 
 ## License

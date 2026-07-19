@@ -105,3 +105,13 @@ test("V2 transaction report and V1 failure report both match", () => {
 test("no execution report → no hash (pre-submit failures carry none)", () => {
   assert.equal(finalTxHash(`[DEBUG] { "hash": "${ROOT}" }\nGasNotSet`), undefined);
 });
+
+test("a locally-signed hash that was never announced stays unannounced (no explorer link)", () => {
+  collect();
+  const track: ProgressTrack = { hash: null, announced: false };
+  parseProgressLine(`  "hash": "${TX}",`, track);
+  parseProgressLine(`some unrelated failure line before submission`, track);
+  setLiveProgressSink(null);
+  assert.equal(track.hash, TX);
+  assert.equal(track.announced, false); // the close-path gate refuses unannounced hashes
+});

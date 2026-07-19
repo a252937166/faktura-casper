@@ -155,3 +155,45 @@ test("run budget: an exhausted per-preset cap disables BOTH create and canRun", 
   // Other stories keep their own budgets.
   assert.equal(limits.presetRunBudget("x402").ok, true);
 });
+
+// ---- session lifecycle: expiry fires, eviction never eats a live run -------
+
+const { prunePlan } = await import("../src/judge.js");
+const MIN = 60_000;
+const sess = (id: string, status: string, idleMin: number, running = false) => ({
+  id,
+  status,
+  running,
+  lastActivityTs: Date.now() - idleMin * MIN,
+});
+
+test("prune: an idle active session expires after 40 min — unless a tx is mid-flight", () => {
+  const plan = prunePlan(
+    [sess("stale", "active", 41), sess("signing", "active", 41, true), sess("fresh", "active", 5)],
+    Date.now(),
+  );
+  assert.deepEqual(plan.expire, ["stale"]);
+  assert.deepEqual(plan.evict, []);
+});
+
+test("prune: overflow evicts oldest NON-active only; live sessions survive a full store", () => {
+  const list = [
+    sess("old-done", "done", 500),
+    sess("old-active", "active", 10),
+    ...Array.from({ length: 60 }, (_, i) => sess(`s${i}`, "active", 1)),
+  ];
+  const plan = prunePlan(list, Date.now());
+  // 62 sessions, cap 60 → 2 slots over, but only ONE non-active candidate.
+  assert.deepEqual(plan.evict, ["old-done"]);
+  assert.deepEqual(plan.expire, []);
+});
+
+test("prune: a session expiring in this pass becomes evictable in the same pass", () => {
+  const list = [
+    sess("expired-now", "active", 90),
+    ...Array.from({ length: 61 }, (_, i) => sess(`t${i}`, "active", 1)),
+  ];
+  const plan = prunePlan(list, Date.now());
+  assert.deepEqual(plan.expire, ["expired-now"]);
+  assert.deepEqual(plan.evict, ["expired-now"]);
+});
