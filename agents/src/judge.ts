@@ -27,6 +27,7 @@ import {
   canSignDeploy,
   canStartRun,
   commitPayout,
+  presetRunBudget,
   deploysLast24h,
   recentRuns,
   recordDeploy,
@@ -529,6 +530,10 @@ async function health() {
   const deployBudget = canSignDeploy();
   const gate = (preset: string, extra: { ok: boolean; reason?: string }) => {
     if (!deployBudget.ok) return deployBudget;
+    // Same run-budget math as session creation — a card the picker shows as
+    // runnable must never answer a budget 429 when clicked.
+    const runBudget = presetRunBudget(preset);
+    if (!runBudget.ok) return runBudget;
     const personas = personaGate(preset, balances);
     if (!personas.ok) return personas;
     return extra;
