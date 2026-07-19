@@ -67,9 +67,7 @@ function saveX402State() {
     fs.writeFileSync(
       tmp,
       JSON.stringify({
-        pending: [...pending.values()].filter(
-          (c) => Date.now() - c.createdTs <= config.x402.ttlMs,
-        ),
+        pending: [...pending.values()].filter((c) => Date.now() - c.createdTs <= config.x402.ttlMs),
         settled: Object.fromEntries(
           [...settledDeploys].filter(([, ts]) => Date.now() - ts <= SETTLED_RETENTION_MS),
         ),
@@ -80,7 +78,6 @@ function saveX402State() {
     /* best-effort — see note above */
   }
 }
-
 
 /** Read-only probes (debugging + tests): did the persisted state load? */
 export const x402HasPendingNonce = (nonce: string) => pending.has(nonce);
