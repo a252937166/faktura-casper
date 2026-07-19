@@ -3004,13 +3004,25 @@ function GuidedStep({
           </div>
         )}
         {running && !isAi && (
-          <div className="lj-signing">
+          <div className="lj-signing" aria-live="polite">
             <div className="lj-signing-top">
               <span className="lj-spinner" /> Signing on Casper…
               <ElapsedTimer startTs={runStartTs} />
             </div>
             <div className="lj-wait-bar">
               <span className="lj-wait-fill" />
+            </div>
+            {/* Live sub-steps streamed from the signer — the wait is a story,
+                not a silent bar. The tx link appears the moment the deploy is
+                submitted, minutes before finality. */}
+            <div className="lj-phase">
+              <span className="lj-phase-dot" />
+              {step.phaseNote ?? "connecting to the Casper node…"}
+              {step.txHash && (
+                <a className="lr-tx mono" target="_blank" rel="noreferrer" href={step.explorerUrl}>
+                  tx {step.txHash.slice(0, 10)}… ↗
+                </a>
+              )}
             </div>
             <span className="lj-run-hint">
               One real transaction · finality usually 30–120 s · keep this open
@@ -3029,6 +3041,15 @@ function GuidedStep({
             </div>
             <div className="lj-wait-bar">
               <span className="lj-wait-fill" />
+            </div>
+            <div className="lj-phase">
+              <span className="lj-phase-dot" />
+              {step.phaseNote ?? "waiting for on-chain finality…"}
+              {step.txHash && (
+                <a className="lr-tx mono" target="_blank" rel="noreferrer" href={step.explorerUrl}>
+                  tx {step.txHash.slice(0, 10)}… ↗
+                </a>
+              )}
             </div>
             <span className="lj-run-hint">
               Your refresh didn&apos;t interrupt anything — the desk kept signing; this card updates
@@ -3470,6 +3491,25 @@ function JudgeGuided({
       .then(onHealth)
       .catch(() => {});
   };
+
+  // While OUR step is signing, poll the session so the live phase notes and
+  // the early deploy hash stream into the waiting card — the visitor watches
+  // the sub-steps instead of a silent bar.
+  useEffect(() => {
+    if (!busy || !session) return;
+    const id = session.id;
+    const iv = setInterval(() => {
+      judge
+        .getSession(id)
+        .then((fresh) => {
+          // Never let a late poll overwrite the final state runNext just set.
+          if (fresh.steps[fresh.cursor]?.status === "running") setSession(fresh);
+        })
+        .catch(() => {});
+    }, 4000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, session?.id]);
 
   // Reattach after refresh: if the current step is RUNNING server-side (the
   // transaction kept settling while the page was away), poll the

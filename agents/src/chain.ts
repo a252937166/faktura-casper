@@ -30,6 +30,39 @@ export class LivenetError extends Error {
  * the given persona and parses the `RESULT {...}` line. All transaction
  * construction / signing / waiting stays inside the audited Odra host.
  */
+/**
+ * Live progress channel for the CURRENTLY running livenet call (the judge
+ * desk signs one step at a time, so a single sink is enough). Streams two
+ * kinds of signal parsed from the CLI's output: a human phase note, and the
+ * deploy hash the moment it appears — so the UI can show "submitted, waiting
+ * for finality" with a clickable explorer link MINUTES before the step ends.
+ */
+type LiveProgress = { phase?: string; txHash?: string };
+let progressSink: ((p: LiveProgress) => void) | null = null;
+export function setLiveProgressSink(fn: ((p: LiveProgress) => void) | null) {
+  progressSink = fn;
+}
+
+/** For non-livenet signers (the x402 native transfer) to feed the same UI. */
+export function emitLiveProgress(p: LiveProgress) {
+  progressSink?.(p);
+}
+
+function parseProgressLine(line: string, seenHash: { v: boolean }) {
+  if (!progressSink) return;
+  if (!seenHash.v) {
+    const h = line.match(/\b[0-9a-f]{64}\b/);
+    if (h && !config.contract.includes(h[0])) {
+      seenHash.v = true;
+      progressSink({ txHash: h[0], phase: "submitted — waiting for on-chain finality" });
+      return;
+    }
+  }
+  if (/Calling\s+"/.test(line)) progressSink({ phase: "building & signing the transaction" });
+  else if (/WATCHER|Monitoring|event/i.test(line))
+    progressSink({ phase: "submitted — waiting for on-chain finality" });
+}
+
 export async function livenet<T = unknown>(
   persona: Persona,
   args: string[],
@@ -62,8 +95,29 @@ export async function livenet<T = unknown>(
       );
     }, opts.timeoutMs ?? 240_000);
 
-    child.stdout.on("data", (d) => (out += d.toString()));
-    child.stderr.on("data", (d) => (err += d.toString()));
+    const seenHash = { v: false };
+    let outBuf = "";
+    let errBuf = "";
+    child.stdout.on("data", (d) => {
+      const chunk = d.toString();
+      out += chunk;
+      outBuf += chunk;
+      let nl;
+      while ((nl = outBuf.indexOf("\n")) >= 0) {
+        parseProgressLine(outBuf.slice(0, nl), seenHash);
+        outBuf = outBuf.slice(nl + 1);
+      }
+    });
+    child.stderr.on("data", (d) => {
+      const chunk = d.toString();
+      err += chunk;
+      errBuf += chunk;
+      let nl;
+      while ((nl = errBuf.indexOf("\n")) >= 0) {
+        parseProgressLine(errBuf.slice(0, nl), seenHash);
+        errBuf = errBuf.slice(nl + 1);
+      }
+    });
     child.on("close", (code) => {
       clearTimeout(timer);
       const raw = out + "\n" + err;

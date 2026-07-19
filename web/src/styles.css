@@ -5181,3 +5181,23 @@ button.field-wallet {
   color: #0f8a5f;
   background: rgba(15, 138, 95, 0.06);
 }
+
+/* live sub-step line inside the signing wait */
+.lj-phase {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: rgba(23, 19, 13, 0.7);
+}
+.lj-phase-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #c98a1b;
+  animation: pulse 1.4s ease infinite;
+  flex-shrink: 0;
+  align-self: center;
+}

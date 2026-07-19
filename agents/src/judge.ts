@@ -41,7 +41,7 @@ import {
   type RecentRun,
 } from "./judge-limits.js";
 import { config } from "./config.js";
-import { chain, LivenetError } from "./chain.js";
+import { chain, LivenetError, setLiveProgressSink, emitLiveProgress } from "./chain.js";
 import { underwrite as llmUnderwrite } from "./llm.js";
 import {
   buildDecisionMemo,
@@ -98,6 +98,8 @@ interface JudgeStep {
   status: StepStatus;
   txHash?: string;
   explorerUrl?: string;
+  /** Live sub-step note while RUNNING ("submitted — waiting for finality"). */
+  phaseNote?: string;
   result?: string;
   /** structured AI decision (underwrite / consumer steps) */
   decision?: DecisionCard;
@@ -1105,6 +1107,7 @@ async function stepX402(s: Session) {
     const offer = ((await first.json()) as any).accepts[0];
     s.ctx.x402Nonce = String(offer.extra.transferIdNonce);
     s.ctx.x402AmountMotes = String(offer.maxAmountRequired);
+    emitLiveProgress({ phase: "402 received — signing the CSPR payment" });
     s.ctx.x402Proof = await nativeTransfer({
       fromKeyPath: config.keys.debtor,
       to: offer.payTo,
@@ -1112,6 +1115,10 @@ async function stepX402(s: Session) {
       id: s.ctx.x402Nonce,
     });
     s.ctx.x402PaidTs = Date.now();
+    emitLiveProgress({
+      txHash: s.ctx.x402Proof,
+      phase: "payment submitted — the oracle verifies it on-chain",
+    });
   }
   for (let i = 0; i < 30; i++) {
     await sleep(5000);
@@ -2174,6 +2181,17 @@ export function makeJudgeRouter(): Router {
     if (def.kind === "chain") recordDeploy(`${s.preset}:${def.key}`);
     try {
       s.ctx.retrying = isRetry;
+      // Live sub-step feed: phase notes + the deploy hash the moment the CLI
+      // prints it — the visitor sees "submitted, tx 77a6…" while finality is
+      // still pending instead of a silent bar.
+      step.phaseNote = def.kind === "chain" ? "preparing the transaction…" : undefined;
+      setLiveProgressSink((p) => {
+        if (p.phase) step.phaseNote = p.phase;
+        if (p.txHash && !step.txHash) {
+          step.txHash = p.txHash;
+          step.explorerUrl = deployUrl(p.txHash);
+        }
+      });
       const out = await def.run(s);
       step.result = out.result;
       if (out.decision) step.decision = out.decision;
@@ -2263,6 +2281,8 @@ export function makeJudgeRouter(): Router {
         /* client gone — failure state is saved for reattach */
       }
     } finally {
+      setLiveProgressSink(null);
+      step.phaseNote = undefined;
       s.ctx.retrying = false;
       STEPPING = false;
     }

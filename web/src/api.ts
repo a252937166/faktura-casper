@@ -212,6 +212,8 @@ export interface JudgeStep {
   status: JudgeStepStatus;
   txHash?: string;
   explorerUrl?: string;
+  /** Live sub-step note while the step is RUNNING server-side. */
+  phaseNote?: string;
   result?: string;
   decision?: DecisionCard;
   what?: string;
