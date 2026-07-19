@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseProgressLine, setLiveProgressSink, type ProgressTrack } from "../src/chain.js";
+import {
+  finalTxHash,
+  parseProgressLine,
+  setLiveProgressSink,
+  type ProgressTrack,
+} from "../src/chain.js";
 
 /** The regression behind this file: the first bare 64-hex in the CLI stream
  * is the contract PACKAGE hash from the "Calling …" line — the old parser
@@ -74,4 +79,29 @@ test("other hex fields in the dump (body_hash, args) are ignored", () => {
   setLiveProgressSink(null);
   assert.equal(track.hash, null);
   assert.equal(events.length, 0);
+});
+
+// ---- finalTxHash: the execution-report line beats every other hex ----------
+
+const ROOT = "5d7b1b23197cda53dec593caf30836a5740afa2279b356fae74bf1bdc2b2e725";
+
+test("final hash comes from the execution report, not the last hex (debug query noise)", () => {
+  // The production regression: debug-level query dumps print state roots
+  // AFTER the success line, so "last hex wins" picked a state root.
+  const raw = [
+    `Calling "hash-${PKG}" with entrypoint "attest" through proxy.`,
+    `Deploy "${TX}" successfully executed.`,
+    `[DEBUG] { "state_root_hash": "${ROOT}" }`,
+  ].join("\n");
+  assert.equal(finalTxHash(raw), TX);
+});
+
+test("V2 transaction report and V1 failure report both match", () => {
+  assert.equal(finalTxHash(`Transaction "${TX}" successfully executed.`), TX);
+  assert.equal(finalTxHash(`Deploy V1 "${TX}" failed with error: "User error: 15".`), TX);
+  assert.equal(finalTxHash(`Transaction "${TX}" failed with error: something.`), TX);
+});
+
+test("no execution report → no hash (pre-submit failures carry none)", () => {
+  assert.equal(finalTxHash(`[DEBUG] { "hash": "${ROOT}" }\nGasNotSet`), undefined);
 });

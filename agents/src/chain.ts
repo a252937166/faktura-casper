@@ -55,6 +55,18 @@ export function emitLiveProgress(p: LiveProgress) {
  * was a real bug: a stable, explorer-dead address shown on every run). */
 export type ProgressTrack = { hash: string | null; announced: boolean };
 
+/** The tx hash as reported by the client's own success/failure log line —
+ * the only hex in the stream whose MEANING is unambiguous. At debug level
+ * the client also dumps query traffic (state roots, block hashes) after the
+ * execution report, so "last hex wins" does not hold anymore. */
+export function finalTxHash(raw: string): string | undefined {
+  const m =
+    /(?:Deploy(?:\s+V1)?|Transaction)\s+"([0-9a-f]{64})"\s+(?:successfully executed|failed with error)/.exec(
+      raw,
+    );
+  return m?.[1];
+}
+
 export function parseProgressLine(line: string, track: ProgressTrack) {
   if (!progressSink) return;
   // `"hash": "<64hex>"` — the signed transaction's own hash (debug JSON dump,
@@ -134,16 +146,18 @@ export async function livenet<T = unknown>(
     child.on("close", (code) => {
       clearTimeout(timer);
       const raw = out + "\n" + err;
+      // The ONLY trustworthy sources for the tx hash: the client's own
+      // execution-report line, then the signed-transaction dump. A bare hex
+      // scan is meaningless at debug level — the stream is full of state
+      // roots, block hashes and argument bytes.
+      const tx = finalTxHash(raw) ?? track.hash;
       if (code !== 0) {
         // A revert exits non-zero but its transaction DID land — keep the
-        // hashes so the caller can link the failed deploy on the explorer.
-        const seen = [...new Set(raw.match(/\b[0-9a-f]{64}\b/g) ?? [])].filter(
-          (h) => !config.contract.includes(h),
-        );
+        // hash so the caller can link the failed deploy on the explorer.
         reject(
           new LivenetError(
             `livenet ${args.join(" ")} failed (${code}):\n${raw.slice(-2000)}`,
-            seen,
+            tx ? [tx] : [],
           ),
         );
         return;
@@ -153,12 +167,9 @@ export async function livenet<T = unknown>(
         reject(new Error(`livenet ${args[0]}: no RESULT line:\n${raw.slice(-2000)}`));
         return;
       }
-      const deployHashes = [...new Set(raw.match(/\b[0-9a-f]{64}\b/g) ?? [])].filter(
-        (h) => !config.contract.includes(h),
-      );
       resolve({
         result: JSON.parse(line.slice("RESULT ".length)) as T,
-        deployHashes,
+        deployHashes: tx ? [tx] : [],
         raw,
       });
     });
