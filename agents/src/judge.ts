@@ -2148,12 +2148,10 @@ export function makeJudgeRouter(): Router {
       return;
     }
     if (STEPPING) {
-      res
-        .status(429)
-        .json({
-          error:
-            "Another transaction is signing right now (one at a time on-chain) — retry in a few seconds.",
-        });
+      res.status(429).json({
+        error:
+          "Another transaction is signing right now (one at a time on-chain) — retry in a few seconds.",
+      });
       return;
     }
     const i = s.cursor;
