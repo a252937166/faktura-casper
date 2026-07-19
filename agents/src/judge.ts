@@ -1802,6 +1802,16 @@ function endSession(s: Session, status: "done" | "failed", note?: string) {
   if (!s.ctx.payoutCommitted) releaseReservation(s.id);
 }
 
+/** The caller's OWN active walkthrough, if any — sessions are per-visitor
+ * now; only the on-chain signing lock (STEPPING) is global. */
+function myActiveSession(cid: string, ip: string): Session | undefined {
+  for (let i = order.length - 1; i >= 0; i--) {
+    const s = sessions.get(order[i]);
+    if (s?.status === "active" && ownerMatch(s.ownerCid, s.ip, cid, ip)) return s;
+  }
+  return undefined;
+}
+
 function activeSession(): Session | undefined {
   const id = order.filter((i) => sessions.get(i)?.status === "active").at(-1);
   const s = id ? sessions.get(id) : undefined;
@@ -1850,13 +1860,13 @@ export function makeJudgeRouter(): Router {
       const h = await cachedHealth();
       // The active walkthrough (with its resume token) is only shown to the IP
       // that created it — strangers see a busy flag, not someone else's run.
-      const mineSess = h.activeSession ? sessions.get(h.activeSession.id) : undefined;
-      const mine = !!mineSess && isOwner(mineSess, req);
-      const active = mine ? mineSess! : null;
+      const active = myActiveSession(clientCid(req), clientIp(req)) ?? null;
       res.json({
         ...h,
         activeSession: active ? { ...publicSession(active), token: active.token } : null,
-        deskBusy: !!h.activeSession && !mine,
+        // Retired: sessions are per-visitor now — nobody else's run can make
+        // the desk "busy" for you. Kept for older cached frontends.
+        deskBusy: false,
         budget: {
           capCspr: DAILY_PAYOUT_CAP_CSPR,
           spentCspr: spentLast24h(),
@@ -2008,15 +2018,16 @@ export function makeJudgeRouter(): Router {
     const ip = clientIp(req);
     const cid = clientCid(req, res);
     const smoke = isSmoke(req);
-    const existing = activeSession();
-    const mine =
-      !!existing && (existing.ownerCid && cid ? existing.ownerCid === cid : existing.ip === ip);
-    // Same visitor (e.g. refreshed the page) — abandon their old session and
-    // start fresh, so they are never locked out. EXCEPT while a transaction
-    // is signing or settling: superseding then would release a payout
-    // reservation whose transfer may still land (ledger corruption).
-    if (existing && mine) {
-      const settling = STEPPING || existing.steps.some((st) => st.status === "running");
+    // Sessions are PER-VISITOR: someone else's walkthrough never blocks
+    // yours (judges must never find a locked door). The only global mutex is
+    // the on-chain signing lock — steps colliding there get a retry-soon 429.
+    const existing = myActiveSession(cid, ip);
+    // Same visitor starting over (e.g. picked a new story) — replace their
+    // old session, EXCEPT while a transaction is signing or settling:
+    // superseding then would release a payout reservation whose transfer may
+    // still land (ledger corruption).
+    if (existing) {
+      const settling = existing.steps.some((st) => st.status === "running");
       if (settling) {
         res.status(409).json({
           error:
@@ -2026,16 +2037,6 @@ export function makeJudgeRouter(): Router {
         return;
       }
       endSession(existing, "failed", "Replaced by a new walkthrough.");
-    } else if (existing && !mine) {
-      const idleMs = Date.now() - existing.lastActivityTs;
-      if (STEPPING || idleMs < IDLE_TAKEOVER_MS) {
-        res.status(429).json({
-          error:
-            "Another judge is mid-walkthrough right now — the desk signs one story at a time. Try again in a few minutes.",
-        });
-        return;
-      }
-      endSession(existing, "failed", "Superseded after inactivity.");
     }
     const h = await cachedHealth().catch(() => null);
     if (!h || h.paused) {
@@ -2149,7 +2150,10 @@ export function makeJudgeRouter(): Router {
     if (STEPPING) {
       res
         .status(429)
-        .json({ error: "Another step is signing right now — one transaction at a time." });
+        .json({
+          error:
+            "Another transaction is signing right now (one at a time on-chain) — retry in a few seconds.",
+        });
       return;
     }
     const i = s.cursor;
