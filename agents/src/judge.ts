@@ -1744,6 +1744,23 @@ function isOwner(s: Session, req: Request): boolean {
   return ownerMatch(s.ownerCid, s.ip, clientCid(req), clientIp(req));
 }
 
+/**
+ * Pure abandon decision (unit-tested): what happens if the owner walks away
+ * NOW. "settling" refuses (a signed transaction is in flight), "release"
+ * ends cleanly pre-fund (reservation returns to the budget), "cleanup" ends
+ * the session and leaves the funded position to the auto-settle worker.
+ */
+export function abandonOutcome(s: {
+  status: string;
+  steps: Array<{ status: string }>;
+  ctx: { record?: { chain: { fundHash?: string } }; payoutCommitted?: boolean };
+}): "already-ended" | "settling" | "release" | "cleanup" {
+  if (s.status !== "active") return "already-ended";
+  if (s.steps.some((st) => st.status === "running")) return "settling";
+  if (s.ctx.record?.chain.fundHash || s.ctx.payoutCommitted) return "cleanup";
+  return "release";
+}
+
 function endSession(s: Session, status: "done" | "failed", note?: string) {
   s.status = status;
   s.endedTs = Date.now();
@@ -1859,6 +1876,45 @@ export function makeJudgeRouter(): Router {
       touchPosition(s.id);
     }
     res.json(publicSession(s));
+  });
+
+  // Explicit owner-initiated abandon: closing the tab must not be the only
+  // way to leave — this ends the session SERVER-SIDE, releasing the desk and
+  // any payout reservation. Funded positions hand off to the cleanup worker.
+  r.post("/session/:id/abandon", (req, res) => {
+    const s = sessions.get(req.params.id);
+    if (!s) {
+      res.status(404).json({ error: "session not found" });
+      return;
+    }
+    const tok = String(req.headers["x-judge-token"] ?? "");
+    if (tok !== s.token && !isOwner(s, req)) {
+      res.status(403).json({ error: "not your walkthrough" });
+      return;
+    }
+    const outcome = abandonOutcome(s);
+    if (outcome === "already-ended") {
+      res.json(publicSession(s));
+      return;
+    }
+    if (outcome === "settling" || STEPPING) {
+      res.status(409).json({
+        error: "a real transaction is still settling — keep the page open a moment and retry",
+      });
+      return;
+    }
+    endSession(s, "failed", "Abandoned by the visitor.");
+    feed.publish({
+      actor: "system",
+      kind: "info",
+      message:
+        `walkthrough ${s.displayId} abandoned by its owner` +
+        (outcome === "cleanup" ? " — funded position handed to the cleanup worker" : ""),
+    });
+    res.json({
+      ...publicSession(s),
+      ...(outcome === "cleanup" ? { cleanup: "scheduled" } : {}),
+    });
   });
 
   // The last few completed walkthroughs — public receipts (no tokens, no IPs).

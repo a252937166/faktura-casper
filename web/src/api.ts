@@ -329,6 +329,13 @@ export const judge = {
       headers: { "X-Judge-Token": judgeToken(id) },
     }).then((r) => j<JudgeSession>(r)),
   getSession: (id: string) => fetch(`${JUDGE_BASE}/session/${id}`).then((r) => j<JudgeSession>(r)),
+  /** Server-side abandon: ends the session and releases the desk + budgets.
+   * 409 while a transaction is still settling. */
+  abandon: (id: string) =>
+    fetch(`${JUDGE_BASE}/session/${id}/abandon`, {
+      method: "POST",
+      headers: { "X-Judge-Token": judgeToken(id) },
+    }).then((r) => j<JudgeSession & { cleanup?: string }>(r)),
   balance: (pubkey: string) =>
     fetch(`${JUDGE_BASE}/balance/${pubkey}`).then((r) =>
       j<{ pubkey: string; cspr: number | null }>(r),

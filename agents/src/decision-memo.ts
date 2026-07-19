@@ -14,6 +14,8 @@
  * decision timestamp, so hashes are COMPUTE-ONCE-AND-STORE: nothing in the
  * system ever re-derives a hash from raw inputs — verifiers re-hash the
  * stored memo document itself and compare with the on-chain anchor.
+ * Cross-language verifiers: the full byte-layout spec lives in
+ * docs/judge-mode-design.md § "Canonical serialization spec".
  */
 import crypto from "node:crypto";
 

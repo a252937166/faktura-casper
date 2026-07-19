@@ -119,10 +119,18 @@ async function onlineChecks() {
       ok = false;
       note = "NOT FOUND on chain";
     } else if (wantRevert) {
-      ok = errorMessage != null;
+      // The policy-block story claims a SPECIFIC revert — assert exactly it.
+      // "Some revert happened" would let a wrong failure impersonate the ace.
+      const wantExact =
+        doc.preset === "policy-block" && s.key === "fund" ? "User error: 15" : null;
+      ok = wantExact
+        ? !!errorMessage && errorMessage.includes(wantExact)
+        : errorMessage != null;
       note = ok
         ? `finalized as expected revert (${errorMessage})`
-        : "expected a revert but the tx succeeded";
+        : wantExact && errorMessage != null
+          ? `reverted with "${errorMessage}" but the receipt claims ${wantExact}`
+          : "expected a revert but the tx succeeded";
     } else {
       ok = errorMessage == null;
       note = ok ? "finalized, success" : `execution failed: ${errorMessage}`;

@@ -188,6 +188,21 @@ async function requireRiskReport(
     res.status(404).json({ error: "no risk report available for this invoice" });
     return;
   }
+  // Charge-gate honesty: refuse BEFORE the 402, not after the payment. A
+  // buyer must never pay 2.5 CSPR and then discover the report cannot carry
+  // a verifiable canonical memo (legacy records predate faktura.decision.v1).
+  const verifiable =
+    !!record.memo &&
+    isCanonicalDecisionMemo(record.memo) &&
+    hashDecisionMemo(record.memo) === record.decision.decisionHash;
+  if (!verifiable) {
+    res.status(409).json({
+      error:
+        "a canonically verifiable report is unavailable for this legacy invoice — pick one from list_verified_invoices",
+      legacy: true,
+    });
+    return;
+  }
   res.locals.riskRecord = record;
   res.locals.chainInvoice = inv;
   next();

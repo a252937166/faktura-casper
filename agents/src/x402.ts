@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import type { Request, Response, NextFunction } from "express";
 import { config } from "./config.js";
 import { feed } from "./feed.js";
@@ -23,10 +25,66 @@ import { feed } from "./feed.js";
 interface PendingCharge {
   nonce: string;
   createdTs: number;
+  /** What this charge was issued FOR — bound at 402 time, enforced at settle. */
+  resource?: string;
+  invoiceId?: number;
+  amountMotes?: string;
+  payTo?: string;
 }
 
+/**
+ * Charges and the replay set are PERSISTED (atomic tmp+rename, best-effort):
+ * a visitor who paid a real CSPR transfer must never lose their unlock to a
+ * backend restart between the 402 and the retry. Disk trouble degrades to
+ * in-memory behavior — it must never block payment verification itself.
+ */
+const STATE_FILE = () => path.join(config.dataDir, "x402-state.json");
+const SETTLED_RETENTION_MS = 7 * 24 * 3600_000;
+
 const pending = new Map<string, PendingCharge>(); // nonce -> charge
-const settledDeploys = new Set<string>(); // replay protection
+const settledDeploys = new Map<string, number>(); // deployHash -> settledTs (replay protection)
+
+function loadX402State() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(STATE_FILE(), "utf8")) as {
+      pending?: PendingCharge[];
+      settled?: Record<string, number>;
+    };
+    for (const c of raw.pending ?? [])
+      if (Date.now() - c.createdTs <= config.x402.ttlMs) pending.set(c.nonce, c);
+    for (const [h, ts] of Object.entries(raw.settled ?? {}))
+      if (Date.now() - ts <= SETTLED_RETENTION_MS) settledDeploys.set(h, ts);
+  } catch {
+    /* first boot or unreadable file — start clean */
+  }
+}
+loadX402State();
+
+function saveX402State() {
+  try {
+    fs.mkdirSync(path.dirname(STATE_FILE()), { recursive: true });
+    const tmp = `${STATE_FILE()}.tmp`;
+    fs.writeFileSync(
+      tmp,
+      JSON.stringify({
+        pending: [...pending.values()].filter(
+          (c) => Date.now() - c.createdTs <= config.x402.ttlMs,
+        ),
+        settled: Object.fromEntries(
+          [...settledDeploys].filter(([, ts]) => Date.now() - ts <= SETTLED_RETENTION_MS),
+        ),
+      }),
+    );
+    fs.renameSync(tmp, STATE_FILE());
+  } catch {
+    /* best-effort — see note above */
+  }
+}
+
+
+/** Read-only probes (debugging + tests): did the persisted state load? */
+export const x402HasPendingNonce = (nonce: string) => pending.has(nonce);
+export const x402DeploySettled = (deployHash: string) => settledDeploys.has(deployHash);
 
 function paymentRequirements(req: Request, nonce: string) {
   return {
@@ -101,7 +159,8 @@ async function verifyPayment(
       : JSON.stringify(results ?? "").includes("Success");
     if (!success) return { ok: false, reason: "deploy not (yet) successful" };
 
-    settledDeploys.add(deployHash);
+    settledDeploys.set(deployHash, Date.now());
+    saveX402State();
     return { ok: true };
   } catch (e) {
     return { ok: false, reason: (e as Error).message };
@@ -155,10 +214,19 @@ export function x402Gate() {
       // Keep the nonce under 2^48: it rides the Casper transfer id (u64) and
       // comes back through JSON, where larger values lose precision.
       const nonce = String(crypto.randomInt(1, 2 ** 48));
-      pending.set(nonce, { nonce, createdTs: Date.now() });
+      const invoiceMatch = /\/api\/risk\/(\d+)/.exec(req.originalUrl);
+      pending.set(nonce, {
+        nonce,
+        createdTs: Date.now(),
+        resource: req.originalUrl,
+        invoiceId: invoiceMatch ? Number(invoiceMatch[1]) : undefined,
+        amountMotes: config.x402.priceMotes,
+        payTo: config.x402.payTo,
+      });
       // GC old charges
       for (const [k, v] of pending)
         if (Date.now() - v.createdTs > config.x402.ttlMs) pending.delete(k);
+      saveX402State();
       feed.publish({
         actor: "oracle",
         kind: "x402",
@@ -173,10 +241,20 @@ export function x402Gate() {
       res.status(402).json({ x402Version: 1, error: "unknown or expired nonce" });
       return;
     }
+    // The charge is BOUND to what it was issued for — a nonce bought for one
+    // report cannot unlock a different resource.
+    if (charge.resource && charge.resource !== req.originalUrl) {
+      res.status(402).json({
+        x402Version: 1,
+        error: `nonce was issued for ${charge.resource}, not ${req.originalUrl}`,
+      });
+      return;
+    }
     // Showcase mode only: accept the clearly-labeled simulated proof issued by
     // /api/demo/x402-pay so public visitors can walk the flow without keys.
     if (config.showcase && proof.trim() === `showcase-simulated:${nonceHeader}`) {
       pending.delete(nonceHeader);
+      saveX402State();
       feed.publish({
         actor: "oracle",
         kind: "x402",
@@ -201,6 +279,7 @@ export function x402Gate() {
       return;
     }
     pending.delete(nonceHeader);
+    saveX402State();
     feed.publish({
       actor: "oracle",
       kind: "x402",
