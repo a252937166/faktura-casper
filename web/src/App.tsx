@@ -447,13 +447,19 @@ function HeaderMoreMenu({ onOpenMcp, showMcp }: { onOpenMcp: () => void; showMcp
 // ---- ONE live-desk state machine — hero, status strip, picker and runner all
 // read the SAME six states, so the site never says "warming" in one corner
 // and "node down" in another.
-export type LiveState = "checking" | "ready" | "warming" | "busy" | "paused" | "offline";
+export type LiveState =
+  "checking" | "ready" | "limited" | "warming" | "busy" | "paused" | "offline";
 
 export function deriveLiveState(probed: boolean, h: JudgeHealth | null): LiveState {
   if (!probed) return "checking";
   if (!h) return "offline";
   if (h.paused) return (h.uptimeSec ?? 999) < 150 ? "warming" : "paused";
   if (h.deskBusy) return "busy";
+  // The desk can be healthy while EVERY story is temporarily unrunnable
+  // (daily signing budget spent, keys awaiting a top-up, pool shape) — saying
+  // READY and then showing five disabled cards would be a contradiction.
+  const runnable = Object.values(h.canRun ?? {}).filter((c) => c.ok).length;
+  if (h.canRun && runnable === 0) return "limited";
   return "ready";
 }
 
@@ -480,6 +486,11 @@ const LIVE_COPY: Record<
     dot: "amber",
     pill: "DESK SIGNING",
     sub: "Another visitor's walkthrough is signing right now — the desk signs one story at a time. Watch the latest verified run, or try again in a minute or two.",
+  },
+  limited: {
+    dot: "amber",
+    pill: "DESK ONLINE · STORIES LIMITED",
+    sub: "The desk is healthy but every story is temporarily unavailable — the daily signing budget is spent or the agent keys await a top-up. Browse the stories to see each reason.",
   },
   paused: {
     dot: "amber",
@@ -771,6 +782,10 @@ export default function App() {
                     ↻ Retry when available
                   </button>
                 </>
+              ) : liveState === "limited" ? (
+                <button className="btn-outline" onClick={() => openRunner()}>
+                  Browse the five stories — reasons inside →
+                </button>
               ) : liveState === "warming" || liveState === "paused" ? (
                 <button className="btn-primary" disabled>
                   ▶ Use the live AI desk · 3–6 min
@@ -1033,9 +1048,10 @@ export default function App() {
                 <h2>Don't take our word for it. Trigger it yourself. Verify every transaction.</h2>
                 <p>
                   Five guided walkthroughs — the full lifecycle, the policy firewall, an x402
-                  purchase, an AI rejection where the buyer acts on the report, and a default
-                  workout. One click per step, one real agent-signed Casper transaction per click,
-                  explorer links as they confirm. Your wallet never signs anything.
+                  purchase where the buyer verifies and acts on the report, an auditable AI
+                  rejection, and a default workout. One click per step, one real agent-signed Casper
+                  transaction per click, explorer links as they confirm. Your wallet never signs
+                  anything.
                 </p>
               </div>
               <button className="btn-primary big" onClick={() => openRunner()}>
@@ -1073,6 +1089,7 @@ export default function App() {
             sharePrice={sharePrice}
             invoices={invoices}
             events={events}
+            mode={meta?.mode}
             onOpen={() => setDeskOpen(true)}
           />
         )}
@@ -1429,6 +1446,7 @@ function DeskSummary({
   invoices,
   events,
   onOpen,
+  mode,
 }: {
   stats: ChainStats | undefined;
   tvl: number;
@@ -1436,6 +1454,7 @@ function DeskSummary({
   invoices: InvoiceRecord[];
   events: FeedEvent[];
   onOpen: () => void;
+  mode?: string;
 }) {
   return (
     <section className="desk-summary">
@@ -1491,7 +1510,8 @@ function DeskSummary({
         </div>
       </div>
       <button className="desk-toggle big" onClick={onOpen}>
-        ▾ Open the full live desk — full book, LP actions, custom intake, agent roles &amp; feed
+        ▾ {mode === "showcase" ? "Open the full desk preview" : "Open the full live desk"} — full
+        book, LP actions, custom intake, agent roles &amp; feed
       </button>
     </section>
   );
@@ -1943,8 +1963,9 @@ function SubmitPanel({
         {field("invoiceNumber", "Invoice number")}
         {field("history", "Payment history")}
         <div className="field full">
-          <label>Description</label>
+          <label htmlFor="intake-description">Description</label>
           <textarea
+            id="intake-description"
             rows={2}
             value={form.description}
             onChange={(e) => set("description", e.target.value)}
@@ -3491,9 +3512,10 @@ function JudgeGuided({
     reset();
     if (t === "close") onClose();
   };
-  const pageRef = useModalA11y<HTMLDivElement>(!suspended, () =>
-    confirmClose ? setConfirmClose(null) : requestClose(),
-  );
+  const pageRef = useModalA11y<HTMLDivElement>(!suspended && !confirmClose, () => requestClose());
+  // The confirm layer is its own alertdialog: its trap keeps Tab inside the
+  // three buttons instead of leaking to the runner behind it.
+  const confirmRef = useModalA11y<HTMLDivElement>(!!confirmClose, () => setConfirmClose(null));
 
   const paused = health?.paused;
   // Same six-state machine as the homepage — the runner must never contradict
@@ -3601,7 +3623,7 @@ function JudgeGuided({
                   Resume →
                 </button>
                 <button className="lj-back" onClick={() => setResumable(null)}>
-                  Start fresh instead
+                  Choose another story
                 </button>
               </div>
             </div>
@@ -3914,6 +3936,7 @@ function JudgeGuided({
             role="alertdialog"
             aria-modal="true"
             aria-live="assertive"
+            ref={confirmRef}
             onClick={(e) => e.stopPropagation()}
           >
             {confirmClose.kind === "settling" ? (

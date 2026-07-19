@@ -307,6 +307,13 @@ export function x402Gate() {
       return;
     }
     pending.delete(nonceHeader);
+    // BOTH verification modes record what the proof paid for — the
+    // facilitator path deserves the same idempotent re-delivery as native.
+    settledDeploys.set(proof.trim(), {
+      ts: Date.now(),
+      nonce: nonceHeader,
+      resource: charge.resource ?? req.originalUrl,
+    });
     saveX402State();
     feed.publish({
       actor: "oracle",
