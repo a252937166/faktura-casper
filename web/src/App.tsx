@@ -378,6 +378,63 @@ function timeAgo(ts: number) {
   return `${(s / 3600).toFixed(1)}h ago`;
 }
 
+/** Small-screen header menu — the MCP and GitHub chips collapse in here
+ * instead of vanishing (audit: a menu button, not a disappearing act). */
+function HeaderMoreMenu({ onOpenMcp, showMcp }: { onOpenMcp: () => void; showMcp: boolean }) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onDown = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown);
+    };
+  }, [open]);
+  return (
+    <div className="hdr-more" ref={boxRef}>
+      <button
+        className="chip chip-btn hdr-more-btn"
+        aria-label="More"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="hdr-more-menu" role="menu">
+          {showMcp && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onOpenMcp();
+              }}
+            >
+              🤖 MCP interface
+            </button>
+          )}
+          <a
+            role="menuitem"
+            href="https://github.com/a252937166/faktura-casper"
+            target="_blank"
+            rel="noreferrer"
+          >
+            ⭐ GitHub
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- ONE live-desk state machine — hero, status strip, picker and runner all
 // read the SAME six states, so the site never says "warming" in one corner
 // and "node down" in another.
@@ -549,692 +606,704 @@ export default function App() {
     ? `${pool.contract.slice(0, 16)}…${pool.contract.slice(-6)}`
     : "not deployed";
 
+  const overlayOpen = mcpOpen || runnerOpen || judgeOpen || !!selected;
+
   return (
     <div className="shell">
-      <header className="header">
-        <a
-          href="/"
-          className="site-logo-link"
-          title="Faktura — autonomous invoice financing on Casper"
-        >
-          <img
-            className="site-logo"
-            src="/faktura-logo-compact.png"
-            alt="Faktura — autonomous invoice financing protocol on chain"
-          />
-        </a>
-        <div className="spacer" />
-        <WalletChip wallet={wallet} bal={walletBal} onBal={setWalletBal} />
-        {meta?.mcp && (
-          <button
-            className="chip chip-btn"
-            title="Open the MCP agent interface — 6 tools, quick-start commands, live previews"
-            onClick={() => setMcpOpen(true)}
+      <div className="app-main" aria-hidden={overlayOpen || undefined}>
+        <header className="header">
+          <a
+            href="/"
+            className="site-logo-link"
+            title="Faktura — autonomous invoice financing on Casper"
           >
-            MCP · 6 tools ▾
-          </button>
-        )}
-        <a
-          className="chip"
-          href="https://github.com/a252937166/faktura-casper"
-          target="_blank"
-          rel="noreferrer"
-        >
-          ⭐ GitHub
-        </a>
-      </header>
-
-      {meta && (
-        <div className={`desk-status ${liveJudge ? "live" : meta.mode}`}>
-          <div className="desk-status-main">
-            {liveJudge ? (
-              <>
-                <span className={`ds-pill live ${liveState !== "ready" ? "amber" : ""}`}>
-                  <i /> {liveCopy.pill}
-                </span>
-                <span className="ds-text">
-                  Trigger <b>real, agent-signed Casper transactions</b> in the{" "}
-                  <button className="linklike" onClick={() => openRunner()}>
-                    guided walkthrough
-                  </button>
-                  {" — "}this page below is the safe showcase (simulated writes, real proof).
-                </span>
-              </>
-            ) : meta.mode === "showcase" ? (
-              <>
-                <span className="ds-pill showcase">SHOWCASE</span>
-                <span className="ds-text">
-                  Reads come from a captured snapshot of the <b>real testnet contract</b>; the AI
-                  underwriter runs live; writes are simulated — nothing here pretends to be signed.
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="ds-pill live">
-                  <i /> LIVE TESTNET
-                </span>
-                <span className="ds-text">
-                  Every action on this page is a <b>real Casper transaction</b> signed by the agent
-                  keys.
-                </span>
-              </>
-            )}
-          </div>
-          <div className="ds-tools">
-            {pool && (
-              <details className="ds-more">
-                <summary>Casper proof</summary>
-                <div className="ds-more-body">
-                  <ProofStrip pool={pool} invoices={invoices} meta={meta} />
-                </div>
-              </details>
-            )}
-            {meta.policy && (
-              <details className="ds-more">
-                <summary>Rules of the desk</summary>
-                <div className="ds-more-body">
-                  On-chain hard caps — risk ≤ {meta.policy.maxRiskScore} · discount{" "}
-                  {(meta.policy.minDiscountBps / 100).toFixed(1)}–
-                  {(meta.policy.maxDiscountBps / 100).toFixed(0)}% · single invoice ≤{" "}
-                  {(meta.policy.maxSingleInvoiceBps / 100).toFixed(0)}% of pool · per debtor ≤{" "}
-                  {(meta.policy.maxDebtorExposureBps / 100).toFixed(0)}%.
-                  {meta.prefilter && (
-                    <>
-                      {" "}
-                      The agent pre-filters stricter (risk ≤ {meta.prefilter.maxRiskScore}) to save
-                      gas; <b>the contract is the final authority</b>.
-                    </>
-                  )}
-                </div>
-              </details>
-            )}
-          </div>
-        </div>
-      )}
-
-      <section className="hero">
-        <div>
-          <h1>
-            AI underwrites.
-            <br />
-            Casper decides. <span className="accent">Suppliers get paid.</span>
-          </h1>
-          <p className="hero-sub">
-            Faktura turns unpaid invoices into working capital. An autonomous AI agent evaluates the
-            receivable, a <span className="casper-word">Casper</span> contract enforces the risk
-            limits, and a native-CSPR pool pays the supplier. Every decision stays verifiable.
-          </p>
-          <p className="hero-tagline">
-            An AI can approve the invoice. <b>Only Casper can move the money.</b>
-          </p>
-          <div className="hero-cta">
-            {liveState === "checking" ? (
-              // Fixed-size placeholder — the CTA row must never flash a wrong
-              // entry point and then jump when the health probe lands.
-              <button className="btn-primary hero-cta-checking" disabled>
-                ● Checking live desk…
-              </button>
-            ) : liveState === "ready" ? (
-              <>
-                <button className="btn-primary" onClick={() => openRunner("happy")}>
-                  ▶ Use the real AI desk
-                </button>
-                <button className="btn-outline" onClick={() => openRunner("policy-block")}>
-                  ⛔ Watch the AI get blocked
-                </button>
-              </>
-            ) : liveState === "busy" ? (
-              <>
-                <button
-                  className="btn-primary"
-                  onClick={() =>
-                    document
-                      .querySelector(".latest-run")
-                      ?.scrollIntoView({ behavior: "smooth", block: "center" })
-                  }
-                >
-                  ▶ View the latest verified run
-                </button>
-                <button className="btn-outline" onClick={() => openRunner()}>
-                  Browse the five stories →
-                </button>
-              </>
-            ) : liveState === "warming" || liveState === "paused" ? (
-              <>
-                <button className="btn-primary" disabled>
-                  ▶ Use the real AI desk
-                </button>
-                <button className="btn-outline" disabled>
-                  ⛔ Watch the AI get blocked
-                </button>
-              </>
-            ) : (
-              <button className="btn-primary" onClick={() => setJudgeOpen(true)}>
-                ▶ RUN JUDGE DEMO
-              </button>
-            )}
-          </div>
-          <p className="hero-agent-link">
-            <button className="linklike" onClick={() => setMcpOpen(true)}>
-              🤖 Building an agent? Open the MCP interface →
+            <img
+              className="site-logo"
+              src="/faktura-logo-compact.png"
+              alt="Faktura — autonomous invoice financing protocol on chain"
+            />
+          </a>
+          <div className="spacer" />
+          <WalletChip wallet={wallet} bal={walletBal} onBal={setWalletBal} />
+          {meta?.mcp && (
+            <button
+              className="chip chip-btn"
+              title="Open the MCP agent interface — 6 tools, quick-start commands, live previews"
+              onClick={() => setMcpOpen(true)}
+            >
+              MCP · 6 tools ▾
             </button>
-          </p>
-          {liveState === "ready" && (
-            <p className="hero-cost">
-              5 guided steps · 4 real on-chain transactions · about 3–6 minutes
-            </p>
-          )}
-          <p className="hero-links">
-            <a target="_blank" rel="noreferrer" href={EVIDENCE.evidencePackUrl}>
-              View contract &amp; transaction evidence →
-            </a>
-            <a href={EVIDENCE.videoUrl} target="_blank" rel="noreferrer">
-              Watch the 3-min demo ↗
-            </a>
-          </p>
-          {liveState !== "checking" && (
-            <div className="hero-live">
-              <span className={`live-dot ${liveCopy.dot}`} /> {liveCopy.sub}
-            </div>
           )}
           <a
-            className="hero-builton"
-            href="https://www.casper.network/"
+            className="chip"
+            href="https://github.com/a252937166/faktura-casper"
             target="_blank"
             rel="noreferrer"
-            title="Casper Network — the chain that enforces this desk's risk policy"
           >
-            <span>BUILT ON</span>
-            <CasperWordmark height={34} />
+            ⭐ GitHub
           </a>
-          {/* Trust facts, not business metrics — TVL & share price live on the desk below. */}
-          <div className="hero-metrics">
-            <div className="hm-red">
-              <b>4</b>
-              <span>real on-chain txs per full run</span>
-            </div>
-            <div>
-              <b>On-chain</b>
-              <span>risk limits the AI cannot cross</span>
-            </div>
-            <div>
-              <b>Read-only</b>
-              <span>wallet connect — never a signature</span>
-            </div>
-          </div>
-        </div>
-        <HeroInvoice />
-      </section>
+          <HeaderMoreMenu onOpenMcp={() => setMcpOpen(true)} showMcp={!!meta?.mcp} />
+        </header>
 
-      {/* ---- One invoice, two gates, two credit outcomes — the whole system ---- */}
-      <section className="story">
-        <h2 className="section-title">One invoice. Two gates. Two credit outcomes.</h2>
-        <p className="story-lede">
-          Nordwind shipped the freight; Aurora pays in 30 days. Nordwind needs the cash <i>now</i>.
-          Before any money moves, the invoice passes two gates — and once funded, credit resolves
-          one of two ways. Every arrow below runs live on{" "}
-          <span className="casper-word">Casper</span>.
-        </p>
-        <div className="story-acts gates">
-          <div className="story-act">
-            <div className="story-stamp green">GATE 1 · AI UNDERWRITING</div>
-            <h3>The model forms a credit opinion</h3>
-            <p>
-              Risk score, price, rationale, red flags — a full memo, hash-anchored. The AI can{" "}
-              <b>REJECT</b> outright, or <b>APPROVE</b> and hand the file to the chain. Either way
-              the opinion is auditable.
-            </p>
-            <div className="gate-verdicts">
-              <span className="gv no">REJECT ✕</span>
-              <span className="gv ok">APPROVE →</span>
+        {meta && (
+          <div className={`desk-status ${liveJudge ? "live" : meta.mode}`}>
+            <div className="desk-status-main">
+              {liveJudge ? (
+                <>
+                  <span className={`ds-pill live ${liveState !== "ready" ? "amber" : ""}`}>
+                    <i /> {liveCopy.pill}
+                  </span>
+                  <span className="ds-text">
+                    Trigger <b>real, agent-signed Casper transactions</b> in the{" "}
+                    <button className="linklike" onClick={() => openRunner()}>
+                      guided walkthrough
+                    </button>
+                    {" — "}this page below is the safe showcase (simulated writes, real proof).
+                  </span>
+                </>
+              ) : meta.mode === "showcase" ? (
+                <>
+                  <span className="ds-pill showcase">SHOWCASE</span>
+                  <span className="ds-text">
+                    Reads come from a captured snapshot of the <b>real testnet contract</b>; the AI
+                    underwriter runs live; writes are simulated — nothing here pretends to be
+                    signed.
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="ds-pill live">
+                    <i /> LIVE TESTNET
+                  </span>
+                  <span className="ds-text">
+                    Every action on this page is a <b>real Casper transaction</b> signed by the
+                    agent keys.
+                  </span>
+                </>
+              )}
             </div>
-          </div>
-          <div className="story-act blocked">
-            <div className="story-stamp red">GATE 2 · CASPER POLICY</div>
-            <h3>The contract decides if money moves</h3>
-            <p>
-              Risk ceiling, discount band, concentration caps — enforced inside{" "}
-              <span className="mono-sm">fund_invoice</span>. An AI-approved invoice above the cap
-              reverts with <span className="mono-sm">User error: 15</span>. Autonomous, never
-              unbounded.
-            </p>
-            <div className="gate-verdicts">
-              <span className="gv no">BLOCK ⛔</span>
-              <span className="gv ok">FUND →</span>
-            </div>
-            <div className="story-links">
-              <a target="_blank" rel="noreferrer" href={EVIDENCE.policyRevertTxUrl}>
-                Open a real reverted transaction ↗
-              </a>
-              {liveJudge && (
-                <button className="linklike" onClick={() => openRunner("policy-block")}>
-                  Reproduce it live →
-                </button>
+            <div className="ds-tools">
+              {pool && (
+                <details className="ds-more">
+                  <summary>Casper proof</summary>
+                  <div className="ds-more-body">
+                    <ProofStrip pool={pool} invoices={invoices} meta={meta} />
+                  </div>
+                </details>
+              )}
+              {meta.policy && (
+                <details className="ds-more">
+                  <summary>Rules of the desk</summary>
+                  <div className="ds-more-body">
+                    On-chain hard caps — risk ≤ {meta.policy.maxRiskScore} · discount{" "}
+                    {(meta.policy.minDiscountBps / 100).toFixed(1)}–
+                    {(meta.policy.maxDiscountBps / 100).toFixed(0)}% · single invoice ≤{" "}
+                    {(meta.policy.maxSingleInvoiceBps / 100).toFixed(0)}% of pool · per debtor ≤{" "}
+                    {(meta.policy.maxDebtorExposureBps / 100).toFixed(0)}%.
+                    {meta.prefilter && (
+                      <>
+                        {" "}
+                        The agent pre-filters stricter (risk ≤ {meta.prefilter.maxRiskScore}) to
+                        save gas; <b>the contract is the final authority</b>.
+                      </>
+                    )}
+                  </div>
+                </details>
               )}
             </div>
           </div>
-          <div className="story-act">
-            <div className="story-stamp ink">AFTER FUNDING · TWO ENDINGS</div>
-            <h3>Credit resolves — either way</h3>
-            <p>
-              <b>SETTLE</b>: the debtor repays face value and the pool earns yield. <b>DEFAULT</b>:
-              the collector key writes it off and LPs absorb the loss through the share price. Both
-              endings run live, and both move real numbers.
+        )}
+
+        <section className="hero">
+          <div>
+            <h1>
+              AI underwrites.
+              <br />
+              Casper decides. <span className="accent">Suppliers get paid.</span>
+            </h1>
+            <p className="hero-sub">
+              Faktura turns unpaid invoices into working capital. An autonomous AI agent evaluates
+              the receivable, a <span className="casper-word">Casper</span> contract enforces the
+              risk limits, and a native-CSPR pool pays the supplier. Every decision stays
+              verifiable.
             </p>
-            <div className="gate-verdicts">
-              <span className="gv ok">SETTLE ↗ yield</span>
-              <span className="gv no">DEFAULT ↘ loss</span>
+            <p className="hero-tagline">
+              An AI can approve the invoice. <b>Only Casper can move the money.</b>
+            </p>
+            <div className="hero-cta">
+              {liveState === "checking" ? (
+                // Fixed-size placeholder — the CTA row must never flash a wrong
+                // entry point and then jump when the health probe lands.
+                <button className="btn-primary hero-cta-checking" disabled>
+                  ● Checking live desk…
+                </button>
+              ) : liveState === "ready" ? (
+                <>
+                  <button className="btn-primary" onClick={() => openRunner("happy")}>
+                    ▶ Use the real AI desk
+                  </button>
+                  <button className="btn-outline" onClick={() => openRunner("policy-block")}>
+                    ⛔ Watch the AI get blocked
+                  </button>
+                </>
+              ) : liveState === "busy" ? (
+                <>
+                  <button
+                    className="btn-primary"
+                    onClick={() =>
+                      document
+                        .querySelector(".latest-run")
+                        ?.scrollIntoView({ behavior: "smooth", block: "center" })
+                    }
+                  >
+                    ▶ View the latest verified run
+                  </button>
+                  <button className="btn-outline" onClick={() => openRunner()}>
+                    Browse the five stories →
+                  </button>
+                  <button className="btn-outline sm-cta" onClick={() => probeJudge()}>
+                    ↻ Retry when available
+                  </button>
+                </>
+              ) : liveState === "warming" || liveState === "paused" ? (
+                <>
+                  <button className="btn-primary" disabled>
+                    ▶ Use the real AI desk
+                  </button>
+                  <button className="btn-outline" disabled>
+                    ⛔ Watch the AI get blocked
+                  </button>
+                </>
+              ) : (
+                <button className="btn-primary" onClick={() => setJudgeOpen(true)}>
+                  ▶ RUN JUDGE DEMO
+                </button>
+              )}
+            </div>
+            <p className="hero-agent-link">
+              <button className="linklike" onClick={() => setMcpOpen(true)}>
+                🤖 Building an agent? Open the MCP interface →
+              </button>
+            </p>
+            {liveState === "ready" && (
+              <p className="hero-cost">
+                5 guided steps · 4 real on-chain transactions · about 3–6 minutes
+              </p>
+            )}
+            <p className="hero-links">
+              <a target="_blank" rel="noreferrer" href={EVIDENCE.evidencePackUrl}>
+                View contract &amp; transaction evidence →
+              </a>
+              <a href={EVIDENCE.videoUrl} target="_blank" rel="noreferrer">
+                Watch the 3-min demo ↗
+              </a>
+            </p>
+            {liveState !== "checking" && (
+              <div className="hero-live" aria-live="polite">
+                <span className={`live-dot ${liveCopy.dot}`} /> {liveCopy.sub}
+              </div>
+            )}
+            <a
+              className="hero-builton"
+              href="https://www.casper.network/"
+              target="_blank"
+              rel="noreferrer"
+              title="Casper Network — the chain that enforces this desk's risk policy"
+            >
+              <span>BUILT ON</span>
+              <CasperWordmark height={34} />
+            </a>
+            {/* Trust facts, not business metrics — TVL & share price live on the desk below. */}
+            <div className="hero-metrics">
+              <div className="hm-red">
+                <b>4</b>
+                <span>real on-chain txs per full run</span>
+              </div>
+              <div>
+                <b>On-chain</b>
+                <span>risk limits the AI cannot cross</span>
+              </div>
+              <div>
+                <b>Read-only</b>
+                <span>wallet connect — never a signature</span>
+              </div>
             </div>
           </div>
-        </div>
-        {liveJudge && (
-          <div className="side-quest">
-            <span className="sq-kicker">AGENT ECONOMY · SIDE QUEST</span>
-            <span className="sq-text">
-              produce → sell → verify → <b>act</b>: another agent buys the risk report over{" "}
-              <b>HTTP 402</b>, verifies the memo hash three ways (report · memo · on-chain anchor)
-              and anchors its own acceptance.
-            </span>
-            <button className="linklike" onClick={() => openRunner("x402")}>
-              Run it →
-            </button>
-          </div>
-        )}
-      </section>
-
-      {/* ---- Latest real run — a receipt, not a metric ---- */}
-      {liveJudge && recent.length > 0 && (
-        <LatestRunReceipt runs={recent} onOpen={() => openRunner()} />
-      )}
-
-      {/* ---- Capabilities, each backed by something real ---- */}
-      <section className="caps">
-        <h2 className="section-title">What makes it different</h2>
-        <div className="caps-grid">
-          <div className="cap">
-            <h3>⛔ AI proposes, contract disposes</h3>
-            <p>
-              The on-chain policy is the final authority: an AI-approved invoice above the
-              concentration cap gets <b>rejected by the contract itself</b> — watch a real revert (
-              <span className="mono-sm">User error: 15</span>) in the walkthrough.
-            </p>
-          </div>
-          <div className="cap">
-            <h3>💸 Get paid to your own wallet</h3>
-            <p>
-              Connect Casper Wallet and the desk pays the invoice advance to <b>your address</b> on
-              the real chain. Read-only — we ask for a public key, never a signature.
-            </p>
-          </div>
-          <div className="cap">
-            <h3>🤝 Machine-payable risk data (x402)</h3>
-            <p>
-              Another agent buys the verified risk report over <b>HTTP 402</b>, settling with a
-              native CSPR transfer — the agent economy, working end to end.
-            </p>
-          </div>
-          <div className="cap">
-            <h3>🔑 Five keys, least privilege</h3>
-            <p>
-              Underwriter, collector, supplier, LP and debtor each hold their own key. The
-              underwriter cannot write off defaults; the collector can do <i>only</i> that.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* ---- Built FOR agents — MCP front and center ---- */}
-      {meta?.mcp && (
-        <section className="mcp-band">
-          <div className="mcp-band-head">
-            <span className="mcp-band-kicker">🤖 BUILT FOR AGENTS · MCP SERVER</span>
-            <h2>Don't just watch the desk. Plug YOUR agent in.</h2>
-            <p>
-              Faktura is itself a service <i>for</i> agents: six MCP tools expose the whole credit
-              desk over stdio — against this very host. Every walkthrough step above advertises the
-              tool that drives or audits it.
-            </p>
-          </div>
-          <div className="mcp-band-tools">
-            {[
-              ["pool_stats", "read the pool — TVL, share price, exposure"],
-              ["submit_invoice", "drive the underwriting pipeline end to end"],
-              ["get_risk_report", "negotiate the x402 paywall, machine-to-machine"],
-              ["verify_decision_hash", "audit our AI against the on-chain anchor"],
-              ["list_funded_invoices", "read the live book"],
-              ["list_verified_invoices", "every priceable credit history"],
-            ].map(([name, what]) => (
-              <button
-                key={name}
-                className="mcp-band-tool"
-                title="Open the MCP interface"
-                onClick={() => setMcpOpen(true)}
-              >
-                <b className="mono">{name}</b>
-                <span>{what}</span>
-              </button>
-            ))}
-          </div>
-          <div className="mcp-band-cta">
-            <code className="mcp-band-cmd">
-              claude mcp add faktura -e FAKTURA_API=https://faktura.axiqo.xyz -- npx tsx src/mcp.ts
-            </code>
-            <button
-              className="btn ghost sm"
-              onClick={() => {
-                navigator.clipboard
-                  ?.writeText(
-                    "claude mcp add faktura -e FAKTURA_API=https://faktura.axiqo.xyz -- npx tsx src/mcp.ts",
-                  )
-                  .then(() => notify("MCP command copied"))
-                  .catch(() => {});
-              }}
-            >
-              Copy
-            </button>
-            <button className="btn-agent solid" onClick={() => setMcpOpen(true)}>
-              Open the MCP interface →
-            </button>
-          </div>
+          <HeroInvoice />
         </section>
-      )}
 
-      {/* ---- Run it yourself ---- */}
-      {liveJudge && (
-        <section className="runit">
-          <div className="runit-card">
-            <div>
-              <h2>Don't take our word for it. Trigger it yourself. Verify every transaction.</h2>
+        {/* ---- One invoice, two gates, two credit outcomes — the whole system ---- */}
+        <section className="story">
+          <h2 className="section-title">One invoice. Two gates. Two credit outcomes.</h2>
+          <p className="story-lede">
+            Nordwind shipped the freight; Aurora pays in 30 days. Nordwind needs the cash <i>now</i>
+            . Before any money moves, the invoice passes two gates — and once funded, credit
+            resolves one of two ways. Every arrow below runs live on{" "}
+            <span className="casper-word">Casper</span>.
+          </p>
+          <div className="story-acts gates">
+            <div className="story-act">
+              <div className="story-stamp green">GATE 1 · AI UNDERWRITING</div>
+              <h3>The model forms a credit opinion</h3>
               <p>
-                Five guided walkthroughs — the full lifecycle, the policy firewall, an x402
-                purchase, an AI rejection where the buyer acts on the report, and a default workout.
-                One click per step, one real agent-signed Casper transaction per click, explorer
-                links as they confirm. Your wallet never signs anything.
+                Risk score, price, rationale, red flags — a full memo, hash-anchored. The AI can{" "}
+                <b>REJECT</b> outright, or <b>APPROVE</b> and hand the file to the chain. Either way
+                the opinion is auditable.
+              </p>
+              <div className="gate-verdicts">
+                <span className="gv no">REJECT ✕</span>
+                <span className="gv ok">APPROVE →</span>
+              </div>
+            </div>
+            <div className="story-act blocked">
+              <div className="story-stamp red">GATE 2 · CASPER POLICY</div>
+              <h3>The contract decides if money moves</h3>
+              <p>
+                Risk ceiling, discount band, concentration caps — enforced inside{" "}
+                <span className="mono-sm">fund_invoice</span>. An AI-approved invoice above the cap
+                reverts with <span className="mono-sm">User error: 15</span>. Autonomous, never
+                unbounded.
+              </p>
+              <div className="gate-verdicts">
+                <span className="gv no">BLOCK ⛔</span>
+                <span className="gv ok">FUND →</span>
+              </div>
+              <div className="story-links">
+                <a target="_blank" rel="noreferrer" href={EVIDENCE.policyRevertTxUrl}>
+                  Open a real reverted transaction ↗
+                </a>
+                {liveJudge && (
+                  <button className="linklike" onClick={() => openRunner("policy-block")}>
+                    Reproduce it live →
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="story-act">
+              <div className="story-stamp ink">AFTER FUNDING · TWO ENDINGS</div>
+              <h3>Credit resolves — either way</h3>
+              <p>
+                <b>SETTLE</b>: the debtor repays face value and the pool earns yield. <b>DEFAULT</b>
+                : the collector key writes it off and LPs absorb the loss through the share price.
+                Both endings run live, and both move real numbers.
+              </p>
+              <div className="gate-verdicts">
+                <span className="gv ok">SETTLE ↗ yield</span>
+                <span className="gv no">DEFAULT ↘ loss</span>
+              </div>
+            </div>
+          </div>
+          {liveJudge && (
+            <div className="side-quest">
+              <span className="sq-kicker">AGENT ECONOMY · SIDE QUEST</span>
+              <span className="sq-text">
+                produce → sell → verify → <b>act</b>: another agent buys the risk report over{" "}
+                <b>HTTP 402</b>, verifies the memo hash three ways (report · memo · on-chain anchor)
+                and anchors its own acceptance.
+              </span>
+              <button className="linklike" onClick={() => openRunner("x402")}>
+                Run it →
+              </button>
+            </div>
+          )}
+        </section>
+
+        {/* ---- Latest real run — a receipt, not a metric ---- */}
+        {liveJudge && recent.length > 0 && (
+          <LatestRunReceipt runs={recent} onOpen={() => openRunner()} />
+        )}
+
+        {/* ---- Capabilities, each backed by something real ---- */}
+        <section className="caps">
+          <h2 className="section-title">What makes it different</h2>
+          <div className="caps-grid">
+            <div className="cap">
+              <h3>⛔ AI proposes, contract disposes</h3>
+              <p>
+                The on-chain policy is the final authority: an AI-approved invoice above the
+                concentration cap gets <b>rejected by the contract itself</b> — watch a real revert
+                (<span className="mono-sm">User error: 15</span>) in the walkthrough.
               </p>
             </div>
-            <button className="btn-primary big" onClick={() => openRunner()}>
-              ▶ USE THE REAL AI DESK
-            </button>
+            <div className="cap">
+              <h3>💸 Get paid to your own wallet</h3>
+              <p>
+                Connect Casper Wallet and the desk pays the invoice advance to <b>your address</b>{" "}
+                on the real chain. Read-only — we ask for a public key, never a signature.
+              </p>
+            </div>
+            <div className="cap">
+              <h3>🤝 Machine-payable risk data (x402)</h3>
+              <p>
+                Another agent buys the verified risk report over <b>HTTP 402</b>, settling with a
+                native CSPR transfer — the agent economy, working end to end.
+              </p>
+            </div>
+            <div className="cap">
+              <h3>🔑 Five keys, least privilege</h3>
+              <p>
+                Underwriter, collector, supplier, LP and debtor each hold their own key. The
+                underwriter cannot write off defaults; the collector can do <i>only</i> that.
+              </p>
+            </div>
           </div>
         </section>
-      )}
 
-      {/* ---- The live desk (book & controls) ---- */}
-      <section className="desk-head" id="desk">
-        <h2 className="section-title">
-          {meta?.mode === "showcase"
-            ? "Desk preview — safe interactive showcase"
-            : "The desk — live book & controls"}
-        </h2>
-        <p className="desk-head-sub">
-          {meta?.mode === "showcase"
-            ? "Reads come from a captured snapshot of the real testnet contract; new writes here are simulated (the guided walkthrough is the live surface)."
-            : "Everything below reads and writes the live testnet contract."}
-        </p>
-        <button className="desk-toggle" onClick={() => setDeskOpen(!deskOpen)}>
-          {deskOpen
-            ? "▴ Collapse the full desk"
-            : meta?.mode === "showcase"
-              ? "▾ Open the full desk preview"
-              : "▾ Open the full live desk"}
-        </button>
-      </section>
-
-      {!deskOpen && (
-        <DeskSummary
-          stats={stats}
-          tvl={tvl}
-          sharePrice={sharePrice}
-          invoices={invoices}
-          events={events}
-          onOpen={() => setDeskOpen(true)}
-        />
-      )}
-
-      {deskOpen && (
-        <>
-          <section className="stats">
-            <div className="stat">
-              <div className="label">Pool TVL</div>
-              <div className="value">{fmtCspr(tvl)} CSPR</div>
-              <div className="sub">
-                liquid {fmtCspr(motesToCspr(stats?.liquid))} · deployed{" "}
-                {fmtCspr(motesToCspr(stats?.deployed))}
-              </div>
+        {/* ---- Built FOR agents — MCP front and center ---- */}
+        {meta?.mcp && (
+          <section className="mcp-band">
+            <div className="mcp-band-head">
+              <span className="mcp-band-kicker">🤖 BUILT FOR AGENTS · MCP SERVER</span>
+              <h2>Don't just watch the desk. Plug YOUR agent in.</h2>
+              <p>
+                Faktura is itself a service <i>for</i> agents: six MCP tools expose the whole credit
+                desk over stdio — against this very host. Every walkthrough step above advertises
+                the tool that drives or audits it.
+              </p>
             </div>
-            <div className="stat">
-              <div className="label">Pool value / share</div>
-              <div className={`value ${sharePrice > 1 ? "good" : ""}`}>{sharePrice.toFixed(4)}</div>
-              <div className="sub">1.0000 at genesis — yield accrues here</div>
+            <div className="mcp-band-tools">
+              {[
+                ["pool_stats", "read the pool — TVL, share price, exposure"],
+                ["submit_invoice", "drive the underwriting pipeline end to end"],
+                ["get_risk_report", "negotiate the x402 paywall, machine-to-machine"],
+                ["verify_decision_hash", "audit our AI against the on-chain anchor"],
+                ["list_funded_invoices", "read the live book"],
+                ["list_verified_invoices", "every priceable credit history"],
+              ].map(([name, what]) => (
+                <button
+                  key={name}
+                  className="mcp-band-tool"
+                  title="Open the MCP interface"
+                  onClick={() => setMcpOpen(true)}
+                >
+                  <b className="mono">{name}</b>
+                  <span>{what}</span>
+                </button>
+              ))}
             </div>
-            <div className="stat">
-              <div className="label">Lifetime advances</div>
-              <div className="value accent">{fmtCspr(motesToCspr(stats?.totalFunded))} CSPR</div>
-              <div className="sub">{stats?.invoiceCount ?? 0} invoices registered</div>
-            </div>
-            <div className="stat">
-              <div className="label">Lifetime collected</div>
-              <div className="value">{fmtCspr(motesToCspr(stats?.totalSettled))} CSPR</div>
-              <div className="sub">face value settled by debtors</div>
-            </div>
-            <div className="stat">
-              <div className="label">Lifetime defaults</div>
-              <div className={`value ${motesToCspr(stats?.totalDefaulted) > 0 ? "bad" : ""}`}>
-                {fmtCspr(motesToCspr(stats?.totalDefaulted))} CSPR
-              </div>
-              <div className="sub">written off autonomously</div>
-            </div>
-            <div className="stat">
-              <div className="label">AI Attestations</div>
-              <div className="value">{stats?.attestationCount ?? 0}</div>
-              <div className="sub">
-                {meta?.mode === "live-testnet"
-                  ? "decision hashes anchored on-chain"
-                  : "seeded anchors + simulated new decisions"}
-              </div>
+            <div className="mcp-band-cta">
+              <code className="mcp-band-cmd">
+                claude mcp add faktura -e FAKTURA_API=https://faktura.axiqo.xyz -- npx tsx
+                src/mcp.ts
+              </code>
+              <button
+                className="btn ghost sm"
+                onClick={() => {
+                  navigator.clipboard
+                    ?.writeText(
+                      "claude mcp add faktura -e FAKTURA_API=https://faktura.axiqo.xyz -- npx tsx src/mcp.ts",
+                    )
+                    .then(() => notify("MCP command copied"))
+                    .catch(() => {});
+                }}
+              >
+                Copy
+              </button>
+              <button className="btn-agent solid" onClick={() => setMcpOpen(true)}>
+                Open the MCP interface →
+              </button>
             </div>
           </section>
+        )}
 
-          <div className="grid">
-            <div style={{ display: "grid", gap: 16 }}>
-              <div className="panel">
-                <div className="head">
-                  Receivables pipeline
-                  <span className="hint">
-                    {meta?.mode === "live-testnet"
-                      ? "every state transition is a real Casper transaction"
-                      : "seeded from real Casper Testnet · new writes simulated"}
-                  </span>
-                  <span className="right hint">{invoices.length} intakes</span>
+        {/* ---- Run it yourself ---- */}
+        {liveJudge && (
+          <section className="runit">
+            <div className="runit-card">
+              <div>
+                <h2>Don't take our word for it. Trigger it yourself. Verify every transaction.</h2>
+                <p>
+                  Five guided walkthroughs — the full lifecycle, the policy firewall, an x402
+                  purchase, an AI rejection where the buyer acts on the report, and a default
+                  workout. One click per step, one real agent-signed Casper transaction per click,
+                  explorer links as they confirm. Your wallet never signs anything.
+                </p>
+              </div>
+              <button className="btn-primary big" onClick={() => openRunner()}>
+                ▶ USE THE REAL AI DESK
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* ---- The live desk (book & controls) ---- */}
+        <section className="desk-head" id="desk">
+          <h2 className="section-title">
+            {meta?.mode === "showcase"
+              ? "Desk preview — safe interactive showcase"
+              : "The desk — live book & controls"}
+          </h2>
+          <p className="desk-head-sub">
+            {meta?.mode === "showcase"
+              ? "Reads come from a captured snapshot of the real testnet contract; new writes here are simulated (the guided walkthrough is the live surface)."
+              : "Everything below reads and writes the live testnet contract."}
+          </p>
+          <button className="desk-toggle" onClick={() => setDeskOpen(!deskOpen)}>
+            {deskOpen
+              ? "▴ Collapse the full desk"
+              : meta?.mode === "showcase"
+                ? "▾ Open the full desk preview"
+                : "▾ Open the full live desk"}
+          </button>
+        </section>
+
+        {!deskOpen && (
+          <DeskSummary
+            stats={stats}
+            tvl={tvl}
+            sharePrice={sharePrice}
+            invoices={invoices}
+            events={events}
+            onOpen={() => setDeskOpen(true)}
+          />
+        )}
+
+        {deskOpen && (
+          <>
+            <section className="stats">
+              <div className="stat">
+                <div className="label">Pool TVL</div>
+                <div className="value">{fmtCspr(tvl)} CSPR</div>
+                <div className="sub">
+                  liquid {fmtCspr(motesToCspr(stats?.liquid))} · deployed{" "}
+                  {fmtCspr(motesToCspr(stats?.deployed))}
                 </div>
-                {invoices.length === 0 ? (
-                  <div className="empty">
-                    No invoices yet — submit one below and watch the underwriter work.
+              </div>
+              <div className="stat">
+                <div className="label">Pool value / share</div>
+                <div className={`value ${sharePrice > 1 ? "good" : ""}`}>
+                  {sharePrice.toFixed(4)}
+                </div>
+                <div className="sub">1.0000 at genesis — yield accrues here</div>
+              </div>
+              <div className="stat">
+                <div className="label">Lifetime advances</div>
+                <div className="value accent">{fmtCspr(motesToCspr(stats?.totalFunded))} CSPR</div>
+                <div className="sub">{stats?.invoiceCount ?? 0} invoices registered</div>
+              </div>
+              <div className="stat">
+                <div className="label">Lifetime collected</div>
+                <div className="value">{fmtCspr(motesToCspr(stats?.totalSettled))} CSPR</div>
+                <div className="sub">face value settled by debtors</div>
+              </div>
+              <div className="stat">
+                <div className="label">Lifetime defaults</div>
+                <div className={`value ${motesToCspr(stats?.totalDefaulted) > 0 ? "bad" : ""}`}>
+                  {fmtCspr(motesToCspr(stats?.totalDefaulted))} CSPR
+                </div>
+                <div className="sub">written off autonomously</div>
+              </div>
+              <div className="stat">
+                <div className="label">AI Attestations</div>
+                <div className="value">{stats?.attestationCount ?? 0}</div>
+                <div className="sub">
+                  {meta?.mode === "live-testnet"
+                    ? "decision hashes anchored on-chain"
+                    : "seeded anchors + simulated new decisions"}
+                </div>
+              </div>
+            </section>
+
+            <div className="grid">
+              <div style={{ display: "grid", gap: 16 }}>
+                <div className="panel">
+                  <div className="head">
+                    Receivables pipeline
+                    <span className="hint">
+                      {meta?.mode === "live-testnet"
+                        ? "every state transition is a real Casper transaction"
+                        : "seeded from real Casper Testnet · new writes simulated"}
+                    </span>
+                    <span className="right hint">{invoices.length} intakes</span>
                   </div>
-                ) : (
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Invoice</th>
-                        <th>Supplier → Debtor</th>
-                        <th className="num">Face</th>
-                        <th className="num">Advance</th>
-                        <th>Risk</th>
-                        <th>Due</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {invoices.map((r) => {
-                        const chainState = pool?.onchain.find((o) => o.id === r.id);
-                        // policy_blocked outranks the raw chain state (Listed): the
-                        // register succeeded but the contract refused the funding.
-                        const status =
-                          r.status === "policy_blocked"
-                            ? "policy_blocked"
-                            : chainState && r.id
-                              ? stateName(chainState.state)
-                              : r.status;
-                        return (
-                          <tr key={r.intakeId} className="row" onClick={() => setSelected(r)}>
-                            <td className="mono">{r.intake.invoiceNumber}</td>
-                            <td>
-                              {r.intake.supplierName} <span className="muted">→</span>{" "}
-                              {r.intake.debtorName}
-                            </td>
-                            <td className="num mono">{fmtCspr(r.intake.amountCspr)}</td>
-                            <td className="num mono">
-                              {r.decision?.approve
-                                ? fmtCspr(
-                                    (r.intake.amountCspr * (10_000 - r.decision.discountBps)) /
-                                      10_000,
-                                  )
-                                : "—"}
-                            </td>
-                            <td>
-                              {r.decision ? (
-                                <span className="risk">
-                                  <span className="bar">
-                                    <i
-                                      style={{
-                                        width: `${r.decision.riskScore}%`,
-                                        background: riskColor(r.decision.riskScore),
-                                      }}
-                                    />
+                  {invoices.length === 0 ? (
+                    <div className="empty">
+                      No invoices yet — submit one below and watch the underwriter work.
+                    </div>
+                  ) : (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Invoice</th>
+                          <th>Supplier → Debtor</th>
+                          <th className="num">Face</th>
+                          <th className="num">Advance</th>
+                          <th>Risk</th>
+                          <th>Due</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {invoices.map((r) => {
+                          const chainState = pool?.onchain.find((o) => o.id === r.id);
+                          // policy_blocked outranks the raw chain state (Listed): the
+                          // register succeeded but the contract refused the funding.
+                          const status =
+                            r.status === "policy_blocked"
+                              ? "policy_blocked"
+                              : chainState && r.id
+                                ? stateName(chainState.state)
+                                : r.status;
+                          return (
+                            <tr key={r.intakeId} className="row" onClick={() => setSelected(r)}>
+                              <td className="mono">{r.intake.invoiceNumber}</td>
+                              <td>
+                                {r.intake.supplierName} <span className="muted">→</span>{" "}
+                                {r.intake.debtorName}
+                              </td>
+                              <td className="num mono">{fmtCspr(r.intake.amountCspr)}</td>
+                              <td className="num mono">
+                                {r.decision?.approve
+                                  ? fmtCspr(
+                                      (r.intake.amountCspr * (10_000 - r.decision.discountBps)) /
+                                        10_000,
+                                    )
+                                  : "—"}
+                              </td>
+                              <td>
+                                {r.decision ? (
+                                  <span className="risk">
+                                    <span className="bar">
+                                      <i
+                                        style={{
+                                          width: `${r.decision.riskScore}%`,
+                                          background: riskColor(r.decision.riskScore),
+                                        }}
+                                      />
+                                    </span>
+                                    <span className="mono">{r.decision.riskScore}</span>
                                   </span>
-                                  <span className="mono">{r.decision.riskScore}</span>
-                                </span>
-                              ) : (
-                                <span className="muted mono">…</span>
-                              )}
-                            </td>
-                            <td className="mono muted">
-                              {new Date(r.intake.dueTs).toISOString().slice(0, 10)}
-                            </td>
-                            <td>
-                              <span className={`badge ${status}`}>{status.toUpperCase()}</span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
-                <div className="pool-actions">
-                  <span className="muted" style={{ fontSize: 12 }}>
-                    LP demo actions:
-                  </span>
-                  <input value={depositAmt} onChange={(e) => setDepositAmt(e.target.value)} />
-                  <button
-                    className="btn ghost sm"
-                    disabled={busy}
-                    onClick={async () => {
-                      setBusy(true);
-                      try {
-                        await api.deposit(Number(depositAmt));
-                        notify(
-                          meta?.mode === "live-testnet"
-                            ? `Deposited ${depositAmt} CSPR into the pool`
-                            : `SHOWCASE: simulated ${depositAmt} CSPR deposit in memory`,
-                        );
-                        refresh();
-                      } catch (e) {
-                        notify(`Deposit failed: ${(e as Error).message}`);
-                      } finally {
-                        setBusy(false);
-                      }
+                                ) : (
+                                  <span className="muted mono">…</span>
+                                )}
+                              </td>
+                              <td className="mono muted">
+                                {new Date(r.intake.dueTs).toISOString().slice(0, 10)}
+                              </td>
+                              <td>
+                                <span className={`badge ${status}`}>{status.toUpperCase()}</span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                  <div className="pool-actions">
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      LP demo actions:
+                    </span>
+                    <input value={depositAmt} onChange={(e) => setDepositAmt(e.target.value)} />
+                    <button
+                      className="btn ghost sm"
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        try {
+                          await api.deposit(Number(depositAmt));
+                          notify(
+                            meta?.mode === "live-testnet"
+                              ? `Deposited ${depositAmt} CSPR into the pool`
+                              : `SHOWCASE: simulated ${depositAmt} CSPR deposit in memory`,
+                          );
+                          refresh();
+                        } catch (e) {
+                          notify(`Deposit failed: ${(e as Error).message}`);
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      Deposit CSPR
+                    </button>
+                    <span className="muted" style={{ fontSize: 11.5, fontFamily: "var(--mono)" }}>
+                      {meta?.mode === "live-testnet"
+                        ? `share price ${sharePrice.toFixed(4)} · funded from real testnet balance`
+                        : `share price ${sharePrice.toFixed(4)} · showcase deposit simulated in memory`}
+                    </span>
+                  </div>
+                </div>
+
+                <div id="sell">
+                  <SubmitPanel
+                    supplierDefault={meta?.supplier ?? null}
+                    liveMode={meta?.mode === "live-testnet"}
+                    wallet={wallet}
+                    onOpenGuided={() => setRunnerOpen(true)}
+                    onSubmitted={(r) => {
+                      notify(
+                        r.status === "rejected"
+                          ? `Underwriter REJECTED ${r.intake.invoiceNumber}`
+                          : r.status === "policy_blocked"
+                            ? `Casper policy BLOCKED funding of ${r.intake.invoiceNumber} — open it to see the firewall`
+                            : `Underwriter approved & funded ${r.intake.invoiceNumber}`,
+                      );
+                      refresh();
                     }}
-                  >
-                    Deposit CSPR
-                  </button>
-                  <span className="muted" style={{ fontSize: 11.5, fontFamily: "var(--mono)" }}>
-                    {meta?.mode === "live-testnet"
-                      ? `share price ${sharePrice.toFixed(4)} · funded from real testnet balance`
-                      : `share price ${sharePrice.toFixed(4)} · showcase deposit simulated in memory`}
-                  </span>
+                  />
                 </div>
               </div>
 
-              <div id="sell">
-                <SubmitPanel
-                  supplierDefault={meta?.supplier ?? null}
-                  liveMode={meta?.mode === "live-testnet"}
-                  wallet={wallet}
-                  onOpenGuided={() => setRunnerOpen(true)}
-                  onSubmitted={(r) => {
-                    notify(
-                      r.status === "rejected"
-                        ? `Underwriter REJECTED ${r.intake.invoiceNumber}`
-                        : r.status === "policy_blocked"
-                          ? `Casper policy BLOCKED funding of ${r.intake.invoiceNumber} — open it to see the firewall`
-                          : `Underwriter approved & funded ${r.intake.invoiceNumber}`,
-                    );
-                    refresh();
-                  }}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
-              <AgentRoles />
-              <div className="panel">
-                <div className="head">
-                  Agent activity
-                  <span className="hint">
-                    {meta?.mode === "showcase" ? "live AI · showcase writes simulated" : "live"}
-                  </span>
-                  <span className="right">
-                    <span className="dot" />
-                  </span>
-                </div>
-                <div className="feed" ref={feedRef}>
-                  {events.length === 0 && <div className="empty">Agents idle…</div>}
-                  {events.map((e, i) => {
-                    // The freshest "the model is scoring…" line gets the working
-                    // treatment — pulsing AI avatar + shimmer — so you can SEE the
-                    // agent thinking, not just read about it.
-                    const aiWorking = e.kind === "llm" && i === 0;
-                    return (
-                      <div
-                        className={`feed-item ${e.actor === "underwriter" ? "is-ai" : ""} ${aiWorking ? "ai-working" : ""}`}
-                        key={`${e.ts}-${i}`}
-                      >
-                        <div className={`avatar ${e.actor === "underwriter" ? "ai" : ""}`}>
-                          {ACTOR_ICON[e.actor] ?? "•"}
-                        </div>
-                        <div className="body">
-                          <div className="msg">
-                            {e.message}
-                            {aiWorking && (
-                              <span className="lj-ai-dots">
-                                <i />
-                                <i />
-                                <i />
-                              </span>
-                            )}
+              <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
+                <AgentRoles />
+                <div className="panel">
+                  <div className="head">
+                    Agent activity
+                    <span className="hint">
+                      {meta?.mode === "showcase" ? "live AI · showcase writes simulated" : "live"}
+                    </span>
+                    <span className="right">
+                      <span className="dot" />
+                    </span>
+                  </div>
+                  <div className="feed" ref={feedRef}>
+                    {events.length === 0 && <div className="empty">Agents idle…</div>}
+                    {events.map((e, i) => {
+                      // The freshest "the model is scoring…" line gets the working
+                      // treatment — pulsing AI avatar + shimmer — so you can SEE the
+                      // agent thinking, not just read about it.
+                      const aiWorking = e.kind === "llm" && i === 0;
+                      return (
+                        <div
+                          className={`feed-item ${e.actor === "underwriter" ? "is-ai" : ""} ${aiWorking ? "ai-working" : ""}`}
+                          key={`${e.ts}-${i}`}
+                        >
+                          <div className={`avatar ${e.actor === "underwriter" ? "ai" : ""}`}>
+                            {ACTOR_ICON[e.actor] ?? "•"}
                           </div>
-                          <div className="meta">
-                            <span>{e.actor}</span>
-                            <span>{timeAgo(e.ts)}</span>
-                            {e.deployHash && (
-                              <TxLink
-                                hash={e.deployHash}
-                                explorer={pool?.explorer ?? "https://testnet.cspr.live"}
-                                prefix="tx "
-                              />
-                            )}
+                          <div className="body">
+                            <div className="msg">
+                              {e.message}
+                              {aiWorking && (
+                                <span className="lj-ai-dots">
+                                  <i />
+                                  <i />
+                                  <i />
+                                </span>
+                              )}
+                            </div>
+                            <div className="meta">
+                              <span>{e.actor}</span>
+                              <span>{timeAgo(e.ts)}</span>
+                              {e.deployHash && (
+                                <TxLink
+                                  hash={e.deployHash}
+                                  explorer={pool?.explorer ?? "https://testnet.cspr.live"}
+                                  prefix="tx "
+                                />
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </>
-      )}
-
+          </>
+        )}
+      </div>
       {selected && (
         <Drawer
           record={selected}
@@ -1266,6 +1335,21 @@ export default function App() {
           }}
         />
       )}
+      {!runnerOpen && jhealth?.activeSession?.status === "active" && !jhealth.deskBusy && (
+        <button
+          className="lj-minipill"
+          onClick={() => openRunner()}
+          title="A live walkthrough is still in progress — click to resume"
+        >
+          ●{" "}
+          {
+            jhealth.activeSession.steps.filter(
+              (st) => st.status === "done" || st.status === "reverted",
+            ).length
+          }
+          /{jhealth.activeSession.steps.length} walkthrough in progress · Resume →
+        </button>
+      )}
       {runnerOpen && (
         <JudgeGuided
           health={jhealth}
@@ -1277,6 +1361,7 @@ export default function App() {
             setRunnerOpen(false);
             refresh();
             fetchRecent();
+            probeJudge(); // the minimize pill needs a fresh activeSession snapshot
           }}
         />
       )}
@@ -3301,11 +3386,13 @@ function JudgeGuided({
       <JudgeHealthBar health={health} state={runnerState} />
 
       {(runnerState === "paused" || runnerState === "warming") && (
-        <div className="lj-paused">{LIVE_COPY[runnerState].sub}</div>
+        <div className="lj-paused" aria-live="polite">
+          {LIVE_COPY[runnerState].sub}
+        </div>
       )}
 
       {runnerState === "busy" && !session && (
-        <div className="lj-busy">
+        <div className="lj-busy" aria-live="polite">
           <b>Another live walkthrough is signing right now.</b> The desk signs one story at a time —
           estimated availability ~1–2 minutes. You can browse the stories below meanwhile.
           <span className="lj-busy-actions">
@@ -3665,8 +3752,9 @@ function JudgeGuided({
         <div className="lj-confirm-bd" onClick={() => setConfirmClose(null)}>
           <div
             className="lj-confirm"
-            role="dialog"
+            role="alertdialog"
             aria-modal="true"
+            aria-live="assertive"
             onClick={(e) => e.stopPropagation()}
           >
             {confirmClose.kind === "settling" ? (
@@ -3689,9 +3777,9 @@ function JudgeGuided({
               <>
                 <b>Leave this walkthrough?</b>
                 <p>
-                  <i>Continue later</i> keeps your run resumable exactly where it stopped.{" "}
-                  <i>Abandon safely</i> ends it server-side and frees the desk (and any payout
-                  reservation) for the next visitor.
+                  <i>Continue later</i> minimizes: a progress pill stays on the homepage and your
+                  run resumes exactly where it stopped. <i>Abandon safely</i> ends it server-side
+                  and frees the desk (and any payout reservation) for the next visitor.
                 </p>
                 <div className="lj-confirm-actions">
                   <button className="lj-wallet-btn" onClick={() => setConfirmClose(null)}>
