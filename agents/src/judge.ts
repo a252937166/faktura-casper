@@ -167,6 +167,10 @@ interface Session {
     };
     /** The consumer agent's own verdict memo + hash — kept for the receipt. */
     consumerVerdict?: { memo: unknown; hash: string };
+    /** On-chain invoice read started at the END of the x402 step, so the
+     * consumer step's verification await is already warm (same live read,
+     * just launched a click earlier). */
+    invoicePrefetch?: Promise<import("./chain.js").ChainInvoice | null>;
     /** True while re-running a previously failed step — executors reconcile
      * against the chain first instead of blindly signing again. */
     retrying?: boolean;
@@ -1124,6 +1128,9 @@ async function stepX402(s: Session) {
         decisionHash: String(rep.decisionHash),
         memo: rep.memo ?? null,
       };
+      // Warm the NEXT step's on-chain verification read now — the consumer
+      // step still awaits this same live read; it just started a click earlier.
+      s.ctx.invoicePrefetch = chain.invoice(rep.invoiceId).catch(() => null);
       return {
         result: `Report delivered for ${cspr(s.ctx.x402AmountMotes ?? config.x402.priceMotes)} CSPR — risk ${rep.riskScore}, decision ${String(rep.decisionHash).slice(0, 18)}…`,
         txHash: s.ctx.x402Proof,
@@ -1236,7 +1243,8 @@ async function stepConsumerVerdict(s: Session) {
     }
   }
   const local = db.invoices.find((r) => r.id === rep.invoiceId && r.decision);
-  const onchainInv = await chain.invoice(rep.invoiceId).catch(() => null);
+  const onchainInv = await (s.ctx.invoicePrefetch ??
+    chain.invoice(rep.invoiceId).catch(() => null));
   const c = consumerChecks(
     rep,
     local?.decision
@@ -1314,6 +1322,25 @@ async function stepConsumerVerdict(s: Session) {
   };
 }
 
+/**
+ * Fill poolAfter WITHOUT blocking the step response: the cold livenet stats
+ * read costs 40–80 s — the single biggest avoidable chunk of the "slow step"
+ * feeling. The finish screen tolerates a late snapshot, and the persisted
+ * receipt is re-written once it lands so the proof document stays complete.
+ */
+function fillPoolAfterInBackground(s: Session) {
+  void snap()
+    .then((p) => {
+      s.poolAfter = p;
+      const run = recentRuns(10).find((x) => x.displayId === s.displayId);
+      if (run) {
+        run.poolAfter = p;
+        persistReceipt(run);
+      }
+    })
+    .catch(() => {});
+}
+
 /** Common post-settle bookkeeping — used by fresh settles AND timeout recovery. */
 async function settleBookkeeping(s: Session, tx?: string, recovered = false) {
   const r = s.ctx.record!;
@@ -1322,7 +1349,7 @@ async function settleBookkeeping(s: Session, tx?: string, recovered = false) {
   upsertInvoice(r);
   resolvePosition(r.id); // the pool is whole again — nothing left to clean up
   bookCache.ts = 0; // the book just changed
-  s.poolAfter = await snap().catch(() => undefined);
+  fillPoolAfterInBackground(s);
   return {
     result:
       `Debtor paid ${r.intake.amountCspr} CSPR face value — the pool realizes its yield` +
@@ -1381,7 +1408,7 @@ async function stepDefault(s: Session) {
     if (inv?.state === 3) {
       resolvePosition(id);
       bookCache.ts = 0;
-      s.poolAfter = await snap().catch(() => undefined);
+      fillPoolAfterInBackground(s);
       return {
         result: `DEFAULTED — recovered (the earlier deploy landed). The pool booked the loss.`,
         txHash: s.ctx.pendingTx?.default,
@@ -1404,7 +1431,7 @@ async function stepDefault(s: Session) {
       rec.chain.defaultHash = tx;
       upsertInvoice(rec);
     }
-    s.poolAfter = await snap().catch(() => undefined);
+    fillPoolAfterInBackground(s);
     return {
       result: `DEFAULTED — the advance is written off and LPs absorb the loss through the share price. Only the collector key can sign this.`,
       txHash: tx,
@@ -2163,8 +2190,11 @@ export function makeJudgeRouter(): Router {
       const intendedEnd = out.reverted && (s.preset === "policy-block" || !s.ctx.approved);
       if (s.cursor >= s.steps.length || intendedEnd) {
         endSession(s, "done");
-        if (!s.poolAfter)
-          s.poolAfter = (await cachedPool(1).catch(() => ({ snap: null }))).snap ?? undefined;
+        if (!s.poolAfter) {
+          // Best-effort from the warm cache — never block "done" on a cold read.
+          s.poolAfter = (await cachedPool().catch(() => ({ snap: null }))).snap ?? undefined;
+          if (!s.poolAfter) fillPoolAfterInBackground(s);
+        }
         // Public receipt: the proof that a real walkthrough just happened.
         // Recorded in the ring for the homepage AND persisted per-run so the
         // proof link survives the ring rolling over.
