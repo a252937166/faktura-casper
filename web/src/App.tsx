@@ -3352,6 +3352,19 @@ function JudgeGuided({
       setPayoutNotice(null);
       setBusy(false);
     } catch (e) {
+      // The visitor's own previous walkthrough still has a transaction
+      // settling — the server refuses to replace it AND hands it back to us.
+      // Auto-reattach instead of stranding them on a wall of 409s (they may
+      // have dismissed the resume banner already).
+      const prior = (e as ApiError).body?.session as JudgeSession | undefined;
+      if ((e as ApiError).status === 409 && prior) {
+        setSession(prior);
+        setErr(
+          "Your previous walkthrough still has a transaction settling — brought you back to it; it updates automatically.",
+        );
+        setBusy(false);
+        return;
+      }
       // Payout quota hit: this is GUIDANCE, not an error — send the visitor
       // back to the gate with the demo-supplier option front and center.
       if ((e as ApiError).body?.payoutBlocked) {
@@ -3710,9 +3723,19 @@ function JudgeGuided({
                 >
                   Resume →
                 </button>
-                <button className="lj-back" onClick={() => setResumable(null)}>
-                  Choose another story
-                </button>
+                {resumable.steps.some((st) => st.status === "running") ? (
+                  <button
+                    className="lj-back"
+                    disabled
+                    title="A real transaction is still settling in this walkthrough — resume it or wait a moment; replacing it now could corrupt the payout ledger."
+                  >
+                    finishing a transaction…
+                  </button>
+                ) : (
+                  <button className="lj-back" onClick={() => setResumable(null)}>
+                    Choose another story
+                  </button>
+                )}
               </div>
             </div>
           )}
