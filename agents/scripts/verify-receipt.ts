@@ -121,11 +121,8 @@ async function onlineChecks() {
     } else if (wantRevert) {
       // The policy-block story claims a SPECIFIC revert — assert exactly it.
       // "Some revert happened" would let a wrong failure impersonate the ace.
-      const wantExact =
-        doc.preset === "policy-block" && s.key === "fund" ? "User error: 15" : null;
-      ok = wantExact
-        ? !!errorMessage && errorMessage.includes(wantExact)
-        : errorMessage != null;
+      const wantExact = doc.preset === "policy-block" && s.key === "fund" ? "User error: 15" : null;
+      ok = wantExact ? !!errorMessage && errorMessage.includes(wantExact) : errorMessage != null;
       note = ok
         ? `finalized as expected revert (${errorMessage})`
         : wantExact && errorMessage != null
