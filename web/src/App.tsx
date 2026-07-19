@@ -3485,12 +3485,12 @@ function JudgeGuided({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fundDone, session?.wallet]);
 
-  const runNext = async (attempt?: unknown) => {
-    // onClick passes the click event — only an explicit number counts.
-    const tries = typeof attempt === "number" ? attempt : 0;
+  const runNext = async (queueUntil?: unknown) => {
+    // onClick passes the click event — only an explicit deadline counts.
+    const deadline = typeof queueUntil === "number" ? queueUntil : 0;
     if (!session || walletMismatch) return;
     setErr(null);
-    if (tries === 0) setRunStartTs(Date.now());
+    if (!deadline) setRunStartTs(Date.now());
     setBusy(true);
     try {
       const updated = await judge.nextStep(session.id);
@@ -3505,13 +3505,16 @@ function JudgeGuided({
     } catch (e) {
       // Signer collision (another visitor's transaction is mid-flight) comes
       // back as retry-soon — queue politely and retry by ourselves instead of
-      // making the visitor mash the button.
+      // making the visitor mash the button. Queue by ABSOLUTE time (150 s),
+      // not attempt count: the other transaction may legitimately take the
+      // full 30–120 s finality window and we must outwait it.
       const retryAfterMs = Number((e as ApiError).body?.retryAfterMs ?? 0);
-      if (retryAfterMs > 0 && tries < 8) {
+      const until = deadline || Date.now() + 150_000;
+      if (retryAfterMs > 0 && Date.now() < until) {
         setQueued(
           "In line behind another visitor's transaction — the desk signs one at a time; retrying automatically…",
         );
-        setTimeout(() => void runNext(tries + 1), retryAfterMs + Math.floor(Math.random() * 900));
+        setTimeout(() => void runNext(until), retryAfterMs + Math.floor(Math.random() * 900));
         return; // busy stays true — the strip explains the wait
       }
       setQueued(null);

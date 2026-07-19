@@ -2510,6 +2510,11 @@ async function replenishDefaultInventory(): Promise<boolean> {
       i.dueTs < Date.now() + 5 * 60_000,
   );
   if (hasOverdue || hasRipening) return false;
+  // Re-check AFTER the async book read: a visitor may have taken the signing
+  // mutex while we awaited — seeding anyway would run two signers at once
+  // and narrate into their live progress feed.
+  if (STEPPING) return false;
+  if (!canSignDeploy(2).ok) return false;
   STEPPING = true;
   try {
     const supplier = await chain.caller("supplier");
