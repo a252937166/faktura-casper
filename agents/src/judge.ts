@@ -497,25 +497,29 @@ function personaGate(
 async function health() {
   const balances: Record<string, number | null> = {};
   let rpcOk = true;
-  await Promise.all(
-    PERSONAS.map(async (p) => {
-      let hex: string;
-      try {
-        hex = personaPublicKeyHex(p);
-      } catch {
-        balances[p] = null;
-        return;
-      }
-      const bal = await balanceWithTimeout(hex);
-      balances[p] = bal;
-      if (bal == null) rpcOk = false;
-    }),
-  );
-  const { snap: pool, ok: contractOk } = await cachedPool();
-  const book = await cachedBook().catch(() => [] as BookInvoice[]);
+  // All four sources in PARALLEL — on a cold boot the pool/book livenet reads
+  // take ~60 s each; run sequentially the first snapshot took their SUM.
+  const [, { snap: pool, ok: contractOk }, book, capBps] = await Promise.all([
+    Promise.all(
+      PERSONAS.map(async (p) => {
+        let hex: string;
+        try {
+          hex = personaPublicKeyHex(p);
+        } catch {
+          balances[p] = null;
+          return;
+        }
+        const bal = await balanceWithTimeout(hex);
+        balances[p] = bal;
+        if (bal == null) rpcOk = false;
+      }),
+    ),
+    cachedPool(),
+    cachedBook().catch(() => [] as BookInvoice[]),
+    cachedPolicyBps(),
+  ]);
   const fundedIds = book.filter((i) => i.state === 1).map((i) => i.id);
   const overdueCount = overdueFunded(book).length;
-  const capBps = await cachedPolicyBps();
   const low = PERSONAS.filter((p) => balances[p] != null && (balances[p] as number) < FLOORS[p]);
   // Global pause is reserved for "the chain is unreachable" — per-preset
   // problems (a low balance, an infeasible pool shape) only disable THAT preset.
@@ -631,12 +635,50 @@ async function cachedHealth(ttlMs = 15_000) {
         healthInflight = null;
       });
   }
-  if (!healthCache.data) await healthInflight; // cold start: must wait once
-  const data = healthCache.data;
-  if (!data) throw new Error("health unavailable");
+  if (!healthCache.data && healthInflight) {
+    // Cold start: give the first real snapshot a short budget, then answer
+    // honestly as "warming" — a health endpoint must NEVER hang a visitor
+    // (the pre-fix behavior: first /health after a restart blocked on cold
+    // ~60 s livenet reads and the hero froze on "Checking live desk…").
+    await Promise.race([healthInflight, new Promise((r) => setTimeout(r, 4_000))]);
+  }
+  const data = healthCache.data ?? warmingHealth();
   // always reflect the live active session
   const activeId = order.filter((id) => sessions.get(id)?.status === "active").at(-1);
   return { ...data, activeSession: activeId ? publicSession(sessions.get(activeId)!) : null };
+}
+
+/** Honest placeholder while boot-warmup is still reading the chain: paused +
+ * young uptime renders as "DESK RESTARTING — ready in under a minute", which
+ * is exactly what is happening. Replaced by the real snapshot within seconds
+ * (the frontend re-probes every 5 s while unsettled). */
+function warmingHealth(): Awaited<ReturnType<typeof health>> {
+  const wait = { ok: false, reason: "the desk just restarted and is warming up" };
+  return {
+    mode: "live-testnet" as const,
+    contract: config.contract,
+    explorer,
+    chain: config.chainName,
+    node: config.nodeAddress,
+    balances: {},
+    floors: FLOORS,
+    low: [],
+    rpcOk: false,
+    contractOk: false,
+    paused: true,
+    pool: null,
+    x402Price: config.x402.priceMotes,
+    uptimeSec: Math.round((Date.now() - BOOT_TS) / 1000),
+    release: RELEASE,
+    canRun: {
+      happy: wait,
+      policyBlock: wait,
+      x402: wait,
+      default: wait,
+      "ai-reject": wait,
+    },
+    activeSession: null,
+  };
 }
 
 // ---- underwriting (shared by the first step of the invoice presets) ---------

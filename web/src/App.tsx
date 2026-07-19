@@ -581,7 +581,6 @@ export default function App() {
       .then(setMeta)
       .catch(() => {});
     probeJudge();
-    const jiv = setInterval(probeJudge, 30_000);
     const iv = setInterval(refresh, 12_000);
     const es = new EventSource(`${API_BASE}/activity`);
     es.onmessage = (m) => {
@@ -595,13 +594,22 @@ export default function App() {
     return () => {
       es.close();
       clearInterval(iv);
-      clearInterval(jiv);
     };
   }, []);
 
   const liveJudge = !!jhealth; // the dedicated live-testnet backend answered
   const liveState = deriveLiveState(judgeProbed, jhealth);
   const liveCopy = LIVE_COPY[liveState];
+
+  // Probe cadence follows the state: while the desk is unresolved (restarting,
+  // node blip, first load) re-check every 5 s so a visitor landing mid-restart
+  // watches it come back within seconds; once settled, 30 s keeps it warm.
+  const probeMs =
+    liveState === "ready" || liveState === "limited" || liveState === "busy" ? 30_000 : 5_000;
+  useEffect(() => {
+    const iv = setInterval(probeJudge, probeMs);
+    return () => clearInterval(iv);
+  }, [probeMs]);
 
   const stats = pool?.stats;
   const tvl = stats ? motesToCspr(stats.liquid) + motesToCspr(stats.deployed) : 0;

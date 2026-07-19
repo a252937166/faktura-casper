@@ -312,7 +312,12 @@ const judgeToken = (id: string): string => {
 };
 
 export const judge = {
-  health: () => fetch(`${JUDGE_BASE}/health`).then((r) => j<JudgeHealth>(r)),
+  // 10 s abort: this probe GATES the hero CTA — an unbounded fetch during a
+  // backend restart froze the page on "Checking live desk…" indefinitely.
+  health: () =>
+    fetch(`${JUDGE_BASE}/health`, { signal: AbortSignal.timeout(10_000) }).then((r) =>
+      j<JudgeHealth>(r),
+    ),
   presets: () => fetch(`${JUDGE_BASE}/presets`).then((r) => j<JudgePreset[]>(r)),
   createSession: (preset: string, supplierAddress?: string) =>
     fetch(`${JUDGE_BASE}/session`, {
