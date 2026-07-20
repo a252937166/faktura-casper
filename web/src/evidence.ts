@@ -35,5 +35,5 @@ export const EVIDENCE = {
   evidencePackUrl: "https://github.com/a252937166/faktura-casper/blob/v0.2.4-final/DORAHACKS.md",
   releaseTag: "v0.2.4-final",
   releaseUrl: "https://github.com/a252937166/faktura-casper/releases/tag/v0.2.4-final",
-  videoUrl: "https://youtu.be/47ZNPZlRXVA",
+  videoUrl: "https://youtu.be/Omidi47zryc",
 } as const;
