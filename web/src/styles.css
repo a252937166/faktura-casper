@@ -4070,6 +4070,12 @@ button.field-wallet {
   color: rgba(23, 19, 13, 0.55);
   margin-bottom: 7px;
 }
+.lj-pe-syncing {
+  font-size: 12.5px;
+  color: rgba(23, 19, 13, 0.62);
+  font-style: italic;
+  max-width: 460px;
+}
 .lj-pe-grid {
   display: grid;
   grid-template-columns: auto 1fr 1fr 1fr;
