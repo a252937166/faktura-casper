@@ -213,6 +213,9 @@ interface Session {
     /** Deploy hashes seen in timeout errors, keyed by step — the tx may have
      * landed even though the client gave up waiting. */
     pendingTx?: Record<string, string>;
+    /** True while a background poolAfter fill is in flight — the "done"
+     * fallback must not beat it with a stale cached snapshot. */
+    poolAfterPending?: boolean;
   };
 }
 
@@ -1423,17 +1426,35 @@ async function stepConsumerVerdict(s: Session) {
  * feeling. The finish screen tolerates a late snapshot, and the persisted
  * receipt is re-written once it lands so the proof document stays complete.
  */
-function fillPoolAfterInBackground(s: Session) {
-  void snap()
-    .then((p) => {
-      s.poolAfter = p;
-      const run = recentRuns(10).find((x) => x.displayId === s.displayId);
-      if (run) {
-        run.poolAfter = p;
-        persistReceipt(run);
+function fillPoolAfterInBackground(s: Session, expectChange = false) {
+  s.ctx.poolAfterPending = true;
+  void (async () => {
+    try {
+      const before = s.poolBefore ? JSON.stringify(s.poolBefore) : null;
+      for (let attempt = 0; ; attempt++) {
+        const p = await snap();
+        // A settle/default just moved real money; if the RPC still returns the
+        // pre-transaction numbers the global state query hasn't caught up with
+        // the finalized deploy yet — retry instead of persisting a snapshot
+        // that contradicts the step right above it on the finish screen.
+        if (expectChange && before && JSON.stringify(p) === before && attempt < 3) {
+          await new Promise((r) => setTimeout(r, 12_000));
+          continue;
+        }
+        s.poolAfter = p;
+        const run = recentRuns(10).find((x) => x.displayId === s.displayId);
+        if (run) {
+          run.poolAfter = p;
+          persistReceipt(run);
+        }
+        return;
       }
-    })
-    .catch(() => {});
+    } catch {
+      /* best effort — the receipt simply keeps poolAfter: null */
+    } finally {
+      s.ctx.poolAfterPending = false;
+    }
+  })();
 }
 
 /** Common post-settle bookkeeping — used by fresh settles AND timeout recovery. */
@@ -1444,7 +1465,7 @@ async function settleBookkeeping(s: Session, tx?: string, recovered = false) {
   upsertInvoice(r);
   resolvePosition(r.id); // the pool is whole again — nothing left to clean up
   bookCache.ts = 0; // the book just changed
-  fillPoolAfterInBackground(s);
+  fillPoolAfterInBackground(s, true);
   return {
     result:
       `Debtor paid ${r.intake.amountCspr} CSPR face value — the pool realizes its yield` +
@@ -1503,7 +1524,7 @@ async function stepDefault(s: Session) {
     if (inv?.state === 3) {
       resolvePosition(id);
       bookCache.ts = 0;
-      fillPoolAfterInBackground(s);
+      fillPoolAfterInBackground(s, true);
       return {
         result: `DEFAULTED — recovered (the earlier deploy landed). The pool booked the loss.`,
         txHash: s.ctx.pendingTx?.default,
@@ -1526,7 +1547,7 @@ async function stepDefault(s: Session) {
       rec.chain.defaultHash = tx;
       upsertInvoice(rec);
     }
-    fillPoolAfterInBackground(s);
+    fillPoolAfterInBackground(s, true);
     return {
       result: `DEFAULTED — the advance is written off and LPs absorb the loss through the share price. Only the collector key can sign this.`,
       txHash: tx,
@@ -2380,8 +2401,12 @@ export function makeJudgeRouter(): Router {
       const intendedEnd = out.reverted && (s.preset === "policy-block" || !s.ctx.approved);
       if (s.cursor >= s.steps.length || intendedEnd) {
         endSession(s, "done");
-        if (!s.poolAfter) {
+        if (!s.poolAfter && !s.ctx.poolAfterPending) {
           // Best-effort from the warm cache — never block "done" on a cold read.
+          // (When a background fill is already in flight — a settle/default just
+          // changed the pool — the cache would resurrect the PRE-transaction
+          // numbers and the finish panel would contradict the step above it;
+          // let the fill land and the client polls it in.)
           s.poolAfter = (await cachedPool().catch(() => ({ snap: null }))).snap ?? undefined;
           if (!s.poolAfter) fillPoolAfterInBackground(s);
         }

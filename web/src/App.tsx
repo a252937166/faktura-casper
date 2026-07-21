@@ -3590,6 +3590,34 @@ function JudgeGuided({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverRunning, session?.id]);
 
+  // After a settle/default the pool snapshot lands in the background once the
+  // chain state catches up with the finalized deploy — poll briefly so the
+  // finish panel fills itself in instead of showing pre-transaction numbers.
+  const awaitingPool =
+    !!session &&
+    session.status === "done" &&
+    !session.poolAfter &&
+    (session.preset === "happy" || session.preset === "default");
+  useEffect(() => {
+    if (!awaitingPool || !session) return;
+    const id = session.id;
+    let polls = 0;
+    const iv = setInterval(() => {
+      if (++polls > 30) {
+        clearInterval(iv);
+        return;
+      }
+      judge
+        .getSession(id)
+        .then((fresh) => {
+          if (fresh.poolAfter) setSession(fresh);
+        })
+        .catch(() => {});
+    }, 8000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [awaitingPool, session?.id]);
+
   // While the desk is busy and we are on the picker, keep availability fresh
   // so the busy banner clears itself the moment the other run finishes.
   useEffect(() => {
@@ -3935,9 +3963,11 @@ function JudgeGuided({
                     ? "no new advance — reuses an already-funded invoice"
                     : session.preset === "default"
                       ? "no payout — an overdue advance gets written off; LPs absorb the loss"
-                      : session.wallet
-                        ? `◈ advance pays YOUR wallet ${shortKey(session.wallet)}`
-                        : "advance pays the demo supplier"}
+                      : session.preset === "ai-reject"
+                        ? "no payout — the AI rejects this invoice before any funding"
+                        : session.wallet
+                          ? `◈ advance pays YOUR wallet ${shortKey(session.wallet)}`
+                          : "advance pays the demo supplier"}
               </div>
               <h1>{session.title}</h1>
             </div>
@@ -4054,9 +4084,17 @@ function JudgeGuided({
                   </a>
                 </div>
               )}
-              {session.poolAfter && (
+              {session.poolAfter ? (
                 <PoolEconomics before={session.poolBefore} after={session.poolAfter} />
-              )}
+              ) : session.preset === "happy" || session.preset === "default" ? (
+                <div className="lj-finish-pool">
+                  <div className="lj-pe-kicker">POOL ECONOMICS</div>
+                  <div className="lj-pe-syncing">
+                    ⏳ syncing on-chain pool state — the before/after numbers appear here (and in
+                    the receipt) once the network reflects this transaction
+                  </div>
+                </div>
+              ) : null}
               <div className="lj-finish-actions">
                 {session.displayId && (
                   <a
